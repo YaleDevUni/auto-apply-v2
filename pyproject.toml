@@ -1,0 +1,148 @@
+[project]
+name = "auto-apply"
+version = "0.1.0"
+description = "Durable job-application automation: Temporal orchestration + AI resume + recipe-driven browser execution"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "temporalio>=1.8",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "alembic>=1.14",
+    "asyncpg>=0.30",
+    "anthropic>=0.40",
+    "python-telegram-bot>=21.7",
+    "playwright>=1.49",
+    "boto3>=1.35",
+    "httpx>=0.27",
+    "structlog>=24.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "import-linter>=2.1",
+    "boto3-stubs[s3]>=1.35",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/auto_apply"]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",      # pycodestyle / pyflakes
+    "I",                # isort
+    "UP",               # pyupgrade
+    "B",                # bugbear
+    "SIM",              # simplify
+    "ASYNC",            # async pitfalls
+    "RUF",
+    "TID252",           # relative import 규칙
+    "ANN",              # 타입 애노테이션 강제
+]
+ignore = ["ANN401"]     # **kwargs: Any 허용
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "B"]
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+mypy_path = "src"
+packages = ["auto_apply"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers"
+markers = [
+    "integration: 외부 인프라(Temporal/DB/S3/네트워크)가 필요한 테스트",
+]
+
+# ---------------------------------------------------------------- import-linter
+# ARCHITECTURE.md §11 의 계층 규칙을 CI에서 강제한다.
+[tool.importlinter]
+root_package = "auto_apply"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "domain 은 순수하다 (프레임워크/어댑터 무의존)"
+type = "forbidden"
+source_modules = ["auto_apply.domain"]
+forbidden_modules = [
+    "auto_apply.adapters", "auto_apply.ports", "auto_apply.api",
+    "auto_apply.workflows", "auto_apply.activities", "auto_apply.bootstrap",
+    "sqlalchemy", "temporalio", "fastapi", "anthropic", "playwright", "boto3",
+]
+
+[[tool.importlinter.contracts]]
+name = "ports 는 구현을 모른다"
+type = "forbidden"
+source_modules = ["auto_apply.ports"]
+forbidden_modules = [
+    "auto_apply.adapters", "auto_apply.activities", "auto_apply.workflows",
+    "auto_apply.api", "auto_apply.bootstrap",
+    "sqlalchemy", "anthropic", "playwright", "boto3", "telegram",
+]
+
+[[tool.importlinter.contracts]]
+name = "contracts 는 workflow-safe (벤더 의존 없음)"
+type = "forbidden"
+source_modules = ["auto_apply.contracts"]
+forbidden_modules = [
+    "auto_apply.adapters", "auto_apply.ports", "auto_apply.activities",
+    "auto_apply.api", "auto_apply.bootstrap",
+    "sqlalchemy", "anthropic", "playwright", "boto3", "telegram", "fastapi",
+]
+
+[[tool.importlinter.contracts]]
+name = "workflow 는 contracts/domain 만 본다"
+type = "forbidden"
+source_modules = ["auto_apply.workflows"]
+forbidden_modules = [
+    "auto_apply.adapters", "auto_apply.ports", "auto_apply.activities",
+    "auto_apply.api", "auto_apply.bootstrap",
+    "sqlalchemy", "anthropic", "playwright", "boto3", "telegram", "fastapi",
+]
+
+[[tool.importlinter.contracts]]
+name = "adapters 는 상위 계층을 모른다"
+type = "forbidden"
+source_modules = ["auto_apply.adapters"]
+forbidden_modules = [
+    "auto_apply.workflows", "auto_apply.activities",
+    "auto_apply.api", "auto_apply.bootstrap",
+]
+
+[[tool.importlinter.contracts]]
+name = "어댑터 생성은 bootstrap 에서만"
+type = "forbidden"
+# bootstrap 을 '거쳐서' 닿는 것은 정상이다. 직접 import 만 금지한다.
+allow_indirect_imports = true
+source_modules = ["auto_apply.api", "auto_apply.activities"]
+forbidden_modules = ["auto_apply.adapters"]

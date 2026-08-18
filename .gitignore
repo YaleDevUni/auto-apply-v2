@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.python-version.local
+*.egg-info/
+build/
+dist/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+storage_state*.json
+
+# Local data (LocalBlobStore, sqlite, snapshots)
+var/
+data/
+*.db
+*.sqlite3
+
+# Playwright
+test-results/
+playwright-report/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Claude Code local overrides
+.claude/settings.local.json
