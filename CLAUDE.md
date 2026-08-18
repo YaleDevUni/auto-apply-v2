@@ -60,12 +60,38 @@ api         라우터는 컨테이너에서 꺼내 쓴다
   그래야 대기 중 reschedule/cancel signal이 먹는다.
 - 재시도 금지 에러는 `domain/errors.py`의 `NON_RETRYABLE`에 등록하고 RetryPolicy에 넘긴다.
 - signal 핸들러는 **멱등**하게 (중복 승인은 무시). Telegram 버튼은 두 번 눌린다.
+- **워커 재시작을 테스트할 땐 `Worker(..., max_cached_workflows=0)`**. sticky execution이 켜져 있으면
+  서버가 죽은 워커의 sticky 큐로 계속 라우팅해서 테스트가 그냥 멈춘다 (에러도 안 난다).
+- 도메인 예외는 Temporal을 건너면 `ApplicationError`로 감싸지고 원래 클래스는 `.type` **문자열**로만 남는다.
+  workflow에서 `isinstance`가 아니라 `e.cause.type == "..."`로 분기해야 한다.
+
+## 개발 프로세스 (필수)
+
+**테스트 없는 구현은 완료가 아니다.**
+
+- 기능을 구현하면 **같은 커밋에 테스트를 넣는다.** 나중에 추가하지 않는다.
+- 구현 후 반드시 `make check`를 **실행해서 통과를 확인**한다. "통과할 것이다"로 보고하지 않는다.
+- 검증 결과를 보고할 때는 **실제 출력**을 근거로 말한다. 실패했으면 실패했다고 말한다.
+- 새 port를 만들면 contract test, workflow를 만들면 `WorkflowEnvironment` 테스트,
+  LLM/Recipe 스키마를 건드리면 회귀 테스트를 함께 만든다.
+- 테스트가 인프라를 필요로 하면 `@pytest.mark.integration`을 붙인다. 기본 `make test`는
+  Docker 없이 항상 돌아야 한다.
+
+**커밋 규칙 (개발 초기 단계)**
+
+- **큰 기능 단위로 하나씩 커밋한다.** (예: "승인 흐름 + durable timer", "Playwright executor")
+  여러 기능을 한 커밋에 몰지 않고, 반대로 파일 하나 고칠 때마다 커밋하지도 않는다.
+- 커밋 전 `make check` 통과가 전제다. 깨진 상태를 커밋하지 않는다.
+- 설계가 바뀌면 `docs/ARCHITECTURE.md`를 같은 커밋에서 수정한다.
+- **커밋에 `Co-Authored-By: Claude` 트레일러를 넣지 않는다.**
 
 ## 코드 컨벤션
 
 - **절대 import만** (`from auto_apply.x import y`). 상대 import는 ruff TID252가 막는다.
 - DTO는 `extra="forbid"` + `frozen=True`. LLM이 만든 필드가 실행 계층까지 흐르지 않게 한다.
 - 열거형은 `StrEnum` (Temporal payload·DB 저장 모두 안전).
+- Protocol의 속성은 **`@property`로 선언**한다. 일반 속성은 invariant라서 구현체가 더 구체적인
+  타입을 노출하면 타입 체크에 실패한다.
 - 로그는 structlog, **모든 로그에 `workflow_id`를 구조화 필드로** 넣는다. DB·S3·트레이스를 잇는 유일한 키다.
 - 주석은 "왜"만 쓴다. 설계 근거는 `ARCHITECTURE.md §N`으로 참조한다.
 
@@ -80,10 +106,11 @@ api         라우터는 컨테이너에서 꺼내 쓴다
 
 ## 현재 상태
 
-**M0 완료** — 스캐폴딩/툴체인/계층 가드/contract test 패턴 + `PingWorkflow` 스모크(통합 테스트 통과).
+**M0 완료** — 스캐폴딩/툴체인/계층 가드/contract test 패턴 + `PingWorkflow` 스모크.
 
-아직 **없는** 것: DB 모델·Alembic 마이그레이션, `ApplicationWorkflow`, Telegram 어댑터,
-Playwright executor, Anthropic 어댑터, S3 어댑터, LangGraph(M3에서 판단).
-
-**다음: M1 — Telegram 승인 → signal → durable timer.**
+**M1 진행 중** — 승인 흐름을 Telegram 없이 `ConsoleNotifier`로 먼저 완성한다.
 완료 기준은 "코드가 돌아간다"가 아니라 **"워커를 강제 종료해도 예약이 살아있다"**다.
+
+아직 **없는** 것: DB 모델·Alembic(파일 기반 repository로 대체 중), Telegram 어댑터,
+Playwright executor(replay 대역만), Anthropic 어댑터, S3 어댑터, LangGraph(M3에서 판단),
+`AutomationRepairWorkflow`(M4).

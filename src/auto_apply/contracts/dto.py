@@ -22,6 +22,9 @@ class StartApplication(_Frozen):
     application_id: str
     user_id: str
     job_url: str
+    # 워크플로우는 설정을 직접 읽지 않는다 (결정성). 시작 시점에 주입한다.
+    approval_timeout_hours: int = Field(default=72, ge=1)
+    dry_run_only: bool = True
 
 
 class JobRef(_Frozen):
@@ -146,3 +149,36 @@ class Decision(_Frozen):
     kind: DecisionKind
     scheduled_at: datetime | None = None
     reason: str = ""
+
+
+# ── Signals ──────────────────────────────────────────────────────────────
+class ApproveSignal(_Frozen):
+    scheduled_at: datetime | None = None
+    decided_by: str = ""
+    nonce: str = ""
+
+
+class RejectSignal(_Frozen):
+    reason: str = ""
+    decided_by: str = ""
+    nonce: str = ""
+
+
+class RescheduleSignal(_Frozen):
+    scheduled_at: datetime
+
+
+# ── Resume review / verify ───────────────────────────────────────────────
+class ReviewRequest(_Frozen):
+    draft: ResumeDraft
+    job: JobRef
+
+
+class VerifyInput(_Frozen):
+    application_id: str
+    platform: str
+
+
+class VerifyResult(_Frozen):
+    verified: bool
+    detail: str = ""

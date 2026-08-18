@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     notifier: Literal["console", "telegram"] = "console"
     resume_engine: Literal["simple", "langgraph"] = "simple"
     executor: Literal["replay", "playwright"] = "replay"
+    repository: Literal["memory", "file", "postgres"] = "file"
 
     # 인프라
     database_url: str = "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply"

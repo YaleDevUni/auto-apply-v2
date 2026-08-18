@@ -9,16 +9,23 @@ worker 에 등록된 실제 구현을 찾는다. 덕분에 workflow → 구현 �
 from temporalio import activity
 
 from auto_apply.contracts.dto import (
+    DecisionRequest,
+    DecisionTicket,
     Eligibility,
     ExecuteInput,
     ExecutionResult,
     GenerateResumeRequest,
     JobRef,
+    NotifyEvent,
     PersistState,
     RenderedPdf,
     ResumeDraft,
+    ReviewRequest,
     ReviewVerdict,
+    VerifyInput,
+    VerifyResult,
 )
+from auto_apply.contracts.recipe import AutomationRecipe
 
 _ONLY = "interface only — 구현은 auto_apply.activities 에 있다"
 
@@ -39,7 +46,7 @@ async def generate_resume(req: GenerateResumeRequest) -> ResumeDraft:
 
 
 @activity.defn(name="review_resume")
-async def review_resume(draft: ResumeDraft) -> ReviewVerdict:
+async def review_resume(req: ReviewRequest) -> ReviewVerdict:
     raise NotImplementedError(_ONLY)
 
 
@@ -50,6 +57,26 @@ async def render_pdf(draft: ResumeDraft) -> RenderedPdf:
 
 @activity.defn(name="execute_application")
 async def execute_application(inp: ExecuteInput) -> ExecutionResult:
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="request_approval")
+async def request_approval(req: DecisionRequest) -> DecisionTicket:
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="load_active_recipe")
+async def load_active_recipe(platform: str) -> AutomationRecipe:
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="verify_submission")
+async def verify_submission(inp: VerifyInput) -> VerifyResult:
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="notify")
+async def notify(event: NotifyEvent) -> None:
     raise NotImplementedError(_ONLY)
 
 

@@ -1,6 +1,11 @@
 from typing import Protocol
 
-from auto_apply.contracts.dto import GenerateResumeRequest, ResumeDraft, ReviewVerdict
+from auto_apply.contracts.dto import (
+    GenerateResumeRequest,
+    ResumeDraft,
+    ReviewRequest,
+    ReviewVerdict,
+)
 
 
 class ResumeGenerator(Protocol):
@@ -10,4 +15,4 @@ class ResumeGenerator(Protocol):
 
 
 class ResumeReviewer(Protocol):
-    async def review(self, draft: ResumeDraft, req: GenerateResumeRequest) -> ReviewVerdict: ...
+    async def review(self, req: ReviewRequest) -> ReviewVerdict: ...
