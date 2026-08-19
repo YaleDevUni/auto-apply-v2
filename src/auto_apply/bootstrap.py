@@ -17,6 +17,7 @@ from auto_apply.adapters.job_source.jasoseol import JasoseolJobSource
 from auto_apply.adapters.job_source.saramin import SaraminJobSource
 from auto_apply.adapters.job_source.wanted import WantedJobSource
 from auto_apply.adapters.llm.anthropic import AnthropicLLM
+from auto_apply.adapters.llm.claude_code_cli import ClaudeCodeCliLLM
 from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.adapters.matching_config.static import StaticMatchingConfigSource
 from auto_apply.adapters.matching_config.yaml_file import YamlMatchingConfigSource
@@ -94,6 +95,12 @@ def _build_llm(cfg: Settings) -> LLMClient:
             if not cfg.anthropic_api_key:
                 raise ValueError("LLM_PROVIDER=anthropic 이면 ANTHROPIC_API_KEY 가 필요하다")
             return AnthropicLLM(cfg.anthropic_api_key, model=cfg.anthropic_model)
+        case "claude_cli":
+            return ClaudeCodeCliLLM(
+                binary=cfg.claude_cli_binary,
+                model=cfg.claude_cli_model,
+                max_budget_usd=cfg.claude_cli_max_budget_usd,
+            )
 
 
 def _build_notifier(cfg: Settings, idgen: IdGen) -> Notifier:

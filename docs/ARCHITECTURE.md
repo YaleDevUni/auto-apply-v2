@@ -653,7 +653,7 @@ Grafana 스택 전체를 초기에 세우지 않는다. 대신 **Temporal UI를 
 
 | Port | M0 구현 | 대역/2번째 구현 | 교체 가치 | 비고 |
 |---|---|---|---|---|
-| `LLMClient` | `AnthropicLLM`(M3) | `StubLLM`(고정 응답 재생) | **높음** | 모델 교체·비용 실험·테스트 결정성 |
+| `LLMClient` | `AnthropicLLM`(M3) · `ClaudeCodeCliLLM`(M3 연장) | `StubLLM`(고정 응답 재생) | **높음** | 모델 교체·비용 실험·테스트 결정성. `ClaudeCodeCliLLM`은 `ANTHROPIC_API_KEY` 종량제 대신 로컬에 로그인된 Claude Code 구독으로 `claude` CLI 를 headless 로 호출한다(§11.2c) |
 | `BlobStore` | MinIO(S3) | `LocalBlobStore` | **높음** | 로컬 개발에서 컨테이너 하나 덜 띄움 |
 | `Notifier` | Telegram | `ConsoleNotifier` | **높음** | 승인 흐름 테스트가 봇 없이 가능 |
 | `*Repository` + `UnitOfWork` | SQLAlchemy/Postgres | `InMemoryRepo` | 중간 | 실제 목적은 DB 교체보다 **테스트 속도** |
@@ -773,6 +773,76 @@ create-or-update다 — `client.create_schedule()`이 `ScheduleAlreadyRunningErr
 `WorkflowEnvironment.start_local()`(풀 dev server, 최초 실행 시 별도 바이너리 다운로드)을 써야
 한다(`tests/test_schedule.py`). `build_job_collection_schedule()` 자체는 순수 함수라 서버 없이도
 바로 테스트한다 — Temporal 연동이 필요한 부분(`ensure_*`/`delete_*`)만 얇게 분리해둔 이유다.
+
+### 11.2c `ClaudeCodeCliLLM` — API 키 종량제 대신 로컬 구독
+
+`AnthropicLLM`은 `ANTHROPIC_API_KEY`로 Messages API 를 직접 부른다(종량제). 이 프로젝트는
+개발자 본인이 이미 Claude Code 구독(Pro/Max)을 갖고 있어서, 같은 워크로드를 API 키 없이
+그 구독으로 실행할 수 있으면 이력서 생성 비용이 0에 가까워진다 — `ClaudeCodeCliLLM`
+(`adapters/llm/claude_code_cli.py`)이 그 경로다: 이 머신에 `claude login`(또는
+`claude setup-token`)으로 로그인된 `claude` CLI 를 `asyncio.create_subprocess_exec` 로
+headless 호출한다(`-p`/`--output-format json`).
+
+**`--bare`를 안 쓰는 이유 (실측):** `claude --bare --help`에 "Anthropic auth is strictly
+ANTHROPIC_API_KEY or apiKeyHelper... (OAuth and keychain are never read)"라고 명시돼 있다.
+`--bare`는 하네스를 걷어내는 지름길처럼 보이지만 인증 경로 자체를 API 키 종량제로 강제해서,
+이 어댑터가 피하려는 과금 방식으로 되돌아간다. 그래서 낱개 플래그로 직접 걷어낸다:
+
+| 걷어내는 것 | 플래그 |
+|---|---|
+| 빌트인 툴(Bash/Read/Write/...) | `--tools ""` |
+| MCP 서버 | `--strict-mcp-config` (`--mcp-config` 생략) |
+| 스킬/슬래시 명령 | `--disable-slash-commands` |
+| 프로젝트/사용자 `settings.json`, `CLAUDE.md` | `--setting-sources ""` |
+| 기본 시스템 프롬프트(툴 설명 등 포함) | `--system-prompt <우리 문장>`(교체, append 아님) |
+| 모델 자동 라우팅 분류기 호출 | `--model` 명시 (실측: 생략하면 `modelUsage`에 `claude-haiku-4-5` 가 추가로 잡힌다 — CLI 가 라우팅용으로 Haiku 를 한 번 더 부른다) |
+
+구조화 출력은 Anthropic Messages API 의 `tool_choice` 강제 대신 `--json-schema <JSON Schema>`
++ `--output-format json`을 쓴다 — 응답 JSON 봉투의 `structured_output` 필드에 스키마를 만족하는
+값이 이미 파싱되어 온다(실측: `ResumeContentSchema`의 `$defs`/`$ref` 포함 중첩 스키마로 검증
+완료). `structured_output`이 없거나 우리 Pydantic 모델 검증에 실패하면 `AnthropicLLM`과 같은
+계약으로 `LLMSchemaViolation`을 던져서, `SimpleResumeGenerator`의 재프롬프트 루프(§2.3)가
+그대로 재사용된다. 프로세스 자체가 실패(비정상 종료·타임아웃·JSON 파싱 실패·`is_error`)하면
+`LLMExecutionError`— 스키마 문제가 아니라 대부분 일시적이라 재시도 대상이다(NON_RETRYABLE
+에 없음).
+
+**실패 분류 → 텔레그램 알림 (재시도로 안 풀리는 두 가지):** `is_error` 응답 중 일부는 재시도해도
+똑같이 실패한다 — 로그인이 풀렸거나(`claude login` 필요) 구독 사용량 한도(5시간/주간)를
+넘었을 때다. `_run()`은 exit code 를 먼저 보지 않고 stdout 을 먼저 JSON 파싱한다(실측: CLI 는
+이 두 실패도 exit code 1 과 함께 stdout 에 유효한 JSON 을 낸다 — 로그인 풀림은
+`result:"Not logged in · Please run /login"`, 한도초과는
+`terminal_reason:"budget_exhausted"`/`subtype:"error_max_budget_usd"`). 그 문자열/필드를
+`_classify_error()`가 CLI 바이너리 안에 실제로 박혀 있는 auth-실패 감지 정규식과 같은 패턴으로
+분류해서 `LLMAuthRequired`/`LLMQuotaExceeded`(둘 다 `LLMExecutionError`의 서브클래스,
+`domain/errors.py`)를 던진다 — 이 둘은 NON_RETRYABLE 이라 Temporal 이 재시도 없이 1회만
+시도한다. `ResumeWorkflow`가 `generate_resume`/`review_resume` 호출을 감싸고 `ActivityError.cause.type`
+으로 이 둘을 알아보면(§ CLAUDE.md "Temporal 관련 주의" — `.type` 문자열 비교), 재던지기 전에
+`notify` activity(`ports/notifier.py`, 이미 승인 흐름이 쓰는 것과 같은 채널)를 큐를 건너
+(`task_queue=QUEUE_DEFAULT`, `render_pdf`가 반대 방향으로 `QUEUE_AI`를 넘기는 것과 대칭) 호출해
+사람에게 알린다. NON_RETRYABLE 이라 시도가 정확히 1번이라 알림도 자연히 1번만 나가고, 별도
+debounce 는 안 뒀다.
+
+**캐시 (사용자 요청 "cache 적극 활용"):** 완전히 새 프로세스로 매번 부르면 프롬프트가
+100% 동일해도 캐시가 전혀 안 붙는다(실측: 동일 system-prompt 로 두 번 연속 새 프로세스 호출
+— `cache_creation_input_tokens`/`cache_read_input_tokens` 둘 다 0). Claude Code 는 세션을
+이어야만(`--resume <session-id>`) 이전 턴이 캐시로 읽힌다(실측: 세션을 이었더니 두 번째 턴의
+`cache_read_input_tokens`가 첫 턴의 `cache_creation_input_tokens`와 정확히 일치했다). 그래서
+`LLMClient.structured()`/`complete()`에 선택 파라미터 `cache_key`를 추가했다(Protocol 확장 —
+`StubLLM`은 무시, `AnthropicLLM`은 힌트가 있을 때만 프롬프트 블록에 `cache_control:
+{"type":"ephemeral"}`을 붙인다). `SimpleResumeGenerator`는 `cache_key=req.user_id`를 넘긴다 —
+같은 사용자의 Fact/Profile 목록처럼 여러 공고에 걸쳐 반복되는 큰 프리픽스가 캐시로 읽힌다.
+같은 키의 첫 호출엔 `--session-id`로 세션을 새로 열고, 이후 호출엔 `--resume`으로 잇는다.
+무한정 이어붙이면 세션이 계속 자라 캐시 이득보다 비용이 커지므로 `_MAX_TURNS_PER_SESSION`
+(12턴)·`_SESSION_TTL_SECONDS`(Anthropic ephemeral 캐시 기본 TTL인 5분에 맞춤)를 넘기면 새
+세션을 판다. 같은 키로 동시 호출이 들어오면 같은 세션 파일에 동시 쓰기가 나므로 키별
+`asyncio.Lock`으로 직렬화한다. `cache_key` 없이 부르면(`complete()`의 유일한 현재 호출자는
+없다 — 아직 미사용) 세션을 아예 안 남긴다(`--no-session-persistence`).
+
+`LLM_PROVIDER=claude_cli` + `CLAUDE_CLI_BINARY`/`CLAUDE_CLI_MODEL`/`CLAUDE_CLI_MAX_BUDGET_USD`로
+켠다(`.env.example`). 기본값은 여전히 `stub`이고, `anthropic`도 그대로 남아있다 — 어느 걸 켤지는
+사용자 몫이다(§11.6과 같은 이유로 자동 전환하지 않는다). worker 를 띄우는 머신에 `claude` CLI 가
+설치되고 로그인돼 있어야 한다는 전제가 있어 CI/컨테이너 배포 환경에는 안 맞을 수 있다 — 로컬
+개발/개인 실행 용도다.
 
 ### 11.3 Temporal에서의 주입 — activity가 곧 seam
 

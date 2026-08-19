@@ -48,7 +48,7 @@ class SimpleResumeGenerator:
         blocks = select_relevant_blocks(group_facts_for_resume(facts), job_text)
 
         content = await self._structured_with_reprompt(
-            build_resume_prompt(req.job, relevant, blocks)
+            build_resume_prompt(req.job, relevant, blocks), cache_key=req.user_id
         )
         assembled = assemble_resume(profile, blocks, content)
         return ResumeDraft(
@@ -57,12 +57,19 @@ class SimpleResumeGenerator:
             used_fact_ids=used_fact_ids(content),
         )
 
-    async def _structured_with_reprompt(self, prompt: str) -> ResumeContentSchema:
+    async def _structured_with_reprompt(
+        self, prompt: str, *, cache_key: str
+    ) -> ResumeContentSchema:
+        # cache_key 를 재프롬프트 시도 전체에 동일하게 넘긴다 — 원본 프롬프트가 매 시도의
+        # 접두어로 그대로 남기 때문에(reprompt_with_error 참고), 캐시를 태우는 구현
+        # (ClaudeCodeCliLLM 등)이라면 2·3번째 시도가 그 접두어를 캐시로 읽는다.
         attempt_prompt = prompt
         last_error: LLMSchemaViolation | None = None
         for _ in range(self._max_reprompts + 1):
             try:
-                return await self._llm.structured(attempt_prompt, ResumeContentSchema)
+                return await self._llm.structured(
+                    attempt_prompt, ResumeContentSchema, cache_key=cache_key
+                )
             except LLMSchemaViolation as e:
                 last_error = e
                 attempt_prompt = reprompt_with_error(prompt, str(e))

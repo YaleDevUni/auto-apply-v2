@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     app_env: Literal["local", "prod"] = "local"
 
     # 어댑터 선택
-    llm_provider: Literal["stub", "anthropic"] = "stub"
+    llm_provider: Literal["stub", "anthropic", "claude_cli"] = "stub"
     storage: Literal["local", "memory", "s3"] = "local"
     notifier: Literal["console", "telegram"] = "console"
     resume_engine: Literal["simple", "langgraph"] = "simple"
@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     # 외부 서비스
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
+    # LLM_PROVIDER=claude_cli 일 때만 — API 키 대신 이 머신에 로그인된 Claude Code 구독을 쓴다.
+    # `claude login`(또는 `claude setup-token`)이 이미 돼 있어야 한다.
+    claude_cli_binary: str = "claude"
+    claude_cli_model: str = "claude-sonnet-5"
+    claude_cli_max_budget_usd: float = 0.5
     telegram_bot_token: str = ""
     telegram_allowed_chat_ids: str = ""
 

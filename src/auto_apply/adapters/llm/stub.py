@@ -16,13 +16,15 @@ class StubLLM:
         self._responses = list(responses or [])
         self._payloads = list(payloads or [])
 
-    async def complete(self, prompt: str, *, max_tokens: int = 2048) -> str:
+    async def complete(
+        self, prompt: str, *, max_tokens: int = 2048, cache_key: str | None = None
+    ) -> str:
         if self._responses:
             return self._responses.pop(0)
         return f"[stub completion for {len(prompt)} chars]"
 
     async def structured[T: BaseModel](
-        self, prompt: str, schema: type[T], *, max_tokens: int = 2048
+        self, prompt: str, schema: type[T], *, max_tokens: int = 2048, cache_key: str | None = None
     ) -> T:
         payload = self._payloads.pop(0) if self._payloads else {}
         try:

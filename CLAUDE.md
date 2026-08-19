@@ -180,6 +180,32 @@ libgobject/pango/cairo 를 찾으려면 `DYLD_FALLBACK_LIBRARY_PATH`가 필요�
 아직 **없는** 것: S3 어댑터, `AutomationRepairWorkflow`(M4), `/recipes/{platform}` 계열
 엔드포인트(승격은 지금은 손으로 recipe JSON의 `status`를 고쳐서 한다).
 
+**M3 연장 — `ClaudeCodeCliLLM`(API 키 대신 로컬 Claude Code 구독).** `LLMClient`의 세 번째
+구현(`adapters/llm/claude_code_cli.py`)으로, `ANTHROPIC_API_KEY` 종량제 대신 이 머신에
+로그인된 Claude Code 구독으로 `claude` CLI 를 headless subprocess 로 부른다.
+`--bare`는 안 쓴다 — OAuth/keychain을 안 읽고 API 키 인증을 강제해서 정확히 피하려는
+과금 방식으로 되돌아간다(실측, `docs/ARCHITECTURE.md` §11.2c). 대신 `--tools ""`·
+`--strict-mcp-config`·`--disable-slash-commands`·`--setting-sources ""`·`--system-prompt`
+교체로 하네스(빌트인 툴/MCP/스킬/CLAUDE.md/기본 시스템 프롬프트)를 낱개로 걷어내고, `--model`을
+항상 명시해 CLI 의 모델 라우팅용 Haiku 분류기 호출도 없앤다. 구조화 출력은 `--json-schema` +
+`--output-format json`의 `structured_output` 필드로 받는다(`AnthropicLLM`과 같은
+`LLMSchemaViolation` 계약 유지). 캐시는 `LLMClient`에 선택 파라미터 `cache_key`를 추가해
+확보한다 — 새 프로세스 1회성 호출은 프롬프트가 같아도 캐시가 전혀 안 붙는다는 걸 실측했고
+(`--resume`으로 세션을 이어야만 이전 턴이 캐시로 읽힘), `SimpleResumeGenerator`가
+`cache_key=user_id`를 넘겨 같은 사용자의 Fact/Profile 프리픽스를 여러 공고 생성에 걸쳐
+재사용한다(세션은 턴수·TTL 상한을 넘기면 새로 판다). `AnthropicLLM`도 같은 파라미터로
+`cache_control: ephemeral`을 프롬프트에 붙이도록 함께 확장했다. `LLM_PROVIDER=claude_cli` +
+`CLAUDE_CLI_BINARY`/`CLAUDE_CLI_MODEL`/`CLAUDE_CLI_MAX_BUDGET_USD`로 켠다 — 이 머신에
+`claude login`이 이미 돼 있어야 한다. 기본값은 여전히 `stub`.
+
+**M3 연장 — claude CLI 장애 텔레그램 알림.** `ClaudeCodeCliLLM`이 재시도로 안 풀리는 두 실패
+(로그인 풀림·구독 사용량 한도초과)를 실측 시그니처로 구분해 `LLMAuthRequired`/`LLMQuotaExceeded`
+(`domain/errors.py`, 둘 다 NON_RETRYABLE)로 던지고, `ResumeWorkflow`가 `generate_resume`/
+`review_resume` 실패를 감싸서 `e.cause.type`으로 이 둘을 알아보면 재던지기 전에 `notify`
+activity(승인 흐름과 같은 `Notifier` 채널)를 `task_queue=QUEUE_DEFAULT`로 건너 호출해 사람에게
+알린다(§11.2c). 타임아웃 등 분류 안 된 실패는 여전히 `LLMExecutionError`로 재시도 대상이라
+알림을 안 보낸다.
+
 **공고 수집·매칭** (M1과 별도 트랙) — `JobSource`(wanted/saramin/jasoseol) + 순수 domain
 매칭(`job_screening`/`job_applicability`) + `JobCollectionWorkflow` + Temporal Schedule(cron)
 배선까지 구현됨. `uv run python -m auto_apply.cli collect-schedule`로 등록/갱신(idempotent),
