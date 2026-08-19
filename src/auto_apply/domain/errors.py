@@ -42,6 +42,14 @@ class LLMSchemaViolation(AutoApplyError):
     """LLM 출력이 Pydantic 스키마를 위반. activity 내부에서 2회까지 재프롬프트."""
 
 
+class LLMExecutionError(AutoApplyError):
+    """LLM 호출 자체가 실패(프로세스 비정상 종료·타임아웃·응답 파싱 실패).
+
+    스키마 위반과 다르다 — 재프롬프트로 고칠 문제가 아니라 대부분 일시적(타임아웃·구독
+    사용량 한도)이라 재시도로 회복될 수 있어 NON_RETRYABLE 에 넣지 않는다.
+    """
+
+
 class BlobNotFound(AutoApplyError):
     """BlobStore 계약: 없는 키를 get 하면 이 에러 (§11.5 예외 계약)."""
 
