@@ -15,6 +15,7 @@ offset 을 재시작 사이에 영속화하지 않는다 — nonce 가 1회성 �
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -83,18 +84,39 @@ async def main() -> None:
                 await asyncio.sleep(5)
                 continue
 
-            for update in updates:
-                offset = int(update["update_id"]) + 1
-                try:
-                    outcome = await _dispatch(update, container, client)
-                except MalformedCallback as e:
-                    log.warning("telegram.listener.malformed_callback", data=str(e))
-                    continue
-                if outcome is None:
-                    continue
-                log.info(
-                    "telegram.listener.callback", handled=outcome.handled, reason=outcome.reason
-                )
+            new_offset = await _process_updates(updates, lambda u: _dispatch(u, container, client))
+            if new_offset is not None:
+                offset = new_offset
+
+
+async def _process_updates(
+    updates: list[dict[str, Any]],
+    dispatch: Callable[[dict[str, Any]], Awaitable[CallbackOutcome | None]],
+) -> int | None:
+    """update 를 순서대로 처리한다. 하나가 실패해도 나머지는 계속 처리하고 offset 은 넘긴다.
+
+    회귀 테스트로 실측: 리스너가 꺼져 있던 동안 눌린 버튼의 callback_query 는 재기동 후
+    `answerCallbackQuery`가 "Query is too old" `BadRequest`를 던진다. `MalformedCallback`만
+    잡던 코드는 이 예외로 리스너 프로세스 자체가 죽었고, offset 을 재시작 사이에 영속화하지
+    않는 설계(모듈 docstring)라 다음 기동에서 같은 update 를 또 받아 똑같이 죽는 무한
+    크래시루프가 됐다. 모듈 docstring이 전제한 "재처리는 비용만 남는다"가 성립하려면 여기서
+    어떤 예외가 나도 이 프로세스는 살아 있어야 한다.
+    """
+    offset: int | None = None
+    for update in updates:
+        offset = int(update["update_id"]) + 1
+        try:
+            outcome = await dispatch(update)
+        except MalformedCallback as e:
+            log.warning("telegram.listener.malformed_callback", data=str(e))
+            continue
+        except Exception:
+            log.exception("telegram.listener.dispatch_failed", update_id=update.get("update_id"))
+            continue
+        if outcome is None:
+            continue
+        log.info("telegram.listener.callback", handled=outcome.handled, reason=outcome.reason)
+    return offset
 
 
 async def _dispatch(

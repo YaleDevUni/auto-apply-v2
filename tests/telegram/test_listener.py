@@ -7,7 +7,8 @@
 
 import httpx
 
-from auto_apply.telegram.listener import _fetch_updates
+from auto_apply.telegram.bridge import CallbackOutcome, MalformedCallback
+from auto_apply.telegram.listener import _fetch_updates, _process_updates
 
 
 async def test_fetch_updates_sends_offset_and_restricts_to_callback_query_and_message():
@@ -37,3 +38,33 @@ async def test_fetch_updates_omits_offset_when_none():
         updates = await _fetch_updates(http, "token", offset=None)
 
     assert updates == []
+
+
+async def test_process_updates_continues_past_a_dispatch_that_raises():
+    """회귀 테스트: 만료된 callback_query 에 answerCallbackQuery 를 호출하면 텔레그램이
+
+    `BadRequest`를 던지는 걸 라이브에서 봤다(listener 가 꺼져 있던 동안 눌린 버튼). 예전
+    코드는 `MalformedCallback`만 잡아서 이런 예외가 리스너 프로세스 자체를 죽였고, offset 을
+    재시작 사이에 영속화하지 않아 다음 기동에서 같은 update 를 또 받아 무한 크래시루프가 됐다.
+    """
+    calls: list[int] = []
+
+    async def dispatch(update: dict[str, object]) -> CallbackOutcome | None:
+        calls.append(int(update["update_id"]))
+        if update["update_id"] == 1:
+            raise RuntimeError("Query is too old and response timeout expired")
+        return CallbackOutcome(handled=True)
+
+    offset = await _process_updates([{"update_id": 1}, {"update_id": 2}], dispatch)
+
+    assert calls == [1, 2]  # update 1 이 raise 해도 update 2 는 계속 처리된다
+    assert offset == 3  # 실패한 update 도 offset 은 넘어가서 다음 poll 에서 다시 안 받는다
+
+
+async def test_process_updates_still_advances_offset_on_malformed_callback():
+    async def dispatch(update: dict[str, object]) -> CallbackOutcome | None:
+        raise MalformedCallback("bogus")
+
+    offset = await _process_updates([{"update_id": 5}], dispatch)
+
+    assert offset == 6
