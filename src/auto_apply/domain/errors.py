@@ -43,10 +43,28 @@ class LLMSchemaViolation(AutoApplyError):
 
 
 class LLMExecutionError(AutoApplyError):
-    """LLM 호출 자체가 실패(프로세스 비정상 종료·타임아웃·응답 파싱 실패).
+    """LLM 호출 자체가 실패(프로세스 비정상 종료·타임아웃·응답 파싱 실패·분류 안 된 에러).
 
-    스키마 위반과 다르다 — 재프롬프트로 고칠 문제가 아니라 대부분 일시적(타임아웃·구독
-    사용량 한도)이라 재시도로 회복될 수 있어 NON_RETRYABLE 에 넣지 않는다.
+    스키마 위반과 다르다 — 재프롬프트로 고칠 문제가 아니라 대부분 일시적(타임아웃 등)이라
+    재시도로 회복될 수 있어 NON_RETRYABLE 에 넣지 않는다. 재시도로 저절로 안 풀리는 두
+    실패 모드(로그인 풀림·사용량 한도)는 아래 서브클래스로 갈라서 사람에게 알린다.
+    """
+
+
+class LLMAuthRequired(LLMExecutionError):
+    """`claude` CLI 로그인이 풀림 (`claude login` 필요).
+
+    브라우저 storage_state 만료용 `AuthRequired`와 이름이 겹치지 않게 접두어를 다르게 뒀다.
+    재시도로 안 풀리는 실패라 NON_RETRYABLE 이고, workflow 가 이 타입을 보면 사람에게
+    텔레그램으로 알린다(`ClaudeCodeCliLLM._run` 이 CLI 응답 시그니처로 분류해서 던진다).
+    """
+
+
+class LLMQuotaExceeded(LLMExecutionError):
+    """구독 사용량 한도(5시간/주간) 또는 `--max-budget-usd` 초과.
+
+    리셋을 기다리거나 예산 설정을 사람이 조정해야 풀린다 — 재시도로 안 풀리는 실패라
+    NON_RETRYABLE 이고, workflow 가 이 타입을 보면 사람에게 텔레그램으로 알린다.
     """
 
 
@@ -75,4 +93,7 @@ NON_RETRYABLE: tuple[str, ...] = (
     # 같은 실패를 반복할 뿐이라 여기서 non-retryable 로 끊는다.
     LLMSchemaViolation.__name__,
     ProfileNotFound.__name__,
+    # 재시도로 저절로 안 풀리는 claude CLI 실패 — 사람이 개입해야 한다 (로그인/한도 리셋).
+    LLMAuthRequired.__name__,
+    LLMQuotaExceeded.__name__,
 )

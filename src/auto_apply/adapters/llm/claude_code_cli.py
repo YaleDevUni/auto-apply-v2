@@ -29,6 +29,7 @@ Haiku 로 한 번 더 태운다(실측: `--model` 없이 부르면 `modelUsage`�
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from typing import Any
@@ -36,7 +37,12 @@ from typing import Any
 import structlog
 from pydantic import BaseModel, ValidationError
 
-from auto_apply.domain.errors import LLMExecutionError, LLMSchemaViolation
+from auto_apply.domain.errors import (
+    LLMAuthRequired,
+    LLMExecutionError,
+    LLMQuotaExceeded,
+    LLMSchemaViolation,
+)
 
 logger = structlog.get_logger()
 
@@ -45,6 +51,44 @@ _MAX_TURNS_PER_SESSION = 12  # 세션이 무한정 자라 캐시 이득보다 �
 _SYSTEM_PROMPT = (
     "너는 이력서/지원 서류 문구 생성기다. 지시받은 형식으로만 답하고 새 사실을 지어내지 않는다."
 )
+
+# 실측 시그니처(2026-08-19, claude 2.1.235) — CLAUDE_CONFIG_DIR 를 빈 디렉터리로 돌려
+# "로그아웃" 상태를 흉내내고, --max-budget-usd 를 극단적으로 낮춰 "한도초과"를 흉내냈다.
+# 로그아웃: {"is_error":true,"result":"Not logged in · Please run /login",
+#           "api_error_status":null, ...}
+# 한도초과: {"is_error":true,"terminal_reason":"budget_exhausted",
+#           "subtype":"error_max_budget_usd", ...}
+# 두 경우 다 exit code 는 1 이지만 stdout 은 유효한 JSON 이라, JSON 파싱을 exit code 체크보다
+# 먼저 시도해야 이 필드들을 볼 수 있다(구 코드는 exit code 부터 봐서 이 정보를 버렸다).
+_AUTH_PATTERN = re.compile(
+    r"not logged in|please run /login|oauth token (expired|revoked)"
+    r"|invalid api key|authentication failed",
+    re.IGNORECASE,
+)
+_QUOTA_PATTERN = re.compile(r"usage limit reached|credit balance.*too low", re.IGNORECASE)
+_QUOTA_TERMINAL_REASONS = {"budget_exhausted"}
+_QUOTA_SUBTYPES = {"error_max_budget_usd"}
+
+
+def _classify_error(envelope: dict[str, Any]) -> LLMExecutionError:
+    """`is_error` 응답을 CLI 의 실패 시그니처로 분류한다.
+
+    패턴은 claude CLI 바이너리 안의 auth-실패 감지 정규식(전략: "usage limit reached" 등)을
+    실측해서 그대로 옮겼다 — CLI 가 스스로 "이건 로그인/과금 문제다"라고 구분하는 문자열이라
+    우리가 따로 정의하는 것보다 CLI 버전이 바뀌어도 어긋날 확률이 낮다.
+    """
+    result_text = str(envelope.get("result") or "")
+    api_status = envelope.get("api_error_status")
+    if _AUTH_PATTERN.search(result_text) or api_status == 401:
+        return LLMAuthRequired(f"claude CLI 로그인 필요: {result_text or envelope}")
+    if (
+        _QUOTA_PATTERN.search(result_text)
+        or envelope.get("terminal_reason") in _QUOTA_TERMINAL_REASONS
+        or envelope.get("subtype") in _QUOTA_SUBTYPES
+        or api_status == 429
+    ):
+        return LLMQuotaExceeded(f"claude CLI 사용량 한도 초과: {result_text or envelope}")
+    return LLMExecutionError(f"claude CLI 에러 응답: {envelope}")
 
 
 class _Session:
@@ -123,20 +167,28 @@ class ClaudeCodeCliLLM:
                 await proc.wait()
                 raise LLMExecutionError(f"claude CLI 타임아웃({self._timeout_seconds}s)") from e
 
-            if proc.returncode != 0:
-                raise LLMExecutionError(
-                    f"claude CLI 종료 코드 {proc.returncode}: "
-                    f"{stderr.decode(errors='replace')[:500]}"
-                )
+            # exit code 보다 JSON 파싱을 먼저 시도한다 — CLI 는 로그인 풀림/한도초과 같은
+            # 실패도 exit code 1 과 함께 stdout 에 유효한 JSON(is_error 포함)으로 낸다(실측).
+            # exit code 부터 봐서 raise 해버리면 분류에 필요한 필드를 못 본다.
             try:
                 envelope: dict[str, Any] = json.loads(stdout)
             except json.JSONDecodeError as e:
+                if proc.returncode != 0:
+                    raise LLMExecutionError(
+                        f"claude CLI 종료 코드 {proc.returncode}: "
+                        f"{stderr.decode(errors='replace')[:500]}"
+                    ) from e
                 raise LLMExecutionError(
                     f"claude CLI 출력이 JSON 이 아니다: {stdout[:500]!r}"
                 ) from e
 
             if envelope.get("is_error"):
-                raise LLMExecutionError(f"claude CLI 에러 응답: {envelope}")
+                raise _classify_error(envelope)
+            if proc.returncode != 0:
+                raise LLMExecutionError(
+                    f"claude CLI 종료 코드 {proc.returncode}: "
+                    f"{stderr.decode(errors='replace')[:500]}"
+                )
 
             logger.info(
                 "claude_code_cli_call",

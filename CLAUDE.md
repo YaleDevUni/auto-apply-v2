@@ -198,6 +198,14 @@ libgobject/pango/cairo 를 찾으려면 `DYLD_FALLBACK_LIBRARY_PATH`가 필요�
 `CLAUDE_CLI_BINARY`/`CLAUDE_CLI_MODEL`/`CLAUDE_CLI_MAX_BUDGET_USD`로 켠다 — 이 머신에
 `claude login`이 이미 돼 있어야 한다. 기본값은 여전히 `stub`.
 
+**M3 연장 — claude CLI 장애 텔레그램 알림.** `ClaudeCodeCliLLM`이 재시도로 안 풀리는 두 실패
+(로그인 풀림·구독 사용량 한도초과)를 실측 시그니처로 구분해 `LLMAuthRequired`/`LLMQuotaExceeded`
+(`domain/errors.py`, 둘 다 NON_RETRYABLE)로 던지고, `ResumeWorkflow`가 `generate_resume`/
+`review_resume` 실패를 감싸서 `e.cause.type`으로 이 둘을 알아보면 재던지기 전에 `notify`
+activity(승인 흐름과 같은 `Notifier` 채널)를 `task_queue=QUEUE_DEFAULT`로 건너 호출해 사람에게
+알린다(§11.2c). 타임아웃 등 분류 안 된 실패는 여전히 `LLMExecutionError`로 재시도 대상이라
+알림을 안 보낸다.
+
 **공고 수집·매칭** (M1과 별도 트랙) — `JobSource`(wanted/saramin/jasoseol) + 순수 domain
 매칭(`job_screening`/`job_applicability`) + `JobCollectionWorkflow` + Temporal Schedule(cron)
 배선까지 구현됨. `uv run python -m auto_apply.cli collect-schedule`로 등록/갱신(idempotent),

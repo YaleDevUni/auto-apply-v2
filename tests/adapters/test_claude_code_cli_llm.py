@@ -12,7 +12,12 @@ from pydantic import BaseModel, ConfigDict
 
 from auto_apply.adapters.llm import claude_code_cli as module
 from auto_apply.adapters.llm.claude_code_cli import ClaudeCodeCliLLM
-from auto_apply.domain.errors import LLMExecutionError, LLMSchemaViolation
+from auto_apply.domain.errors import (
+    LLMAuthRequired,
+    LLMExecutionError,
+    LLMQuotaExceeded,
+    LLMSchemaViolation,
+)
 
 
 class _Schema(BaseModel):
@@ -93,6 +98,44 @@ async def test_invalid_json_stdout_raises_execution_error():
 async def test_is_error_envelope_raises_execution_error():
     llm = ClaudeCodeCliLLM()
     with _patch_exec(_mock_proc(_envelope(is_error=True))), pytest.raises(LLMExecutionError):
+        await llm.complete("prompt")
+
+
+async def test_logged_out_envelope_raises_llm_auth_required():
+    """실측 시그니처(CLAUDE_CONFIG_DIR 를 빈 디렉터리로 돌려 로그아웃 상태 재현, 2026-08-19)."""
+    llm = ClaudeCodeCliLLM()
+    envelope = _envelope(
+        is_error=True,
+        result="Not logged in · Please run /login",
+        api_error_status=None,
+        terminal_reason="api_error",
+    )
+    proc = _mock_proc(envelope, returncode=1)
+    with _patch_exec(proc), pytest.raises(LLMAuthRequired, match="로그인"):
+        await llm.complete("prompt")
+
+
+async def test_budget_exhausted_envelope_raises_llm_quota_exceeded():
+    """실측 시그니처(--max-budget-usd 를 극단적으로 낮춰 한도초과 재현, 2026-08-19)."""
+    llm = ClaudeCodeCliLLM()
+    envelope = _envelope(
+        is_error=True,
+        result=None,
+        terminal_reason="budget_exhausted",
+        subtype="error_max_budget_usd",
+        errors=["Reached maximum budget ($0.000001)"],
+    )
+    proc = _mock_proc(envelope, returncode=1)
+    with _patch_exec(proc), pytest.raises(LLMQuotaExceeded, match="한도"):
+        await llm.complete("prompt")
+
+
+async def test_rate_limited_api_error_status_raises_llm_quota_exceeded():
+    """result 문자열이 안 잡혀도 api_error_status=429 만으로 분류할 수 있어야 한다."""
+    llm = ClaudeCodeCliLLM()
+    envelope = _envelope(is_error=True, result="upstream rate limit exceeded", api_error_status=429)
+    proc = _mock_proc(envelope, returncode=1)
+    with _patch_exec(proc), pytest.raises(LLMQuotaExceeded):
         await llm.complete("prompt")
 
 
