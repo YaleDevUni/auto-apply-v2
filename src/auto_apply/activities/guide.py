@@ -26,7 +26,9 @@ class GuideActivities:
     async def propose_guide_patch(self, req: ProposeGuidePatchRequest) -> GuidePatchProposal:
         text = await self._guide.get()
         prompt = build_guide_patch_prompt(text, req.feedback, req.job)
-        out = await self._llm.structured(prompt, GuidePatchSchema, cache_key=req.user_id)
+        # 이 activity 는 재시도/재프롬프트 루프가 없는 단발 호출이라 재사용할 캐시 경계가
+        # 없다 — cache_prefix 를 안 넘긴다([[claude-cli-prompt-cache-redesign]]).
+        out = await self._llm.structured(prompt, GuidePatchSchema)
         return GuidePatchProposal(old=out.old, new=out.new, rationale=out.rationale)
 
     @activity.defn(name="apply_guide_patch")

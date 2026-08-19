@@ -70,8 +70,11 @@ def build_guide_patch_prompt(guide: str, feedback: str, job: JobRef) -> str:
     )
 
 
-def reprompt_with_error(prompt: str, error: str) -> str:
-    return (
-        f"{prompt}\n\n[이전 시도 오류] 스키마를 위반했다: {error}\n"
-        "정확한 JSON 스키마로 다시 답하라."
-    )
+def reprompt_error_suffix(error: str) -> str:
+    """스키마 위반 재시도용 추가 지시문 — 원본 프롬프트는 포함하지 않는다.
+
+    호출부(`adapters/resume/simple.py`)가 원본 프롬프트를 `cache_prefix`로, 이 접미어를
+    `prompt`로 나눠 보낸다 — 재시도 때마다 원본이 캐시로 읽히고 이 짧은 문자열만 새로
+    처리된다([[claude-cli-prompt-cache-redesign]]).
+    """
+    return f"\n\n[이전 시도 오류] 스키마를 위반했다: {error}\n정확한 JSON 스키마로 다시 답하라."

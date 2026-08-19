@@ -794,7 +794,9 @@ create-or-update다 — `client.create_schedule()`이 `ScheduleAlreadyRunningErr
 그 구독으로 실행할 수 있으면 이력서 생성 비용이 0에 가까워진다 — `ClaudeCodeCliLLM`
 (`adapters/llm/claude_code_cli.py`)이 그 경로다: 이 머신에 `claude login`(또는
 `claude setup-token`)으로 로그인된 `claude` CLI 를 `asyncio.create_subprocess_exec` 로
-headless 호출한다(`-p`/`--output-format json`).
+headless 호출한다(`-p --input-format stream-json --output-format stream-json --verbose` —
+캐시 브레이크포인트를 찍으려면 stdin 으로 콘텐츠 블록을 나눠 보내야 해서 평범한 `-p <문자열>`
+대신 이 모드를 쓴다, 아래 "캐시" 참고).
 
 **`--bare`를 안 쓰는 이유 (실측):** `claude --bare --help`에 "Anthropic auth is strictly
 ANTHROPIC_API_KEY or apiKeyHelper... (OAuth and keychain are never read)"라고 명시돼 있다.
@@ -810,8 +812,9 @@ ANTHROPIC_API_KEY or apiKeyHelper... (OAuth and keychain are never read)"라고 
 | 기본 시스템 프롬프트(툴 설명 등 포함) | `--system-prompt <우리 문장>`(교체, append 아님) |
 | 모델 자동 라우팅 분류기 호출 | `--model` 명시 (실측: 생략하면 `modelUsage`에 `claude-haiku-4-5` 가 추가로 잡힌다 — CLI 가 라우팅용으로 Haiku 를 한 번 더 부른다) |
 
-구조화 출력은 Anthropic Messages API 의 `tool_choice` 강제 대신 `--json-schema <JSON Schema>`
-+ `--output-format json`을 쓴다 — 응답 JSON 봉투의 `structured_output` 필드에 스키마를 만족하는
+구조화 출력은 Anthropic Messages API 의 `tool_choice` 강제 대신 `--json-schema <JSON Schema>`를
+쓴다 — `--output-format stream-json`의 마지막 줄(`"type":"result"`, 세션 없는
+`--output-format json` 한 방 호출과 같은 모양)의 `structured_output` 필드에 스키마를 만족하는
 값이 이미 파싱되어 온다(실측: `ResumeContentSchema`의 `$defs`/`$ref` 포함 중첩 스키마로 검증
 완료). `structured_output`이 없거나 우리 Pydantic 모델 검증에 실패하면 `AnthropicLLM`과 같은
 계약으로 `LLMSchemaViolation`을 던져서, `SimpleResumeGenerator`의 재프롬프트 루프(§2.3)가
@@ -835,21 +838,39 @@ ANTHROPIC_API_KEY or apiKeyHelper... (OAuth and keychain are never read)"라고 
 사람에게 알린다. NON_RETRYABLE 이라 시도가 정확히 1번이라 알림도 자연히 1번만 나가고, 별도
 debounce 는 안 뒀다.
 
-**캐시 (사용자 요청 "cache 적극 활용"):** 완전히 새 프로세스로 매번 부르면 프롬프트가
-100% 동일해도 캐시가 전혀 안 붙는다(실측: 동일 system-prompt 로 두 번 연속 새 프로세스 호출
-— `cache_creation_input_tokens`/`cache_read_input_tokens` 둘 다 0). Claude Code 는 세션을
-이어야만(`--resume <session-id>`) 이전 턴이 캐시로 읽힌다(실측: 세션을 이었더니 두 번째 턴의
-`cache_read_input_tokens`가 첫 턴의 `cache_creation_input_tokens`와 정확히 일치했다). 그래서
-`LLMClient.structured()`/`complete()`에 선택 파라미터 `cache_key`를 추가했다(Protocol 확장 —
-`StubLLM`은 무시, `AnthropicLLM`은 힌트가 있을 때만 프롬프트 블록에 `cache_control:
-{"type":"ephemeral"}`을 붙인다). `SimpleResumeGenerator`는 `cache_key=req.user_id`를 넘긴다 —
-같은 사용자의 Fact/Profile 목록처럼 여러 공고에 걸쳐 반복되는 큰 프리픽스가 캐시로 읽힌다.
-같은 키의 첫 호출엔 `--session-id`로 세션을 새로 열고, 이후 호출엔 `--resume`으로 잇는다.
-무한정 이어붙이면 세션이 계속 자라 캐시 이득보다 비용이 커지므로 `_MAX_TURNS_PER_SESSION`
-(12턴)·`_SESSION_TTL_SECONDS`(Anthropic ephemeral 캐시 기본 TTL인 5분에 맞춤)를 넘기면 새
-세션을 판다. 같은 키로 동시 호출이 들어오면 같은 세션 파일에 동시 쓰기가 나므로 키별
-`asyncio.Lock`으로 직렬화한다. `cache_key` 없이 부르면(`complete()`의 유일한 현재 호출자는
-없다 — 아직 미사용) 세션을 아예 안 남긴다(`--no-session-persistence`).
+**캐시 (사용자 요청 "cache 적극 활용", 재설계 기록: [[claude-cli-prompt-cache-redesign]]):**
+처음엔 세션(`--resume <session-id>`)을 이어야만 캐시가 붙는다고 실측했지만, 그건 "프롬프트
+앞부분만 같고 뒷부분이 매번 달라지는" 케이스에서 세션 없이는 캐시가 하나도 안 붙는다는
+것만 확인한 결과였다. 다시 실측해보니 진짜 원인은 세션 유무가 아니라 **콘텐츠 블록을 안
+나눈 것**이었다 — `-p <문자열>`로 프롬프트 전체를 하나의 블록으로 보내면, 앞부분이 바이트
+단위로 완전히 같아도 뒷부분이 한 글자만 달라지는 순간 그 블록 전체가 캐시 미스가 된다(부분
+프리픽스 매칭이 전혀 안 됨 — 실측: 27482 토큰짜리 공통 접두어 + 서로 다른 20자 접미어인 두
+번의 세션 없는 호출이 각각 독립적으로 `cache_creation`만 찍고 `cache_read`는 0이었다).
+반대로 `--input-format stream-json`으로 안정적인 부분과 매번 바뀌는 부분을 **별도 텍스트
+블록**으로 나누고 안정적인 블록에만 `cache_control:{"type":"ephemeral","ttl":"1h"}`을 찍으면,
+세션을 전혀 안 이어도(`--no-session-persistence` 그대로) 완전히 독립된 두 번째 프로세스가
+그 블록을 `cache_read`로 읽었다(실측: 27478 토큰 `cache_creation` → 다음 호출
+`cache_read_input_tokens=27420` + 새 접미어만 `cache_creation=52`, 비용 $0.102 → $0.024).
+
+그래서 세션 재사용(`--session-id`/`--resume`, `_MAX_TURNS_PER_SESSION`/`_SESSION_TTL_SECONDS`,
+키별 `asyncio.Lock`) 기반 설계는 걷어냈다. `LLMClient.structured()`/`complete()`의 선택
+파라미터를 `cache_key`(세션 재사용 힌트)에서 `cache_prefix: str = ""`(안정적인 접두어 문자열
+그 자체)로 바꿨다 — 실제로 모델에 보내는 내용은 `cache_prefix + prompt`다. `StubLLM`은 무시,
+`AnthropicLLM`은 `cache_prefix`가 있을 때만 그 부분을 별도 블록으로 떼어 `cache_control`을
+붙인다. `ClaudeCodeCliLLM`도 같은 신호로 `cache_prefix`가 있으면 2블록(`cache_prefix`엔
+브레이크포인트, `prompt`엔 없음), 없으면 1블록 메시지를 만들어 stdin 으로 넘긴다 — 매 호출이
+독립 프로세스이므로 세션 상태/락이 필요 없어졌다.
+
+이 파이프라인에서 바이트 단위로 진짜 안정적인(=서로 다른 공고에 걸쳐서도 100% 동일한) 유일한
+구간은 **한 번의 `generate()` 호출 안에서의 재프롬프트 시도들**이다 — `select_relevant_facts`가
+공고 설명으로 Fact 를 필터링해서 서로 다른 공고끼리는 프롬프트가 애초에 다르다. 그래서
+`SimpleResumeGenerator._structured_with_reprompt`는 원본 프롬프트를 `cache_prefix`로 고정하고
+매 시도의 `prompt`엔 재시도 여부에 따라 빈 문자열이거나 `reprompt_error_suffix()`(오류 안내문)
+만 담는다 — 스키마 위반으로 재프롬프트가 걸리면 2·3번째 시도가 원본을 `cache_read`로 읽는다.
+사용자 단위 세션(`cache_key=req.user_id`)이 갖고 있던 오염 위험(이전 공고의 대화가 다음 공고
+생성에 섞여 들어가는 것)도 세션 자체를 없애면서 구조적으로 사라졌다. `GuideActivities.
+propose_guide_patch`처럼 재시도 루프가 없는 단발 호출은 재사용할 캐시 경계가 없어
+`cache_prefix`를 안 넘긴다.
 
 `LLM_PROVIDER=claude_cli` + `CLAUDE_CLI_BINARY`/`CLAUDE_CLI_MODEL`/`CLAUDE_CLI_MAX_BUDGET_USD`로
 켠다(`.env.example`). 기본값은 여전히 `stub`이고, `anthropic`도 그대로 남아있다 — 어느 걸 켤지는

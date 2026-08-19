@@ -1,7 +1,8 @@
 """ClaudeCodeCliLLM — API 키 대신 `claude` CLI subprocess 를 쓰는 LLMClient 구현 (§11.2).
 
 subprocess 는 뜨지 않는다 — `asyncio.create_subprocess_exec` 를 모킹해서 어댑터가 만드는
-인자·에러 매핑·세션 재사용 로직만 검증한다(실제 CLI 대상 실측은 코드 리뷰 시 수기로 확인함).
+인자·stdin 페이로드·에러 매핑만 검증한다(실제 CLI 대상 실측은 [[claude-cli-prompt-cache-redesign]]
+에 기록됨).
 """
 
 import json
@@ -25,8 +26,9 @@ class _Schema(BaseModel):
     text: str
 
 
-def _envelope(**overrides: object) -> bytes:
+def _result_line(**overrides: object) -> bytes:
     base = {
+        "type": "result",
         "is_error": False,
         "result": "hello",
         "structured_output": {"text": "hi"},
@@ -50,20 +52,20 @@ def _patch_exec(proc: AsyncMock):
 
 async def test_complete_returns_result_field():
     llm = ClaudeCodeCliLLM()
-    with _patch_exec(_mock_proc(_envelope(result="이력서 요약"))):
+    with _patch_exec(_mock_proc(_result_line(result="이력서 요약"))):
         assert await llm.complete("prompt") == "이력서 요약"
 
 
 async def test_structured_validates_structured_output_field():
     llm = ClaudeCodeCliLLM()
-    with _patch_exec(_mock_proc(_envelope(structured_output={"text": "ok"}))):
+    with _patch_exec(_mock_proc(_result_line(structured_output={"text": "ok"}))):
         out = await llm.structured("prompt", _Schema)
     assert out == _Schema(text="ok")
 
 
 async def test_structured_raises_schema_violation_when_field_missing():
     llm = ClaudeCodeCliLLM()
-    envelope = json.loads(_envelope())
+    envelope = json.loads(_result_line())
     del envelope["structured_output"]
     with (
         _patch_exec(_mock_proc(json.dumps(envelope).encode())),
@@ -75,7 +77,7 @@ async def test_structured_raises_schema_violation_when_field_missing():
 async def test_structured_raises_schema_violation_on_pydantic_mismatch():
     llm = ClaudeCodeCliLLM()
     with (
-        _patch_exec(_mock_proc(_envelope(structured_output={"wrong_field": 1}))),
+        _patch_exec(_mock_proc(_result_line(structured_output={"wrong_field": 1}))),
         pytest.raises(LLMSchemaViolation),
     ):
         await llm.structured("prompt", _Schema)
@@ -89,7 +91,7 @@ async def test_nonzero_exit_raises_execution_error():
         await llm.complete("prompt")
 
 
-async def test_invalid_json_stdout_raises_execution_error():
+async def test_no_result_line_in_stdout_raises_execution_error():
     llm = ClaudeCodeCliLLM()
     with _patch_exec(_mock_proc(b"not json")), pytest.raises(LLMExecutionError):
         await llm.complete("prompt")
@@ -97,14 +99,14 @@ async def test_invalid_json_stdout_raises_execution_error():
 
 async def test_is_error_envelope_raises_execution_error():
     llm = ClaudeCodeCliLLM()
-    with _patch_exec(_mock_proc(_envelope(is_error=True))), pytest.raises(LLMExecutionError):
+    with _patch_exec(_mock_proc(_result_line(is_error=True))), pytest.raises(LLMExecutionError):
         await llm.complete("prompt")
 
 
 async def test_logged_out_envelope_raises_llm_auth_required():
     """실측 시그니처(CLAUDE_CONFIG_DIR 를 빈 디렉터리로 돌려 로그아웃 상태 재현, 2026-08-19)."""
     llm = ClaudeCodeCliLLM()
-    envelope = _envelope(
+    envelope = _result_line(
         is_error=True,
         result="Not logged in · Please run /login",
         api_error_status=None,
@@ -118,7 +120,7 @@ async def test_logged_out_envelope_raises_llm_auth_required():
 async def test_budget_exhausted_envelope_raises_llm_quota_exceeded():
     """실측 시그니처(--max-budget-usd 를 극단적으로 낮춰 한도초과 재현, 2026-08-19)."""
     llm = ClaudeCodeCliLLM()
-    envelope = _envelope(
+    envelope = _result_line(
         is_error=True,
         result=None,
         terminal_reason="budget_exhausted",
@@ -133,7 +135,9 @@ async def test_budget_exhausted_envelope_raises_llm_quota_exceeded():
 async def test_rate_limited_api_error_status_raises_llm_quota_exceeded():
     """result 문자열이 안 잡혀도 api_error_status=429 만으로 분류할 수 있어야 한다."""
     llm = ClaudeCodeCliLLM()
-    envelope = _envelope(is_error=True, result="upstream rate limit exceeded", api_error_status=429)
+    envelope = _result_line(
+        is_error=True, result="upstream rate limit exceeded", api_error_status=429
+    )
     proc = _mock_proc(envelope, returncode=1)
     with _patch_exec(proc), pytest.raises(LLMQuotaExceeded):
         await llm.complete("prompt")
@@ -146,7 +150,7 @@ async def test_harness_is_stripped_down_in_every_call():
 
     async def fake_exec(*args: str, **_kwargs: object) -> AsyncMock:
         captured.extend(args)
-        return _mock_proc(_envelope())
+        return _mock_proc(_result_line())
 
     with patch.object(module.asyncio, "create_subprocess_exec", fake_exec):
         await llm.complete("prompt")
@@ -157,66 +161,88 @@ async def test_harness_is_stripped_down_in_every_call():
     idx = captured.index("--setting-sources")
     assert captured[idx + 1] == ""
     assert "--model" in captured and captured[captured.index("--model") + 1] == "claude-sonnet-5"
-    assert "--no-session-persistence" in captured  # cache_key 없는 1회성 호출
+    assert "--no-session-persistence" in captured  # 세션을 전혀 안 남긴다(§ 재설계)
+    assert "--input-format" in captured
+    assert captured[captured.index("--input-format") + 1] == "stream-json"
+    assert "--output-format" in captured
+    assert captured[captured.index("--output-format") + 1] == "stream-json"
 
 
-async def test_no_cache_key_never_persists_a_session():
+async def test_prompt_without_cache_prefix_sends_a_single_content_block():
     llm = ClaudeCodeCliLLM()
-    with _patch_exec(_mock_proc(_envelope())):
-        await llm.complete("a")
-        await llm.complete("b")
-    assert llm._sessions == {}
+    captured_stdin: list[bytes] = []
 
+    result = (_result_line(), b"")
 
-async def test_same_cache_key_resumes_the_session_on_second_call():
-    llm = ClaudeCodeCliLLM()
-    captured_calls: list[list[str]] = []
+    async def fake_exec(*_args: str, **_kwargs: object) -> AsyncMock:
+        proc = _mock_proc(result[0])
 
-    async def fake_exec(*args: str, **_kwargs: object) -> AsyncMock:
-        captured_calls.append(list(args))
-        return _mock_proc(_envelope())
+        async def fake_communicate(input: bytes) -> tuple[bytes, bytes]:
+            captured_stdin.append(input)
+            return result
+
+        proc.communicate = fake_communicate
+        return proc
 
     with patch.object(module.asyncio, "create_subprocess_exec", fake_exec):
-        await llm.complete("first", cache_key="user-1")
-        await llm.complete("second", cache_key="user-1")
+        await llm.complete("그냥 프롬프트")
 
-    first_args, second_args = captured_calls
-    assert "--session-id" in first_args
-    assert "--resume" not in first_args
-    session_id = first_args[first_args.index("--session-id") + 1]
-
-    assert "--resume" in second_args
-    assert second_args[second_args.index("--resume") + 1] == session_id
-    assert "--session-id" not in second_args
-    assert "--no-session-persistence" not in first_args
-    assert "--no-session-persistence" not in second_args
+    payload = json.loads(captured_stdin[0])
+    blocks = payload["message"]["content"]
+    assert len(blocks) == 1
+    assert blocks[0]["text"] == "그냥 프롬프트"
+    assert "cache_control" not in blocks[0]
 
 
-async def test_different_cache_keys_get_independent_sessions():
+async def test_cache_prefix_becomes_a_separate_breakpointed_block():
     llm = ClaudeCodeCliLLM()
-    with _patch_exec(_mock_proc(_envelope())):
-        await llm.complete("a", cache_key="user-1")
-        await llm.complete("b", cache_key="user-2")
-    assert llm._sessions["user-1"].id != llm._sessions["user-2"].id
+    captured_stdin: list[bytes] = []
+
+    result = (_result_line(), b"")
+
+    async def fake_exec(*_args: str, **_kwargs: object) -> AsyncMock:
+        proc = _mock_proc(result[0])
+
+        async def fake_communicate(input: bytes) -> tuple[bytes, bytes]:
+            captured_stdin.append(input)
+            return result
+
+        proc.communicate = fake_communicate
+        return proc
+
+    with patch.object(module.asyncio, "create_subprocess_exec", fake_exec):
+        await llm.complete("변하는 접미어", cache_prefix="안정적인 접두어")
+
+    payload = json.loads(captured_stdin[0])
+    blocks = payload["message"]["content"]
+    assert len(blocks) == 2
+    assert blocks[0]["text"] == "안정적인 접두어"
+    assert blocks[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert blocks[1]["text"] == "변하는 접미어"
+    assert "cache_control" not in blocks[1]
 
 
-async def test_session_rotates_after_max_turns(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(module, "_MAX_TURNS_PER_SESSION", 1)
+async def test_empty_prompt_with_cache_prefix_omits_the_second_block():
+    """재프롬프트 루프 1번째 시도 — addition 이 빈 문자열이면 빈 텍스트 블록을 안 보낸다."""
     llm = ClaudeCodeCliLLM()
-    with _patch_exec(_mock_proc(_envelope())):
-        await llm.complete("a", cache_key="user-1")
-        first_id = llm._sessions["user-1"].id
-        await llm.complete("b", cache_key="user-1")
-        second_id = llm._sessions["user-1"].id
-    assert first_id != second_id
+    captured_stdin: list[bytes] = []
 
+    result = (_result_line(), b"")
 
-async def test_session_rotates_after_ttl_expires(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(module, "_SESSION_TTL_SECONDS", 0)
-    llm = ClaudeCodeCliLLM()
-    with _patch_exec(_mock_proc(_envelope())):
-        await llm.complete("a", cache_key="user-1")
-        first_id = llm._sessions["user-1"].id
-        await llm.complete("b", cache_key="user-1")
-        second_id = llm._sessions["user-1"].id
-    assert first_id != second_id
+    async def fake_exec(*_args: str, **_kwargs: object) -> AsyncMock:
+        proc = _mock_proc(result[0])
+
+        async def fake_communicate(input: bytes) -> tuple[bytes, bytes]:
+            captured_stdin.append(input)
+            return result
+
+        proc.communicate = fake_communicate
+        return proc
+
+    with patch.object(module.asyncio, "create_subprocess_exec", fake_exec):
+        await llm.complete("", cache_prefix="원본 프롬프트 전체")
+
+    payload = json.loads(captured_stdin[0])
+    blocks = payload["message"]["content"]
+    assert len(blocks) == 1
+    assert blocks[0]["text"] == "원본 프롬프트 전체"

@@ -11,16 +11,23 @@
 Haiku 로 한 번 더 태운다(실측: `--model` 없이 부르면 `modelUsage`에 `claude-haiku-4-5`가
 잡히고, 명시하면 사라진다).
 
-캐시(§ 사용자 요청 "cache 적극 활용"): 완전히 새 프로세스로 매번 호출하면(세션 없음)
-프롬프트가 100% 동일해도 캐시가 전혀 안 붙는다(실측: 동일 system-prompt 로 두 번 연속 호출
-— `cache_creation_input_tokens`/`cache_read_input_tokens` 둘 다 0). Claude Code 는 세션을
-이어야만(`--resume`) 이전 턴을 캐시로 읽는다(실측: 세션을 잇자 두 번째 턴에서
-`cache_read_input_tokens` 가 첫 턴의 `cache_creation_input_tokens` 와 정확히 일치). 그래서
-`cache_key`(호출자가 주는 힌트, 보통 user_id)별로 세션 id 를 들고 있다가 같은 키의 다음
-호출에 `--resume` 한다 — 같은 사용자의 Fact/Profile 목록처럼 여러 공고에 걸쳐 반복되는 큰
-프리픽스가 캐시로 읽힌다. 무한정 이어붙이면 세션이 계속 자라 캐시 이득보다 비용이 커지므로
-`_MAX_TURNS_PER_SESSION`·`_SESSION_TTL_SECONDS` 를 넘기면 새 세션을 판다. 같은 키로 동시에
-두 호출이 들어오면 같은 세션 파일에 동시 쓰기가 나므로 키별 `asyncio.Lock`으로 직렬화한다.
+캐시(§ 사용자 요청 "cache 적극 활용", 재설계는 [[claude-cli-prompt-cache-redesign]]):
+처음엔 `--resume`으로 세션을 이어야만 캐시가 붙는다고 실측했지만, 그건 "프롬프트 앞부분만
+같고 뒷부분이 다른" 상황에서 세션 없이는 캐시가 하나도 안 붙는다는 것만 확인한 결과였다.
+다시 실측해보니 진짜 원인은 세션 유무가 아니라 **콘텐츠 블록을 안 나눈 것**이었다 — `-p
+<문자열>` 로 프롬프트 전체를 하나의 블록으로 보내면, 앞부분이 바이트 단위로 완전히 같아도
+뒷부분이 한 글자만 달라지면 그 블록 전체가 캐시 미스로 처리된다(부분 프리픽스 매칭이 전혀
+안 됨 — 실측: 27482 토큰짜리 공통 접두어에 뒤쪽 20자만 다른 두 번의 세션 없는 호출이 각각
+독립적으로 `cache_creation`만 찍고 `cache_read`는 0이었다). 반대로 `--input-format
+stream-json` 으로 안정적인 부분과 매번 바뀌는 부분을 **별도 텍스트 블록**으로 나누고
+안정적인 블록에만 `cache_control`을 찍으면, 세션을 전혀 안 이어도(`--no-session-persistence`
+그대로 둔 채) 완전히 독립된 두 번째 프로세스가 그 블록을 `cache_read`로 읽었다(실측:
+27478 토큰 `cache_creation` → 다음 호출 `cache_read_input_tokens=27420` + 새 접미어만
+`cache_creation=52`). 그래서 세션 재사용(`--session-id`/`--resume`) 기반 캐싱은 걷어내고,
+호출자가 `cache_prefix`(안정적인 부분)와 `prompt`(매번 바뀌는 부분)를 나눠 넘기면 그 경계에
+`cache_control`을 찍는 방식으로 바꿨다 — 세션 상태를 안 들고 있어도 되니 프로세스 간 락도
+필요 없어졌고, 세션 재사용이 갖고 있던 오염 위험(이전 공고의 대화가 다음 공고 생성에 섞여
+들어가는 것)도 구조적으로 사라졌다.
 
 전제: 이 프로세스를 실행하는 머신에 `claude` CLI 가 설치되고 `claude login`(또는
 `claude setup-token`)으로 이미 로그인돼 있어야 한다 — 이 어댑터는 로그인을 대신 해주지
@@ -30,8 +37,6 @@ Haiku 로 한 번 더 태운다(실측: `--model` 없이 부르면 `modelUsage`�
 import asyncio
 import json
 import re
-import time
-import uuid
 from typing import Any
 
 import structlog
@@ -46,8 +51,6 @@ from auto_apply.domain.errors import (
 
 logger = structlog.get_logger()
 
-_SESSION_TTL_SECONDS = 300  # Anthropic ephemeral 캐시 기본 TTL(5분)에 맞춘다
-_MAX_TURNS_PER_SESSION = 12  # 세션이 무한정 자라 캐시 이득보다 비용이 커지는 걸 막는 상한
 _SYSTEM_PROMPT = (
     "너는 이력서/지원 서류 문구 생성기다. 지시받은 형식으로만 답하고 새 사실을 지어내지 않는다."
 )
@@ -91,13 +94,45 @@ def _classify_error(envelope: dict[str, Any]) -> LLMExecutionError:
     return LLMExecutionError(f"claude CLI 에러 응답: {envelope}")
 
 
-class _Session:
-    __slots__ = ("id", "last_used", "turns")
+def _build_stdin_payload(prompt: str, cache_prefix: str) -> bytes:
+    """`--input-format stream-json` 이 기대하는 한 줄짜리 사용자 메시지를 만든다.
 
-    def __init__(self, session_id: str) -> None:
-        self.id = session_id
-        self.turns = 0
-        self.last_used = time.monotonic()
+    `cache_prefix`(안정적인 부분)가 있으면 별도 블록으로 떼어 그 블록에만 `cache_control`을
+    찍는다 — 매번 바뀌는 `prompt`와 같은 블록에 이어붙이면 부분 매칭이 안 된다(모듈 docstring
+    참고). `prompt`가 빈 문자열인데 `cache_prefix`만 있는 경우(재프롬프트 루프의 1번째 시도)는
+    빈 텍스트 블록을 추가하지 않는다.
+    """
+    content: list[dict[str, Any]] = []
+    if cache_prefix:
+        content.append(
+            {
+                "type": "text",
+                "text": cache_prefix,
+                "cache_control": {"type": "ephemeral", "ttl": "1h"},
+            }
+        )
+    if prompt or not content:
+        content.append({"type": "text", "text": prompt})
+    envelope = {"type": "user", "message": {"role": "user", "content": content}}
+    return (json.dumps(envelope) + "\n").encode()
+
+
+def _find_result_line(stdout: bytes) -> dict[str, Any] | None:
+    """`--output-format stream-json` 출력(JSONL)에서 마지막 `"type":"result"` 요약 줄을 찾는다.
+
+    성공/실패 모두 이 줄 하나로 수렴한다 — 나머지 줄(assistant/tool_use 등)은 무시한다.
+    """
+    last: dict[str, Any] | None = None
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("type") == "result":
+            last = obj
+    return last
 
 
 class ClaudeCodeCliLLM:
@@ -115,23 +150,19 @@ class ClaudeCodeCliLLM:
         self._model = model
         self._max_budget_usd = max_budget_usd
         self._timeout_seconds = timeout_seconds
-        self._sessions: dict[str, _Session] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
 
-    async def complete(
-        self, prompt: str, *, max_tokens: int = 2048, cache_key: str | None = None
-    ) -> str:
-        envelope = await self._run(prompt, cache_key=cache_key)
+    async def complete(self, prompt: str, *, max_tokens: int = 2048, cache_prefix: str = "") -> str:
+        envelope = await self._run(prompt, cache_prefix=cache_prefix)
         result = envelope.get("result")
         if not isinstance(result, str):
             raise LLMExecutionError(f"claude CLI 응답에 result 가 없다: {envelope}")
         return result
 
     async def structured[T: BaseModel](
-        self, prompt: str, schema: type[T], *, max_tokens: int = 2048, cache_key: str | None = None
+        self, prompt: str, schema: type[T], *, max_tokens: int = 2048, cache_prefix: str = ""
     ) -> T:
         envelope = await self._run(
-            prompt, cache_key=cache_key, json_schema=schema.model_json_schema()
+            prompt, cache_prefix=cache_prefix, json_schema=schema.model_json_schema()
         )
         payload = envelope.get("structured_output")
         if payload is None:
@@ -145,76 +176,62 @@ class ClaudeCodeCliLLM:
         self,
         prompt: str,
         *,
-        cache_key: str | None,
+        cache_prefix: str,
         json_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        lock = self._locks.setdefault(cache_key, asyncio.Lock()) if cache_key else asyncio.Lock()
-        async with lock:
-            session = self._session_for(cache_key) if cache_key else None
-            args = self._build_args(prompt, json_schema=json_schema, session=session)
+        args = self._build_args(json_schema=json_schema)
+        stdin_payload = _build_stdin_payload(prompt, cache_prefix)
 
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=stdin_payload), timeout=self._timeout_seconds
             )
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=self._timeout_seconds
-                )
-            except TimeoutError as e:
-                proc.kill()
-                await proc.wait()
-                raise LLMExecutionError(f"claude CLI 타임아웃({self._timeout_seconds}s)") from e
+        except TimeoutError as e:
+            proc.kill()
+            await proc.wait()
+            raise LLMExecutionError(f"claude CLI 타임아웃({self._timeout_seconds}s)") from e
 
-            # exit code 보다 JSON 파싱을 먼저 시도한다 — CLI 는 로그인 풀림/한도초과 같은
-            # 실패도 exit code 1 과 함께 stdout 에 유효한 JSON(is_error 포함)으로 낸다(실측).
-            # exit code 부터 봐서 raise 해버리면 분류에 필요한 필드를 못 본다.
-            try:
-                envelope: dict[str, Any] = json.loads(stdout)
-            except json.JSONDecodeError as e:
-                if proc.returncode != 0:
-                    raise LLMExecutionError(
-                        f"claude CLI 종료 코드 {proc.returncode}: "
-                        f"{stderr.decode(errors='replace')[:500]}"
-                    ) from e
-                raise LLMExecutionError(
-                    f"claude CLI 출력이 JSON 이 아니다: {stdout[:500]!r}"
-                ) from e
-
-            if envelope.get("is_error"):
-                raise _classify_error(envelope)
+        envelope = _find_result_line(stdout)
+        if envelope is None:
             if proc.returncode != 0:
                 raise LLMExecutionError(
                     f"claude CLI 종료 코드 {proc.returncode}: "
                     f"{stderr.decode(errors='replace')[:500]}"
                 )
+            raise LLMExecutionError(f"claude CLI 출력에 결과 라인이 없다: {stdout[:500]!r}")
 
-            logger.info(
-                "claude_code_cli_call",
-                cache_key=cache_key,
-                session_reused=bool(session and session.turns > 0),
-                cost_usd=envelope.get("total_cost_usd"),
-                cache_read_tokens=envelope.get("usage", {}).get("cache_read_input_tokens"),
-                cache_creation_tokens=envelope.get("usage", {}).get("cache_creation_input_tokens"),
+        if envelope.get("is_error"):
+            raise _classify_error(envelope)
+        if proc.returncode != 0:
+            raise LLMExecutionError(
+                f"claude CLI 종료 코드 {proc.returncode}: {stderr.decode(errors='replace')[:500]}"
             )
 
-            if session is not None:
-                session.turns += 1
-                session.last_used = time.monotonic()
-            return envelope
+        usage = envelope.get("usage", {})
+        logger.info(
+            "claude_code_cli_call",
+            cache_prefix_len=len(cache_prefix),
+            cost_usd=envelope.get("total_cost_usd"),
+            cache_read_tokens=usage.get("cache_read_input_tokens"),
+            cache_creation_tokens=usage.get("cache_creation_input_tokens"),
+        )
+        return envelope
 
-    def _build_args(
-        self,
-        prompt: str,
-        *,
-        json_schema: dict[str, Any] | None,
-        session: "_Session | None",
-    ) -> list[str]:
+    def _build_args(self, *, json_schema: dict[str, Any] | None) -> list[str]:
         args = [
             self._binary,
             "-p",
-            prompt,
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--verbose",
             "--model",
             self._model,
             "--system-prompt",
@@ -227,32 +244,10 @@ class ClaudeCodeCliLLM:
             "",
             "--permission-mode",
             "bypassPermissions",
-            "--output-format",
-            "json",
+            "--no-session-persistence",
         ]
         if self._max_budget_usd is not None:
             args += ["--max-budget-usd", str(self._max_budget_usd)]
         if json_schema is not None:
             args += ["--json-schema", json.dumps(json_schema)]
-
-        if session is None:
-            # cache_key 없이 부른 1회성 호출 — 디스크에 세션을 남기지 않는다.
-            args += ["--no-session-persistence"]
-        elif session.turns == 0:
-            args += ["--session-id", session.id]
-        else:
-            args += ["--resume", session.id]
         return args
-
-    def _session_for(self, cache_key: str) -> _Session:
-        existing = self._sessions.get(cache_key)
-        now = time.monotonic()
-        if (
-            existing is not None
-            and existing.turns < _MAX_TURNS_PER_SESSION
-            and now - existing.last_used < _SESSION_TTL_SECONDS
-        ):
-            return existing
-        session = _Session(str(uuid.uuid4()))
-        self._sessions[cache_key] = session
-        return session

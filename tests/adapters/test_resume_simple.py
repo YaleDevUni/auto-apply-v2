@@ -50,18 +50,23 @@ def _profile_source() -> StaticProfileSource:
 
 
 class _RecordingLLM(StubLLM):
-    """StubLLM 을 감싸 마지막 structured() 호출의 prompt 를 기록한다 — guide/feedback 이
+    """StubLLM 을 감싸 마지막 structured() 호출의 실제 전송 내용을 기록한다 — guide/feedback 이
 
-    실제로 프롬프트에 실리는지(SimpleResumeGenerator 배선) 검증하는 데 쓴다.
+    실제로 프롬프트에 실리는지(SimpleResumeGenerator 배선) 검증하는 데 쓴다. `cache_prefix +
+    prompt`가 모델에 보내지는 전체 내용이라 그 결합을 기록한다.
     """
 
     def __init__(self, payloads: list[dict[str, object]]) -> None:
         super().__init__(payloads=payloads)
         self.last_prompt: str = ""
 
-    async def structured(self, prompt, schema, *, max_tokens=2048, cache_key=None):  # type: ignore[override]
-        self.last_prompt = prompt
-        return await super().structured(prompt, schema, max_tokens=max_tokens, cache_key=cache_key)
+    async def structured(  # type: ignore[override]
+        self, prompt, schema, *, max_tokens=2048, cache_prefix=""
+    ):
+        self.last_prompt = cache_prefix + prompt
+        return await super().structured(
+            prompt, schema, max_tokens=max_tokens, cache_prefix=cache_prefix
+        )
 
 
 async def test_generate_grounds_used_fact_ids_from_llm_output():

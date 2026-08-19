@@ -6,7 +6,7 @@
 """
 
 from auto_apply.adapters.resume._assemble import assemble_resume, used_fact_ids
-from auto_apply.ai.prompts import build_resume_prompt, reprompt_with_error
+from auto_apply.ai.prompts import build_resume_prompt, reprompt_error_suffix
 from auto_apply.ai.schemas import ResumeContentSchema
 from auto_apply.contracts.dto import (
     GenerateResumeRequest,
@@ -52,8 +52,7 @@ class SimpleResumeGenerator:
         blocks = select_relevant_blocks(group_facts_for_resume(facts), job_text)
 
         content = await self._structured_with_reprompt(
-            build_resume_prompt(req.job, relevant, blocks, guide=guide, feedback=req.feedback),
-            cache_key=req.user_id,
+            build_resume_prompt(req.job, relevant, blocks, guide=guide, feedback=req.feedback)
         )
         assembled = assemble_resume(profile, blocks, content)
         return ResumeDraft(
@@ -62,22 +61,21 @@ class SimpleResumeGenerator:
             used_fact_ids=used_fact_ids(content),
         )
 
-    async def _structured_with_reprompt(
-        self, prompt: str, *, cache_key: str
-    ) -> ResumeContentSchema:
-        # cache_key 를 재프롬프트 시도 전체에 동일하게 넘긴다 — 원본 프롬프트가 매 시도의
-        # 접두어로 그대로 남기 때문에(reprompt_with_error 참고), 캐시를 태우는 구현
-        # (ClaudeCodeCliLLM 등)이라면 2·3번째 시도가 그 접두어를 캐시로 읽는다.
-        attempt_prompt = prompt
+    async def _structured_with_reprompt(self, prompt: str) -> ResumeContentSchema:
+        # 원본 prompt 를 cache_prefix 로 고정해 재프롬프트 시도 전체가 같은 캐시 경계를
+        # 공유하게 한다 — 매 시도 addition(빈 문자열 또는 오류 안내문)만 바뀐다. 캐시를
+        # 태우는 구현(ClaudeCodeCliLLM 등)이라면 2·3번째 시도가 원본을 cache_read 로 읽는다
+        # ([[claude-cli-prompt-cache-redesign]]).
+        addition = ""
         last_error: LLMSchemaViolation | None = None
         for _ in range(self._max_reprompts + 1):
             try:
                 return await self._llm.structured(
-                    attempt_prompt, ResumeContentSchema, cache_key=cache_key
+                    addition, ResumeContentSchema, cache_prefix=prompt
                 )
             except LLMSchemaViolation as e:
                 last_error = e
-                attempt_prompt = reprompt_with_error(prompt, str(e))
+                addition = reprompt_error_suffix(str(e))
         assert last_error is not None  # for 루프가 최소 1회 돌아 last_error 가 반드시 세팅된다
         raise last_error
 
