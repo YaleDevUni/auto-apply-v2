@@ -18,6 +18,7 @@ from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.adapters.matching_config.static import StaticMatchingConfigSource
 from auto_apply.adapters.matching_config.yaml_file import YamlMatchingConfigSource
 from auto_apply.adapters.notifier.console import ConsoleNotifier
+from auto_apply.adapters.notifier.telegram import TelegramNotifier
 from auto_apply.adapters.pdf.stub import StubPdfRenderer
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
 from auto_apply.adapters.platform.registry import StaticPlatformRegistry
@@ -87,7 +88,11 @@ def _build_notifier(cfg: Settings, idgen: IdGen) -> Notifier:
         case "console":
             return ConsoleNotifier(idgen)
         case "telegram":
-            raise NotImplementedError("TelegramNotifier 는 M1 후반에 추가한다")
+            if not cfg.telegram_bot_token:
+                raise ValueError("NOTIFIER=telegram 이면 TELEGRAM_BOT_TOKEN 이 필요하다")
+            if not cfg.allowed_chat_ids:
+                raise ValueError("NOTIFIER=telegram 이면 TELEGRAM_ALLOWED_CHAT_IDS 가 필요하다")
+            return TelegramNotifier(cfg.telegram_bot_token, cfg.allowed_chat_ids, idgen)
 
 
 def _build_uow(cfg: Settings) -> Callable[[], UnitOfWork]:
