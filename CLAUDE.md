@@ -119,6 +119,7 @@ Playwright executor(replay 대역만), Anthropic 어댑터, S3 어댑터, LangGr
 `AutomationRepairWorkflow`(M4).
 
 **공고 수집·매칭** (M1과 별도 트랙) — `JobSource`(wanted/saramin/jasoseol) + 순수 domain
-매칭(`job_screening`/`job_applicability`) + `JobCollectionWorkflow`까지 구현됨. Temporal
-Schedule(cron) 배선은 아직 없다 — `uv run python -m auto_apply.cli collect --platforms wanted`로
-수동 트리거. 자세한 설계는 ARCHITECTURE.md §11.2b.
+매칭(`job_screening`/`job_applicability`) + `JobCollectionWorkflow` + Temporal Schedule(cron)
+배선까지 구현됨. `uv run python -m auto_apply.cli collect-schedule`로 등록/갱신(idempotent),
+`collect-unschedule`로 삭제, `collect --platforms wanted`로 수동 1회 실행. 자세한 설계는
+ARCHITECTURE.md §11.2b.

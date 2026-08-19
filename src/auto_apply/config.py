@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./var")
     matching_config_path: Path = Path("./config/matching.yaml")
 
+    # 공고 수집 Schedule (§11.2b) — `cli.py collect-schedule`이 이 값으로 등록/갱신한다.
+    job_collection_cron: str = "0 9 * * *"
+    job_collection_platforms: str = "wanted,saramin,jasoseol"
+
     s3_endpoint_url: str = "http://localhost:9000"
     s3_bucket: str = "auto-apply"
     s3_access_key: str = ""

@@ -19,6 +19,7 @@ from auto_apply.contracts.dto import (
     StartApplication,
 )
 from auto_apply.contracts.job import CollectJobsInput
+from auto_apply.schedule import delete_job_collection_schedule, ensure_job_collection_schedule
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_DEFAULT
 from auto_apply.workflows.application import ApplicationWorkflow
 from auto_apply.workflows.job_collection import JobCollectionWorkflow
@@ -56,6 +57,18 @@ async def _run(args: argparse.Namespace) -> None:
                 f"{r.platform}: found={r.found} passed={r.passed} actionable={r.actionable}"
                 f"{f' error={r.error}' if r.error else ''}"
             )
+        return
+
+    if args.command == "collect-schedule":
+        outcome = await ensure_job_collection_schedule(client, cfg)
+        print(
+            f"{outcome}: cron='{cfg.job_collection_cron}' platforms={cfg.job_collection_platforms}"
+        )
+        return
+
+    if args.command == "collect-unschedule":
+        await delete_job_collection_schedule(client)
+        print("deleted")
         return
 
     wf_id = f"application-{args.id}"
@@ -127,8 +140,14 @@ def main() -> None:
     schedule.add_argument("id")
     schedule.add_argument("--at", required=True)
 
-    collect = sub.add_parser("collect", help="공고 수집 1회 실행 (Schedule 붙기 전 수동 트리거)")
+    collect = sub.add_parser("collect", help="공고 수집 1회 실행 (수동 트리거)")
     collect.add_argument("--platforms", required=True, help="쉼표 구분, 예: wanted,saramin")
+
+    sub.add_parser(
+        "collect-schedule",
+        help="공고 수집 Schedule 등록/갱신 (JOB_COLLECTION_CRON/_PLATFORMS 사용, idempotent)",
+    )
+    sub.add_parser("collect-unschedule", help="공고 수집 Schedule 삭제")
 
     asyncio.run(_run(parser.parse_args()))
 
