@@ -14,6 +14,7 @@ from temporalio.worker import Worker
 from auto_apply.contracts.dto import (
     ApproveSignal,
     GuidePatchDecisionSignal,
+    GuidePatchReviseSignal,
     RejectSignal,
     RescheduleSignal,
     ReviseSignal,
@@ -21,7 +22,6 @@ from auto_apply.contracts.dto import (
 )
 from auto_apply.domain.enums import ApplicationState, AttemptOutcome, ExecutionMode, RevisionScope
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_AI, QUEUE_BROWSER, QUEUE_DEFAULT
-from auto_apply.workflows import _revision
 from auto_apply.workflows.application import ApplicationWorkflow
 from auto_apply.workflows.resume import ResumeWorkflow
 from tests.conftest import JOB_URL, Harness
@@ -315,16 +315,117 @@ async def test_revise_general_rejected_guide_patch_still_regenerates(env: Workfl
     assert result.state is ApplicationState.COMPLETED
 
 
-async def test_revise_exceeding_max_rounds_goes_needs_human(env: WorkflowEnvironment):
-    """무한 재생성 루프를 만들지 않는다 — MAX_REVISIONS 를 넘으면 사람에게 넘긴다."""
-    h = Harness()
+async def test_guide_patch_revise_regenerates_proposal_then_approves(env: WorkflowEnvironment):
+    """가이드 patch 💬 코멘트 — 제안 자체를 다시 받은 뒤 승인하면 코멘트가 반영된 두 번째
+
+    제안이 적용된다(첫 제안이 아니라).
+    """
+    h = Harness(
+        guide_patch_payloads=[
+            {"old": "", "new": "존댓말로 쓴다.", "rationale": "1차 제안"},
+            {"old": "", "new": "항상 존댓말로 정중하게 쓴다.", "rationale": "코멘트 반영"},
+        ]
+    )
     async with _Workers(env.client, h):
         handle = await _start(env.client, _cmd())
         await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
         assert h.notifier is not None
+        main_nonce = await _wait_new_nonce(h, set())
+
+        await handle.signal(
+            ApplicationWorkflow.revise,
+            ReviseSignal(feedback="항상 존댓말로 써줘", scope=RevisionScope.GENERAL),
+        )
+        guide_nonce = await _wait_new_nonce(h, {main_nonce})
+
+        await handle.signal(
+            ApplicationWorkflow.revise_guide_patch,
+            GuidePatchReviseSignal(feedback="더 정중하게 다듬어줘", nonce=guide_nonce),
+        )
+        # 코멘트를 반영한 두 번째 제안이 새 nonce 로 다시 온다
+        guide_nonce_2 = await _wait_new_nonce(h, {main_nonce, guide_nonce})
+
+        await handle.signal(
+            ApplicationWorkflow.approve_guide_patch, GuidePatchDecisionSignal(nonce=guide_nonce_2)
+        )
+        round2_nonce = await _wait_new_nonce(h, {main_nonce, guide_nonce, guide_nonce_2})
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal(nonce=round2_nonce))
+        result = await handle.result()
+
+        assert h.guide is not None
+        assert await h.guide.get() == "항상 존댓말로 정중하게 쓴다."
+
+    assert result.state is ApplicationState.COMPLETED
+
+
+async def test_guide_patch_revise_exceeding_max_rounds_gives_up_guide_but_keeps_going(
+    env: WorkflowEnvironment,
+):
+    """가이드 patch 코멘트도 무한 재제안 루프를 만들지 않는다 — `max_guide_revisions`(설정으로
+
+    조정 가능, config.py)를 넘으면 가이드 반영은 포기하지만, 본 라운드(REVISE) 재생성은 원래
+    feedback 그대로 계속된다(revise_guide 실패/거절과 같은 처리 — 가이드 반영은 덤이지 필수
+    경로가 아니다). 테스트는 운영 기본값과 무관하게 작게 override 해서 경계만 본다.
+    """
+    max_guide_revisions = 2
+    h = Harness(
+        guide_patch_payloads=[
+            {"old": "", "new": "제안 1", "rationale": "r1"},
+            {"old": "", "new": "제안 2", "rationale": "r2"},
+            {"old": "", "new": "제안 3", "rationale": "r3"},
+        ]
+    )
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd(max_guide_revisions=max_guide_revisions))
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        assert h.notifier is not None
         seen = {await _wait_new_nonce(h, set())}
 
-        for i in range(_revision.MAX_REVISIONS):
+        await handle.signal(
+            ApplicationWorkflow.revise,
+            ReviseSignal(feedback="항상 존댓말로 써줘", scope=RevisionScope.GENERAL),
+        )
+        guide_nonce = await _wait_new_nonce(h, seen)
+        seen.add(guide_nonce)
+
+        for i in range(max_guide_revisions):
+            await handle.signal(
+                ApplicationWorkflow.revise_guide_patch,
+                GuidePatchReviseSignal(feedback=f"코멘트 {i}", nonce=guide_nonce),
+            )
+            guide_nonce = await _wait_new_nonce(h, seen)
+            seen.add(guide_nonce)
+
+        # 이번이 MAX_GUIDE_REVISIONS 를 넘는 마지막 코멘트다 — 가이드 재제안은 더 없고,
+        # 본 라운드 재생성으로 넘어가 다시 본 승인 요청(새 nonce)이 온다
+        await handle.signal(
+            ApplicationWorkflow.revise_guide_patch,
+            GuidePatchReviseSignal(feedback="마지막 코멘트", nonce=guide_nonce),
+        )
+        round2_nonce = await _wait_new_nonce(h, seen)
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal(nonce=round2_nonce))
+        result = await handle.result()
+
+        assert h.guide is not None
+        assert await h.guide.get() == ""  # 가이드 patch 는 결국 반영되지 않았다
+
+    assert result.state is ApplicationState.COMPLETED
+
+
+async def test_revise_exceeding_max_rounds_goes_needs_human(env: WorkflowEnvironment):
+    """무한 재생성 루프를 만들지 않는다 — `max_revisions`(설정으로 조정 가능, config.py)를
+
+    넘으면 사람에게 넘긴다. 테스트는 운영 기본값과 무관하게 작게 override 해서 경계만 본다.
+    """
+    max_revisions = 2
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd(max_revisions=max_revisions))
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        assert h.notifier is not None
+        seen = {await _wait_new_nonce(h, set())}
+
+        for i in range(max_revisions):
             await handle.signal(
                 ApplicationWorkflow.revise,
                 ReviseSignal(feedback=f"피드백 {i}", scope=RevisionScope.SPECIFIC),

@@ -27,6 +27,7 @@ from auto_apply.contracts.dto import (
     DecisionRequest,
     GuidePatchDecisionSignal,
     GuidePatchProposal,
+    GuidePatchReviseSignal,
     JobRef,
     NotifyEvent,
     PersistState,
@@ -56,7 +57,7 @@ class ApplicationWorkflow:
         self._decision_nonce: str | None = None
         # 가이드 patch 2차 승인용 슬롯 — 본 승인/거절과 nonce/decision 을 분리해 둔다
         # (섞으면 "가이드 반영 승인" 클릭이 "지원 승인"으로 잘못 해석될 수 있다).
-        self._guide_decision: bool | None = None
+        self._guide_decision: _revision.GuidePatchDecision | None = None
         self._guide_nonce: str | None = None
         self._scheduled_at: datetime | None = None
         self._cancelled = False
@@ -124,7 +125,7 @@ class ApplicationWorkflow:
     async def _approval_loop(
         self, cmd: StartApplication, job: JobRef, generated: _revision.GeneratedResume
     ) -> tuple[Decision | None, _revision.GeneratedResume]:
-        """승인/거절이 나올 때까지 REVISE 를 반복한다. `MAX_REVISIONS`를 넘으면 포기하고
+        """승인/거절이 나올 때까지 REVISE 를 반복한다. `cmd.max_revisions`를 넘으면 포기하고
 
         REVISE 인 채로 반환한다 — 호출자가 그 경우를 NEEDS_HUMAN 으로 마무리한다.
         """
@@ -136,8 +137,8 @@ class ApplicationWorkflow:
 
             self._decision = None  # 다음 라운드를 위해 idempotency 슬롯을 다시 비운다
             revisions += 1
-            if revisions > _revision.MAX_REVISIONS:
-                reason = f"수정요청이 {_revision.MAX_REVISIONS}회를 넘었다"
+            if revisions > cmd.max_revisions:
+                reason = f"수정요청이 {cmd.max_revisions}회를 넘었다"
                 return Decision(kind=DecisionKind.REVISE, reason=reason), generated
 
             if decision.scope is RevisionScope.GENERAL:
@@ -159,7 +160,7 @@ class ApplicationWorkflow:
 
     async def _await_guide_patch_decision(
         self, cmd: StartApplication, job: JobRef, proposal: GuidePatchProposal
-    ) -> bool:
+    ) -> _revision.GuidePatchDecision:
         ticket = await workflow.execute_activity(
             request_approval,
             DecisionRequest(
@@ -179,10 +180,12 @@ class ApplicationWorkflow:
                 timeout=timedelta(hours=cmd.approval_timeout_hours),
             )
         except TimeoutError:
-            return False
-        approved = bool(self._guide_decision)
-        self._guide_decision = None  # 다음 REVISE(general) 라운드를 위해 슬롯을 비운다
-        return approved
+            return _revision.GuidePatchDecision(kind=DecisionKind.REJECT, feedback="시간 초과")
+        decision = self._guide_decision
+        assert decision is not None
+        # 다음 라운드(코멘트 재제안 또는 다음 REVISE(general))를 위해 슬롯을 비운다
+        self._guide_decision = None
+        return decision
 
     async def _await_decision(
         self, cmd: StartApplication, job: JobRef, pdf_key: str
@@ -340,12 +343,19 @@ class ApplicationWorkflow:
     @workflow.signal
     def approve_guide_patch(self, sig: GuidePatchDecisionSignal) -> None:
         if self._guide_decision is None and self._guide_nonce_ok(sig.nonce):
-            self._guide_decision = True
+            self._guide_decision = _revision.GuidePatchDecision(kind=DecisionKind.APPROVE)
 
     @workflow.signal
     def reject_guide_patch(self, sig: GuidePatchDecisionSignal) -> None:
         if self._guide_decision is None and self._guide_nonce_ok(sig.nonce):
-            self._guide_decision = False
+            self._guide_decision = _revision.GuidePatchDecision(kind=DecisionKind.REJECT)
+
+    @workflow.signal
+    def revise_guide_patch(self, sig: GuidePatchReviseSignal) -> None:
+        if self._guide_decision is None and self._guide_nonce_ok(sig.nonce):
+            self._guide_decision = _revision.GuidePatchDecision(
+                kind=DecisionKind.REVISE, feedback=sig.feedback
+            )
 
     @workflow.signal
     def reschedule(self, sig: RescheduleSignal) -> None:

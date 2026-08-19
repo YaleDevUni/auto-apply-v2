@@ -26,6 +26,8 @@ class StartApplication(_Frozen):
     # 워크플로우는 설정을 직접 읽지 않는다 (결정성). 시작 시점에 주입한다.
     approval_timeout_hours: int = Field(default=72, ge=1)
     dry_run_only: bool = True
+    max_revisions: int = Field(default=10, ge=1)
+    max_guide_revisions: int = Field(default=5, ge=1)
 
 
 class JobRef(_Frozen):
@@ -201,6 +203,14 @@ class ReviseSignal(_Frozen):
 class GuidePatchDecisionSignal(_Frozen):
     """가이드 patch 제안에 대한 2차 승인. 본 승인/거절 signal 과 nonce 슬롯이 분리돼 있다."""
 
+    decided_by: str = ""
+    nonce: str = ""
+
+
+class GuidePatchReviseSignal(_Frozen):
+    """가이드 patch 제안에 대한 코멘트 재요청. approve/reject_guide_patch 와 nonce 슬롯을 공유."""
+
+    feedback: str
     decided_by: str = ""
     nonce: str = ""
 

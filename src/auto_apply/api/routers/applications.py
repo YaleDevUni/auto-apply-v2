@@ -51,6 +51,8 @@ async def start_application(
             job_url=req.job_url,
             approval_timeout_hours=c.settings.approval_timeout_hours,
             dry_run_only=c.settings.dry_run_only,
+            max_revisions=c.settings.max_revisions,
+            max_guide_revisions=c.settings.max_guide_revisions,
         ),
         id=wf_id,  # 같은 application_id 로 두 번 호출돼도 REJECT_DUPLICATE 가 막는다
         task_queue=QUEUE_DEFAULT,

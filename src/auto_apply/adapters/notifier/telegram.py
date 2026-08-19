@@ -9,9 +9,10 @@ signal 로 직접 검증한다(ports/notifier.py 참고). 이 어댑터는 nonce
 실어 보내기만 한다.
 
 REVISE(수정요청) 흐름의 scope 선택/자유 텍스트 피드백 요청(`send_scope_picker`/
-`send_feedback_prompt`)은 Notifier port 에 없다 — nonce 발급을 동반하는 `request_decision`과
-달리 이 둘은 그냥 안내 메시지라 port 표면을 넓힐 필요가 없다. `telegram/bridge.py`가 이
-어댑터 구체 타입으로 직접 부른다(그 모듈도 이미 텔레그램 전용이라 문제 없다).
+`send_feedback_prompt`/`send_guide_feedback_prompt`)은 Notifier port 에 없다 — nonce 발급을
+동반하는 `request_decision`과 달리 이 셋은 그냥 안내 메시지라 port 표면을 넓힐 필요가 없다.
+`telegram/bridge.py`가 이 어댑터 구체 타입으로 직접 부른다(그 모듈도 이미 텔레그램 전용이라
+문제 없다).
 """
 
 from typing import Protocol
@@ -33,6 +34,10 @@ class _SendsMessages(Protocol):
         text: str,
         *,
         reply_markup: InlineKeyboardMarkup | ForceReply | None = None,
+    ) -> object: ...
+
+    async def answer_callback_query(
+        self, callback_query_id: str, text: str | None = None
     ) -> object: ...
 
 
@@ -119,6 +124,29 @@ class TelegramNotifier:
         for chat_id in self._chat_ids:
             await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
 
+    async def answer_callback_query(self, callback_query_id: str) -> None:
+        """버튼을 눌렀을 때 뜨는 "불러오는 중" 스피너를 즉시 꺼준다.
+
+        Telegram 은 `callback_query`마다 `answerCallbackQuery`를 호출해줘야 클라이언트가
+        로딩 상태를 해제한다 — 안 부르면 이후 어떤 메시지가 와도 그 스피너는 안 꺼진다
+        (버튼을 눌렀는데 계속 로딩만 뜨는 문제, 라이브 스모크테스트로 실측).
+        """
+        await self._bot.answer_callback_query(callback_query_id)
+
+    async def send_guide_feedback_prompt(self, application_id: str, nonce: str) -> None:
+        """가이드 patch 💬 코멘트 버튼을 누른 뒤 — 자유 텍스트 코멘트를 ForceReply 로 받는다.
+
+        `send_feedback_prompt`와 같은 이유로 상태를 안 들고(태그를 메시지 본문에 실어 보내고
+        답장에서 복원) 프로세스 경계를 넘나든다.
+        """
+        text = (
+            "💬 이 가이드 patch 제안에 대한 코멘트를 입력해 이 메시지에 답장(reply)하세요.\n"
+            f"[guiderevise:{application_id}:{nonce}]"
+        )
+        markup = ForceReply(selective=True)
+        for chat_id in self._chat_ids:
+            await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
+
 
 def _keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -133,12 +161,17 @@ def _keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:
 
 
 def _guide_patch_keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:
-    """가이드 patch 승인은 중첩 승인이라 REVISE 버튼이 없다 — 그 자체를 다시 REVISE 할 순 없다."""
+    """가이드 patch 승인은 중첩 승인이다 — 💬 코멘트는 본 REVISE 와 달리 scope 선택이 없고
+
+    (가이드 patch 자체가 이미 GENERAL 범위다) `MAX_GUIDE_REVISIONS`로 재제안 횟수만 제한한다
+    (workflows/_revision.py 참고).
+    """
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton("✅ 반영", callback_data=f"ga:{req.application_id}:{nonce}"),
                 InlineKeyboardButton("❌ 무시", callback_data=f"gr:{req.application_id}:{nonce}"),
+                InlineKeyboardButton("💬 코멘트", callback_data=f"gv:{req.application_id}:{nonce}"),
             ]
         ]
     )

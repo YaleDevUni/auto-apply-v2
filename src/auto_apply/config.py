@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # 안전장치 (§9.5)
     dry_run_only: bool = True
     approval_timeout_hours: int = Field(default=72, ge=1)
+    # 이 라운드를 넘으면 사람에게 넘긴다 — 무한 재생성 루프를 만들지 않는다 (workflows/_revision.py)
+    max_revisions: int = Field(default=10, ge=1)
+    # 가이드 patch 제안 자체에 대한 💬 코멘트 재시도 한도
+    max_guide_revisions: int = Field(default=5, ge=1)
 
     @property
     def allowed_chat_ids(self) -> frozenset[int]:

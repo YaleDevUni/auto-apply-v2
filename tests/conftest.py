@@ -77,9 +77,16 @@ class _FakeBot:
 
     def __init__(self) -> None:
         self.sent: list[dict[str, object]] = []
+        self.answered: list[str] = []
 
     async def send_message(self, chat_id: int, text: str, *, reply_markup: object = None) -> object:
         self.sent.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
+        return object()
+
+    async def answer_callback_query(
+        self, callback_query_id: str, text: str | None = None
+    ) -> object:
+        self.answered.append(callback_query_id)
         return object()
 
 
@@ -114,6 +121,14 @@ class _NonceSpy:
     ) -> None:
         assert isinstance(self.inner, TelegramNotifier)
         await self.inner.send_feedback_prompt(application_id, nonce, scope)
+
+    async def send_guide_feedback_prompt(self, application_id: str, nonce: str) -> None:
+        assert isinstance(self.inner, TelegramNotifier)
+        await self.inner.send_guide_feedback_prompt(application_id, nonce)
+
+    async def answer_callback_query(self, callback_query_id: str) -> None:
+        assert isinstance(self.inner, TelegramNotifier)
+        await self.inner.answer_callback_query(callback_query_id)
 
 
 def sample_recipe(

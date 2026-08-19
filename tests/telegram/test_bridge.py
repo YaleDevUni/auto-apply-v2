@@ -6,6 +6,7 @@ nonce 소비·signal 전달까지 포함한 end-to-end 는 tests/api/test_telegr
 
 import pytest
 
+from auto_apply.telegram.bridge import _GUIDE_REVISE_TAG_RE as GUIDE_REVISE_TAG_RE
 from auto_apply.telegram.bridge import _REVISE_TAG_RE as REVISE_TAG_RE
 from auto_apply.telegram.bridge import MalformedCallback, _parse, _parse_scope_choice
 
@@ -19,6 +20,7 @@ def test_parse_accepts_revise_start_and_guide_patch_actions():
     assert _parse("v:app_1:nonce_1") == ("v", "app_1", "nonce_1")
     assert _parse("ga:app_1:nonce_1") == ("ga", "app_1", "nonce_1")
     assert _parse("gr:app_1:nonce_1") == ("gr", "app_1", "nonce_1")
+    assert _parse("gv:app_1:nonce_1") == ("gv", "app_1", "nonce_1")
 
 
 def test_parse_rejects_unknown_action():
@@ -64,3 +66,14 @@ def test_revise_tag_regex_extracts_application_id_nonce_scope():
 
 def test_revise_tag_regex_does_not_match_plain_text():
     assert REVISE_TAG_RE.search("그냥 일반 대화 메시지입니다") is None
+
+
+def test_guide_revise_tag_regex_extracts_application_id_nonce():
+    text = "💬 이 가이드 patch 제안에 대한 코멘트를 입력해 답장하세요.\n[guiderevise:app_1:nonce_1]"
+    match = GUIDE_REVISE_TAG_RE.search(text)
+    assert match is not None
+    assert match.groups() == ("app_1", "nonce_1")
+
+
+def test_guide_revise_tag_regex_does_not_match_plain_text():
+    assert GUIDE_REVISE_TAG_RE.search("그냥 일반 대화 메시지입니다") is None

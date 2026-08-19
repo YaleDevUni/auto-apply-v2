@@ -23,11 +23,10 @@ from auto_apply.contracts.dto import (
     ResumeDraft,
     StartApplication,
 )
-from auto_apply.domain.enums import ApplicationState
+from auto_apply.domain.enums import ApplicationState, DecisionKind
 from auto_apply.workflows.resume import ResumeWorkflow
 
 QUEUE_AI = "ai"
-MAX_REVISIONS = 3  # 이 라운드를 넘으면 사람에게 넘긴다 — 무한 재생성 루프를 만들지 않는다
 _QUICK = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
 
 
@@ -39,6 +38,14 @@ class ResumeGenerationFailed(Exception):
 class GeneratedResume:
     draft: ResumeDraft
     pdf: RenderedPdf
+
+
+@dataclass(frozen=True)
+class GuidePatchDecision:
+    """가이드 patch 제안에 대한 응답. REVISE 면 `feedback`(코멘트)로 제안을 다시 받는다."""
+
+    kind: DecisionKind  # APPROVE | REJECT | REVISE
+    feedback: str = ""
 
 
 async def generate_and_render(
@@ -81,38 +88,58 @@ async def revise_guide(
     job: JobRef,
     feedback: str,
     *,
-    await_guide_decision: Callable[[GuidePatchProposal], Awaitable[bool]],
+    await_guide_decision: Callable[[GuidePatchProposal], Awaitable[GuidePatchDecision]],
     notify: Callable[[str, str], Awaitable[None]],
 ) -> None:
     """REVISE(scope=GENERAL) 일 때만 호출된다.
 
     사람이 diff 를 한 번 더 승인해야 config/resume_guide.md 에 반영된다(§CLAUDE.md "되돌릴 수
     없는 지점엔 사람" — 가이드는 이후 모든 생성에 영향을 주는 레버라 되돌리기 어려운 축이다).
-    이 단계가 실패하거나 거절돼도 呼출자는 계속 진행한다 — 이번 라운드 재생성엔 어차피
+    승인 전 코멘트로 제안 자체를 다시 받을 수 있다 — `cmd.max_guide_revisions`를 넘으면
+    포기한다(무한 재제안 루프 방지, `cmd.max_revisions`와 같은 이유). 워크플로우는 설정을
+    직접 안 읽으므로(결정성) 이 상한은 시작 시점에 `StartApplication`에 주입된 값을 쓴다.
+    이 단계가 실패하거나 거절돼도 호출자는 계속 진행한다 — 이번 라운드 재생성엔 어차피
     `feedback`이 specific 처럼 그대로 들어가므로, 가이드 반영은 덤이지 필수 경로가 아니다.
     """
-    try:
-        proposal = await workflow.execute_activity(
-            propose_guide_patch,
-            ProposeGuidePatchRequest(user_id=cmd.user_id, job=job, feedback=feedback),
-            start_to_close_timeout=timedelta(minutes=5),
-            task_queue=QUEUE_AI,
-            retry_policy=_QUICK,
-        )
-    except ActivityError as e:
-        await notify("GUIDE_PATCH_FAILED", f"가이드 수정안 생성에 실패했다: {e}")
-        return
+    current_feedback = feedback
+    rounds = 0
+    while True:
+        try:
+            proposal = await workflow.execute_activity(
+                propose_guide_patch,
+                ProposeGuidePatchRequest(user_id=cmd.user_id, job=job, feedback=current_feedback),
+                start_to_close_timeout=timedelta(minutes=5),
+                task_queue=QUEUE_AI,
+                retry_policy=_QUICK,
+            )
+        except ActivityError as e:
+            await notify("GUIDE_PATCH_FAILED", f"가이드 수정안 생성에 실패했다: {e}")
+            return
 
-    if not await await_guide_decision(proposal):
-        return
+        decision = await await_guide_decision(proposal)
+        if decision.kind is DecisionKind.APPROVE:
+            try:
+                await workflow.execute_activity(
+                    apply_guide_patch,
+                    proposal,
+                    start_to_close_timeout=timedelta(minutes=1),
+                    task_queue=QUEUE_AI,
+                    retry_policy=_QUICK,
+                )
+            except ActivityError as e:
+                await notify("GUIDE_PATCH_FAILED", f"가이드 반영에 실패했다: {e}")
+            return
+        if decision.kind is not DecisionKind.REVISE:
+            return  # REJECT (또는 타임아웃) — 가이드는 그대로 둔다
 
-    try:
-        await workflow.execute_activity(
-            apply_guide_patch,
-            proposal,
-            start_to_close_timeout=timedelta(minutes=1),
-            task_queue=QUEUE_AI,
-            retry_policy=_QUICK,
+        rounds += 1
+        if rounds > cmd.max_guide_revisions:
+            await notify(
+                "GUIDE_PATCH_FAILED",
+                f"가이드 patch 코멘트가 {cmd.max_guide_revisions}회를 넘어 포기했다",
+            )
+            return
+        current_feedback = (
+            f"{feedback}\n\n[이전 제안]\nold: {proposal.old or '(없음)'}\nnew: {proposal.new}\n\n"
+            f"[이 제안에 대한 사용자 코멘트]\n{decision.feedback}"
         )
-    except ActivityError as e:
-        await notify("GUIDE_PATCH_FAILED", f"가이드 반영에 실패했다: {e}")

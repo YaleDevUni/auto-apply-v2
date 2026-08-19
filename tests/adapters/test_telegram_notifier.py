@@ -16,9 +16,16 @@ from telegram import ForceReply, InlineKeyboardMarkup
 class FakeBot:
     def __init__(self) -> None:
         self.sent: list[dict[str, object]] = []
+        self.answered: list[str] = []
 
     async def send_message(self, chat_id: int, text: str, *, reply_markup: object = None) -> object:
         self.sent.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
+        return object()
+
+    async def answer_callback_query(
+        self, callback_query_id: str, text: str | None = None
+    ) -> object:
+        self.answered.append(callback_query_id)
         return object()
 
 
@@ -55,8 +62,8 @@ async def test_request_decision_callback_data_encodes_app_id_and_nonce() -> None
     assert revise.callback_data == f"v:app_1:{ticket.nonce}"
 
 
-async def test_guide_patch_decision_has_only_approve_reject_no_revise() -> None:
-    """가이드 patch 승인은 중첩 승인이라 REVISE 버튼이 없다."""
+async def test_guide_patch_decision_has_approve_reject_and_comment_buttons() -> None:
+    """가이드 patch 승인은 중첩 승인이지만 💬 코멘트로 제안 자체를 다시 받을 수 있다."""
     bot = FakeBot()
     notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
     req = DecisionRequest(
@@ -72,10 +79,22 @@ async def test_guide_patch_decision_has_only_approve_reject_no_revise() -> None:
     markup = bot.sent[0]["reply_markup"]
     assert isinstance(markup, InlineKeyboardMarkup)
     buttons = markup.inline_keyboard[0]
-    assert len(buttons) == 2
-    apply_btn, ignore_btn = buttons
+    assert len(buttons) == 3
+    apply_btn, ignore_btn, comment_btn = buttons
     assert apply_btn.callback_data == f"ga:app_1:{ticket.nonce}"
     assert ignore_btn.callback_data == f"gr:app_1:{ticket.nonce}"
+    assert comment_btn.callback_data == f"gv:app_1:{ticket.nonce}"
+
+
+async def test_send_guide_feedback_prompt_uses_force_reply_and_encodes_context() -> None:
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+
+    await notifier.send_guide_feedback_prompt("app_1", "nonce_1")
+
+    sent = bot.sent[0]
+    assert isinstance(sent["reply_markup"], ForceReply)
+    assert "[guiderevise:app_1:nonce_1]" in sent["text"]
 
 
 async def test_send_scope_picker_encodes_specific_and_general_options() -> None:
@@ -100,6 +119,20 @@ async def test_send_feedback_prompt_uses_force_reply_and_encodes_context() -> No
     sent = bot.sent[0]
     assert isinstance(sent["reply_markup"], ForceReply)
     assert "[revise:app_1:nonce_1:general]" in sent["text"]
+
+
+async def test_answer_callback_query_clears_client_loading_spinner() -> None:
+    """회귀 테스트: answerCallbackQuery 를 안 부르면 버튼을 눌렀을 때 뜨는 "불러오는 중"
+
+    스피너가 안 꺼진다 — 실제로 텔레그램 리스너를 재시작 안 하고 새 콜백을 눌렀을 때
+    이 문제로 걸렸다(malformed_callback 이었지만, 그 경우에도 스피너는 꺼져야 한다).
+    """
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+
+    await notifier.answer_callback_query("cbq_1")
+
+    assert bot.answered == ["cbq_1"]
 
 
 async def test_notify_sends_plain_message_without_keyboard() -> None:
