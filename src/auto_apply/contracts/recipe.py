@@ -21,13 +21,27 @@ class ActionType(StrEnum):
     SUBMIT = "submit"  # 특별 취급: 되돌릴 수 없음
 
 
+SELECTOR_VALUE_PLACEHOLDER = "{value}"
+# 이 placeholder 를 selector 에 쓸 수 있는 action — 지원 건마다 달라지는 텍스트(방금 올린
+# 이력서 파일명, 카테고리별 포트폴리오 파일명 등)로 매칭 대상을 좁혀야 하는 액션들.
+# FILL/SELECT/UPLOAD 는 value_ref/value_literal 을 이미 "채워 넣을 값" 으로 쓰고 있어서
+# 여기 포함하지 않는다 — 같은 필드를 selector 치환과 채워넣기 두 용도로 겹쳐 쓰면 헷갈린다.
+_SELECTOR_TEMPLATABLE = {ActionType.CLICK, ActionType.WAIT_FOR, ActionType.ASSERT_VISIBLE}
+
+
 class Action(BaseModel):
     # extra="forbid" = LLM 이 창작한 필드를 실행 계층까지 흘려보내지 않는다
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: ActionType
     selector: str | None = None
-    value_ref: str | None = Field(default=None, description="예: 'profile.email' — 참조만 허용")
+    value_ref: str | None = Field(
+        default=None,
+        description=(
+            "예: 'profile.email' — 참조만 허용. "
+            "CLICK/WAIT_FOR/ASSERT_VISIBLE 에서는 selector 안의 '{value}' 자리에 꽂힌다"
+        ),
+    )
     value_literal: str | None = None
     timeout_ms: int = Field(default=5_000, ge=100, le=60_000)
     optional: bool = False
@@ -46,6 +60,23 @@ class Action(BaseModel):
             raise ValueError(f"{self.type} 는 selector 가 필요하다")
         if self.type is ActionType.FILL and not (self.value_ref or self.value_literal):
             raise ValueError("fill 은 value_ref 또는 value_literal 이 필요하다")
+        if (
+            self.selector
+            and SELECTOR_VALUE_PLACEHOLDER in self.selector
+            and not (self.value_ref or self.value_literal)
+        ):
+            raise ValueError(
+                f"selector 에 {SELECTOR_VALUE_PLACEHOLDER} 를 쓰려면 "
+                "value_ref 또는 value_literal 이 필요하다"
+            )
+        if (
+            self.selector
+            and SELECTOR_VALUE_PLACEHOLDER in self.selector
+            and self.type not in _SELECTOR_TEMPLATABLE
+        ):
+            raise ValueError(
+                f"{SELECTOR_VALUE_PLACEHOLDER} 는 {sorted(_SELECTOR_TEMPLATABLE)} 에서만 쓸 수 있다"
+            )
         return self
 
 
