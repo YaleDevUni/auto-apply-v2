@@ -20,12 +20,15 @@ class Settings(BaseSettings):
     executor: Literal["replay", "playwright"] = "replay"
     repository: Literal["memory", "file", "postgres"] = "file"
     playwright_headless: bool = True
+    job_source: Literal["fixture", "live"] = "fixture"
+    matching_config: Literal["static", "yaml"] = "yaml"
 
     # 인프라
     database_url: str = "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply"
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
     data_dir: Path = Path("./var")
+    matching_config_path: Path = Path("./config/matching.yaml")
 
     s3_endpoint_url: str = "http://localhost:9000"
     s3_bucket: str = "auto-apply"

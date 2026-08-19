@@ -61,3 +61,24 @@ class AttemptOutcome(StrEnum):
 class DecisionKind(StrEnum):
     APPROVE = "approve"
     REJECT = "reject"
+
+
+class BlockerCode(StrEnum):
+    """domain/job_applicability.py 가 매기는 코드. 고정 집합이라 enum 이다.
+
+    (하드컷/트랙 코드는 반대로 config 파일이 정의하는 데이터라 str 로 남겨둔다 —
+    사용자가 config/matching.yaml 에 새 하드컷을 추가해도 코드 변경이 필요 없어야 한다.)
+    """
+
+    SCORE_BELOW_BAR = "SCORE_BELOW_BAR"
+    CLOSED = "CLOSED"
+    CLOSING_TOO_SOON = "CLOSING_TOO_SOON"
+    EXTERNAL_ATS = "EXTERNAL_ATS"
+    IMAGE_ONLY = "IMAGE_ONLY"
+    LOGIN_REQUIRED = "LOGIN_REQUIRED"
+    NO_RECIPE = "NO_RECIPE"
+    REQUIREMENT_GAP = "REQUIREMENT_GAP"
+    ESSAY_REQUIRED = "ESSAY_REQUIRED"
+    ESSAY_TOO_MANY = "ESSAY_TOO_MANY"
+    DOC_MISSING = "DOC_MISSING"
+    NO_DETAIL = "NO_DETAIL"

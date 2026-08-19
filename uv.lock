@@ -141,6 +141,8 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-telegram-bot" },
+    { name = "pyyaml" },
+    { name = "selectolax" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "structlog" },
     { name = "temporalio" },
@@ -157,6 +159,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
     { name = "ruff" },
+    { name = "types-pyyaml" },
 ]
 
 [package.metadata]
@@ -171,6 +174,8 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "python-telegram-bot", specifier = ">=21.7" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "selectolax", specifier = ">=0.3.21" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
     { name = "structlog", specifier = ">=24.4" },
     { name = "temporalio", specifier = ">=1.8" },
@@ -187,6 +192,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "ruff", specifier = ">=0.8" },
+    { name = "types-pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]
@@ -917,6 +923,23 @@ wheels = [
 ]
 
 [[package]]
+name = "selectolax"
+version = "0.4.11"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/6c/aec38dfee314a38cb7c0940fe055b22f22627b3e0a216772c24372eef3a9/selectolax-0.4.11.tar.gz", hash = "sha256:2b565ddabce6c9a7b73fa28a39acf8f411a084fa2f169234ec2470f552d4421d", size = 4883455, upload-time = "2026-07-15T07:25:30.588Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/96/d3b085e0a6bcb1e9a21a62617a826f14c7d569f70fee848579039db276bf/selectolax-0.4.11-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:25d633cddca0fc769e7d890e9e838908fb4a7326eec5e3b23ae42c27f457541d", size = 2251530, upload-time = "2026-07-15T07:24:10.677Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/65/21ff78e6050b71f6467e7baad3eb58b935ade210a72e3e339ce9e6f68ac5/selectolax-0.4.11-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:634db1b7ae1b1f10ee0b0adbef0eee1aec65a3d01f09b75132bc5b043b7623d1", size = 2300794, upload-time = "2026-07-15T07:24:12.322Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/60/faa1878ba9bd362e9078f664e570d3085b3cd679aee49c044a03b4530513/selectolax-0.4.11-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:168b34466dc4f998d7ceb04f218693546d141543e7c5d327f9e006c0799cd62c", size = 2382882, upload-time = "2026-07-15T07:24:13.906Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/a6/a556d87dc37e972cc615384df8376e94bc043fba2ef9fbbf68629a1c8d99/selectolax-0.4.11-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4c3d4fd42deabfd03cc5c4fce9517e7226054f9de3984759476e6c4a7b7fe187", size = 2431493, upload-time = "2026-07-15T07:24:15.518Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/ca/d95beee6453d3837cba042351e216fb62881750ca930b8d29b223e174224/selectolax-0.4.11-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:8f0223a83051ece2591a1d0cf487f1d0719cb76660d7c5de4c0a201b761c5c23", size = 2387809, upload-time = "2026-07-15T07:24:17.648Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/b9/449a4626740099a5cebcb112fee82e423dd1d603f43f72e22b802acc1f8c/selectolax-0.4.11-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:dff45ee85409e6126e4900e0db6950a59a7b58b7ff9d667a6a275b0405b87692", size = 2449963, upload-time = "2026-07-15T07:24:19.666Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/de/798b416cba8cc05b9382d81724e73abd887d6ebe441edee848bb23773be9/selectolax-0.4.11-cp312-cp312-win32.whl", hash = "sha256:f69c377298a09f571c89af5916ac85f69a9aaedd7312b0bb803a46d2ca2f9048", size = 1763553, upload-time = "2026-07-15T07:24:21.454Z" },
+    { url = "https://files.pythonhosted.org/packages/41/da/e9f32bc598cbd50a5b1e947636f13396511e3d916ab603b622a61c84347f/selectolax-0.4.11-cp312-cp312-win_amd64.whl", hash = "sha256:48545b0351b6f92c4ad2fff835e832768d0cb37834766a82f40242e51fc9901d", size = 1881516, upload-time = "2026-07-15T07:24:22.819Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/48/5f0e2f9d098333efd3a83ed9dae78b83b6fbb504be1c5a4b95b28e7b5870/selectolax-0.4.11-cp312-cp312-win_arm64.whl", hash = "sha256:daf7a841d1baa795f940200bec45019c4a31020def16e3a4e35485e82ed64167", size = 1817321, upload-time = "2026-07-15T07:24:25.326Z" },
+]
+
+[[package]]
 name = "six"
 version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1009,6 +1032,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e0/86/f592845ff8410583687e6dbf985a028e6ec6d378d0bdf548817aa39937b9/types_protobuf-7.34.1.20260816.tar.gz", hash = "sha256:6f43846e7a3cc2621abfa79e2bb03461e6769a74cdae7462efaddf84580fd5c1", size = 69170, upload-time = "2026-08-16T02:50:00.998Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/14/cc/909e791f11de77c2073007dbcce8b502865ef12c7881bdf36b0ccb206ab4/types_protobuf-7.34.1.20260816-py3-none-any.whl", hash = "sha256:2e3a225b3c21f0022daa34cec155f03858bb9aff9792947b8e71f0e9f1791fdb", size = 86036, upload-time = "2026-08-16T02:49:59.807Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20260815"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9f/72/b56089aeee6c496d969bac42376bedb6e3eeab4682e1018fa3137122f94b/types_pyyaml-6.0.12.20260815.tar.gz", hash = "sha256:28764110c9cf35846e733da32d8d734df7473c5dde9ef67c3b7332ec0e819858", size = 18545, upload-time = "2026-08-15T02:41:51.532Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/52/eefeba09be4ef2a1eb989eb92934561e8e502a6ee3c32654996e4be7e399/types_pyyaml-6.0.12.20260815-py3-none-any.whl", hash = "sha256:6f332212b7e191f3afd5016a713c510b6340593b7ebec573c7d5d20aa5386d3b", size = 21148, upload-time = "2026-08-15T02:41:50.555Z" },
 ]
 
 [[package]]

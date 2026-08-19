@@ -3,13 +3,20 @@
 여기 말고 어디서도 어댑터를 생성하지 않는다. import-linter 가 이를 강제한다.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
 from auto_apply.adapters.executor.playwright import PlaywrightExecutor
 from auto_apply.adapters.executor.replay import ReplayExecutor
+from auto_apply.adapters.job_source._http import ThrottledClient
+from auto_apply.adapters.job_source.fixture import FixtureJobSource
+from auto_apply.adapters.job_source.jasoseol import JasoseolJobSource
+from auto_apply.adapters.job_source.saramin import SaraminJobSource
+from auto_apply.adapters.job_source.wanted import WantedJobSource
 from auto_apply.adapters.llm.stub import StubLLM
+from auto_apply.adapters.matching_config.static import StaticMatchingConfigSource
+from auto_apply.adapters.matching_config.yaml_file import YamlMatchingConfigSource
 from auto_apply.adapters.notifier.console import ConsoleNotifier
 from auto_apply.adapters.pdf.stub import StubPdfRenderer
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
@@ -23,9 +30,12 @@ from auto_apply.adapters.storage.local import LocalBlobStore
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.job import JobRecord
 from auto_apply.ports.clock import Clock, IdGen
 from auto_apply.ports.executor import RecipeExecutor
+from auto_apply.ports.job_source import JobSource
 from auto_apply.ports.llm import LLMClient
+from auto_apply.ports.matching_config import MatchingConfigSource
 from auto_apply.ports.notifier import Notifier
 from auto_apply.ports.pdf import PdfRenderer
 from auto_apply.ports.platform import PlatformRegistry
@@ -50,6 +60,8 @@ class Container:
     generator: ResumeGenerator
     reviewer: ResumeReviewer
     pdf: PdfRenderer
+    job_sources: Sequence[JobSource]
+    matching_config: MatchingConfigSource
 
 
 def _build_store(cfg: Settings) -> BlobStore:
@@ -82,7 +94,8 @@ def _build_uow(cfg: Settings) -> Callable[[], UnitOfWork]:
     match cfg.repository:
         case "memory":
             rows: dict[str, list[PersistState]] = {}
-            return lambda: InMemoryUnitOfWork(rows)
+            job_rows: dict[tuple[str, str], JobRecord] = {}
+            return lambda: InMemoryUnitOfWork(rows, job_rows)
         case "file":
             root = cfg.data_dir
             return lambda: FileUnitOfWork(root)
@@ -110,6 +123,29 @@ def _build_recipes(cfg: Settings) -> RecipeSource:
     return InMemoryRecipeSource()
 
 
+def _build_job_sources(cfg: Settings, store: BlobStore) -> Sequence[JobSource]:
+    match cfg.job_source:
+        case "fixture":
+            return [FixtureJobSource()]
+        case "live":
+            # 플랫폼마다 커넥션 풀을 분리한다 — 한 플랫폼이 느려져도 나머지 수집에
+            # 영향을 주지 않는다. 요청 정책(delay/retries)은 세 플랫폼이 함께
+            # 검증된 값을 기본으로 쓴다 (adapters/job_source/_http.py).
+            return [
+                WantedJobSource(ThrottledClient()),
+                SaraminJobSource(ThrottledClient()),
+                JasoseolJobSource(ThrottledClient(), store),
+            ]
+
+
+def _build_matching_config(cfg: Settings) -> MatchingConfigSource:
+    match cfg.matching_config:
+        case "static":
+            return StaticMatchingConfigSource()
+        case "yaml":
+            return YamlMatchingConfigSource(cfg.matching_config_path)
+
+
 def build_container(cfg: Settings) -> Container:
     idgen = UuidIdGen()
     clock = SystemClock()
@@ -129,4 +165,6 @@ def build_container(cfg: Settings) -> Container:
         generator=SimpleResumeGenerator(llm, idgen),
         reviewer=SimpleResumeReviewer(),
         pdf=StubPdfRenderer(store),
+        job_sources=_build_job_sources(cfg, store),
+        matching_config=_build_matching_config(cfg),
     )

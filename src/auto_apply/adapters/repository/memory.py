@@ -2,8 +2,10 @@ from types import TracebackType
 from typing import Self
 
 from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.job import JobRecord
 
 Rows = dict[str, list[PersistState]]
+JobRows = dict[tuple[str, str], JobRecord]
 
 
 class InMemoryApplicationRepository:
@@ -23,9 +25,24 @@ class InMemoryApplicationRepository:
         return list(self._rows.get(application_id, []))
 
 
+class InMemoryJobRepository:
+    def __init__(self, rows: JobRows) -> None:
+        self._rows = rows
+
+    async def upsert(self, record: JobRecord) -> None:
+        self._rows[(record.job.platform, record.job.platform_job_id)] = record
+
+    async def get(self, platform: str, platform_job_id: str) -> JobRecord | None:
+        return self._rows.get((platform, platform_job_id))
+
+    async def actionable(self) -> list[JobRecord]:
+        return [r for r in self._rows.values() if r.applicability and r.applicability.actionable]
+
+
 class InMemoryUnitOfWork:
-    def __init__(self, rows: Rows) -> None:
+    def __init__(self, rows: Rows, job_rows: JobRows | None = None) -> None:
         self.applications = InMemoryApplicationRepository(rows)
+        self.jobs = InMemoryJobRepository(job_rows if job_rows is not None else {})
 
     async def __aenter__(self) -> Self:
         return self

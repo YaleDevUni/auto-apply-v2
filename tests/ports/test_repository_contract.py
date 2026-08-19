@@ -10,6 +10,7 @@ import pytest
 from auto_apply.adapters.repository.file import FileUnitOfWork
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
 from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.job import ApplicabilityVerdict, JobPosting, JobRecord, ScreeningVerdict
 from auto_apply.domain.enums import ApplicationState
 from auto_apply.ports.repository import UnitOfWork
 
@@ -18,7 +19,8 @@ from auto_apply.ports.repository import UnitOfWork
 def uow_factory(request: pytest.FixtureRequest, tmp_path):
     if request.param == "memory":
         rows: dict = {}
-        return lambda: InMemoryUnitOfWork(rows)
+        job_rows: dict = {}
+        return lambda: InMemoryUnitOfWork(rows, job_rows)
     return lambda: FileUnitOfWork(tmp_path)
 
 
@@ -93,3 +95,94 @@ async def test_unknown_application_returns_empty_history(uow_factory):
 async def test_satisfies_protocol(uow_factory):
     uow: UnitOfWork = uow_factory()
     assert hasattr(uow.applications, "upsert_state")
+    assert hasattr(uow.jobs, "upsert")
+
+
+# ─────────────────────────── JobRepository ───────────────────────────
+
+_COLLECTED_AT = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
+
+
+def _record(
+    *, platform: str = "wanted", platform_job_id: str = "1", actionable: bool | None = True
+) -> JobRecord:
+    job = JobPosting(
+        platform=platform,
+        platform_job_id=platform_job_id,
+        url="https://x/1",
+        company="회사",
+        title="백엔드 개발자",
+    )
+    screening = ScreeningVerdict(verdict="pass", track="dev", fit_score=80)
+    applicability = (
+        ApplicabilityVerdict(actionable=actionable, channel="platform_form", apply_url=job.url)
+        if actionable is not None
+        else None
+    )
+    return JobRecord(
+        job=job, screening=screening, applicability=applicability, collected_at=_COLLECTED_AT
+    )
+
+
+async def test_job_upsert_then_get(uow_factory):
+    async with uow_factory() as uow:
+        await uow.jobs.upsert(_record())
+        await uow.commit()
+    async with uow_factory() as uow:
+        record = await uow.jobs.get("wanted", "1")
+    assert record is not None
+    assert record.job.title == "백엔드 개발자"
+    assert record.collected_at == _COLLECTED_AT
+
+
+async def test_job_upsert_is_idempotent_by_platform_and_id(uow_factory):
+    """같은 공고를 다시 수집해도(재실행) 최신 판정으로 덮어쓸 뿐 늘어나지 않는다."""
+    async with uow_factory() as uow:
+        await uow.jobs.upsert(_record())
+        await uow.jobs.upsert(_record())
+        await uow.commit()
+    async with uow_factory() as uow:
+        assert (await uow.jobs.get("wanted", "1")) is not None
+        assert len(await uow.jobs.actionable()) == 1
+
+
+async def test_job_upsert_overwrites_with_latest_verdict(uow_factory):
+    async with uow_factory() as uow:
+        await uow.jobs.upsert(_record(actionable=True))
+        await uow.jobs.upsert(_record(actionable=False))
+        await uow.commit()
+    async with uow_factory() as uow:
+        record = await uow.jobs.get("wanted", "1")
+    assert record is not None
+    assert record.applicability is not None
+    assert record.applicability.actionable is False
+
+
+async def test_unknown_job_returns_none(uow_factory):
+    async with uow_factory() as uow:
+        assert await uow.jobs.get("wanted", "nope") is None
+
+
+async def test_actionable_excludes_non_actionable_and_screened_out(uow_factory):
+    async with uow_factory() as uow:
+        await uow.jobs.upsert(_record(platform_job_id="1", actionable=True))
+        await uow.jobs.upsert(_record(platform_job_id="2", actionable=False))
+        await uow.jobs.upsert(_record(platform_job_id="3", actionable=None))  # excluded, 판정 없음
+        await uow.commit()
+    async with uow_factory() as uow:
+        actionable = await uow.jobs.actionable()
+    assert {r.job.platform_job_id for r in actionable} == {"1"}
+
+
+async def test_actionable_is_platform_scoped_correctly(uow_factory):
+    """다른 플랫폼의 같은 platform_job_id는 다른 공고다."""
+    async with uow_factory() as uow:
+        await uow.jobs.upsert(_record(platform="wanted", platform_job_id="1"))
+        await uow.jobs.upsert(_record(platform="saramin", platform_job_id="1"))
+        await uow.commit()
+    async with uow_factory() as uow:
+        actionable = await uow.jobs.actionable()
+    assert {(r.job.platform, r.job.platform_job_id) for r in actionable} == {
+        ("wanted", "1"),
+        ("saramin", "1"),
+    }

@@ -15,12 +15,14 @@ from temporalio.worker import Worker
 
 from auto_apply.activities.application import ApplicationActivities
 from auto_apply.activities.browser import BrowserActivities
+from auto_apply.activities.job_collection import JobCollectionActivities
 from auto_apply.activities.ping import PingActivities
 from auto_apply.activities.resume import ResumeActivities
 from auto_apply.bootstrap import Container, build_container
 from auto_apply.config import load_settings
 from auto_apply.temporal_config import DATA_CONVERTER
 from auto_apply.workflows.application import ApplicationWorkflow
+from auto_apply.workflows.job_collection import JobCollectionWorkflow
 from auto_apply.workflows.ping import PingWorkflow
 from auto_apply.workflows.resume import ResumeWorkflow
 
@@ -38,10 +40,18 @@ def _registrations(
     match queue:
         case "default":
             return (
-                [ApplicationWorkflow, PingWorkflow],
+                [ApplicationWorkflow, PingWorkflow, JobCollectionWorkflow],
                 [
                     *ApplicationActivities(c.registry, c.notifier, c.recipes, c.uow).all(),
                     *PingActivities(c.clock, c.store).all(),
+                    *JobCollectionActivities(
+                        c.job_sources,
+                        c.matching_config,
+                        c.recipes,
+                        c.clock,
+                        c.uow,
+                        auth_dir=c.settings.data_dir / "auth",
+                    ).all(),
                 ],
             )
         case "ai":

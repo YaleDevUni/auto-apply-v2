@@ -470,6 +470,8 @@ GET    /healthz  /metrics
 auto-apply-v2/
 ├── docker-compose.yml            postgres · temporal · temporal-ui · minio · api · workers
 ├── alembic/
+├── config/
+│   └── matching.yaml             하드컷/트랙/스코어링 규칙 — 사용자의 직무 취향 데이터 (§11.2b)
 ├── src/auto_apply/
 │   ├── api/                      FastAPI (routers, deps, schemas)
 │   ├── telegram/                 bot handlers, keyboards, nonce
@@ -480,10 +482,13 @@ auto-apply-v2/
 │   │   └── job_collection.py
 │   ├── activities/
 │   │   ├── job.py  resume.py  pdf.py  notify.py  persist.py
+│   │   ├── job_collection.py     collect_platform_jobs (§11.2b)
 │   │   └── browser.py            Playwright activity (heartbeat 포함)
 │   ├── contracts/                ★ workflow-safe: pydantic/stdlib 만, 벤더 SDK 없음
 │   │   ├── dto.py                워크플로우 입출력 타입
 │   │   ├── recipe.py             AutomationRecipe (workflow payload 로 오간다)
+│   │   ├── job.py                JobPosting · ScreeningVerdict · ApplicabilityVerdict (§11.2b)
+│   │   ├── matching_config.py    TrackRule · HardcutRule · MatchingConfig (§11.2b)
 │   │   └── activity_defs.py      activity 인터페이스 stub (@activity.defn)
 │   ├── ports/                    ★ Protocol 정의. 구현을 import 하지 않는다
 │   │   ├── llm.py                LLMClient
@@ -491,7 +496,9 @@ auto-apply-v2/
 │   │   ├── notifier.py           Notifier
 │   │   ├── repository.py         *Repository + UnitOfWork
 │   │   ├── executor.py           RecipeExecutor
-│   │   ├── platform.py           PlatformAdapter
+│   │   ├── platform.py           PlatformAdapter (URL 단건 조회 — §11.2b 와 구분)
+│   │   ├── job_source.py         JobSource (플랫폼 대량 수집 — §11.2b)
+│   │   ├── matching_config.py    MatchingConfigSource (§11.2b)
 │   │   ├── resume.py             ResumeGenerator / ResumeReviewer
 │   │   └── clock.py              Clock, IdGen (테스트 결정성)
 │   ├── adapters/                 ★ port별 구현체. 서로를 모른다
@@ -501,6 +508,8 @@ auto-apply-v2/
 │   │   ├── db/                   SQLAlchemy models · repositories · uow
 │   │   ├── executor/playwright.py · executor/replay.py
 │   │   ├── platform/wanted.py · linkedin.py · company.py · registry.py
+│   │   ├── job_source/wanted.py · saramin.py · jasoseol.py · fixture.py (§11.2b)
+│   │   ├── matching_config/yaml_file.py · static.py (§11.2b)
 │   │   └── resume/simple.py · resume/langgraph.py
 │   ├── ai/
 │   │   ├── graphs/               LangGraph: resume_graph, repair_graph (M3+)
@@ -510,6 +519,9 @@ auto-apply-v2/
 │   │   ├── policy.py             Recipe 정책 검증 (스키마 검증과 별도, §3)
 │   │   └── snapshot.py           DOM snapshot + form_hash
 │   ├── domain/                   순수 도메인: enums · errors · state machine · policy
+│   │   ├── job_identity.py       정규화 · canonical_key (§11.2b)
+│   │   ├── job_screening.py      축1 적합도: 하드컷 · 트랙 · 스코어링 (§11.2b)
+│   │   └── job_applicability.py  축2 지원가능성: blocker · requires (§11.2b)
 │   ├── bootstrap.py              ★ composition root: 설정 → 구현체 조립
 │   ├── config.py                 pydantic-settings
 │   └── worker.py                 --queue {default|ai|browser}
@@ -590,6 +602,8 @@ Grafana 스택 전체를 초기에 세우지 않는다. 대신 **Temporal UI를 
 | `*Repository` + `UnitOfWork` | SQLAlchemy/Postgres | `InMemoryRepo` | 중간 | 실제 목적은 DB 교체보다 **테스트 속도** |
 | `RecipeExecutor` | Playwright | `ReplayExecutor` (고정 HTML) | **높음** | dry_run/supervised/live는 이 port의 모드 |
 | `PlatformAdapter` | wanted | linkedin, company | **높음** | 확장 지점. registry로 등록 |
+| `JobSource` | wanted/saramin/jasoseol | `FixtureJobSource` | **높음** | 공고 대량 수집. §11.2b |
+| `MatchingConfigSource` | `YamlMatchingConfigSource` | `StaticMatchingConfigSource` | 중간 | 하드컷/트랙 규칙. §11.2b |
 | `ResumeGenerator` / `ResumeReviewer` | plain 함수 | LangGraph(M3) | **높음** | §9.2 보류 결정을 가능하게 하는 seam |
 | `Clock` / `IdGen` | 시스템 | 고정값 | 중간 | 테스트 결정성 |
 | `PdfRenderer` | WeasyPrint | `StubRenderer` | 낮음 | 교체 가능성보다 격리 목적 |
@@ -627,6 +641,63 @@ class UnitOfWork(Protocol):
 **`RecipeExecutor`를 port로 잡고 `BrowserDriver`는 잡지 않는 이유:** Playwright가 이미 Chromium/Firefox/WebKit을
 추상화한다. 그 위에 또 한 겹을 두면 Playwright의 표현력만 잃는다. 우리에게 의미 있는 교체 축은
 브라우저 엔진이 아니라 **"실제로 제출하는가"** (live / supervised / dry_run / replay)이므로, 그쪽을 port로 잡는다.
+
+### 11.2b 공고 수집·매칭 — `JobSource` vs `PlatformAdapter`, 그리고 순수 domain
+
+ports/domain/adapters 를 먼저 넣고, 그 위에 `JobCollectionWorkflow` + activity + `jobs`
+저장소를 얹었다 (Temporal Schedule 배선은 아직 — §2.1 참고). 이전 auto-apply(v1)를 참고했지만
+그대로 옮기지 않았다 — v1은 "플랫폼별 수집"이 어댑터 하나 안에서 수집·판정·저장까지 다 하는
+구조라 유지보수가 힘들었다. 갈라낸 경계는 세 개다.
+
+1. **`JobSource`(대량 수집) ≠ `PlatformAdapter`(URL 단건 조회).** 이름이 비슷해 헷갈리기 쉽지만
+   축이 다르다. `PlatformAdapter.fetch_job(url)`은 사람이 이미 링크를 아는 상태(`ApplicationWorkflow`
+   시작)에 쓰고, `JobSource.list_jobs()`는 아직 뭐가 있는지 모를 때 목록을 훑는다. 둘을 하나로
+   합치고 싶은 유혹이 있지만, 지금 합치면 "URL 하나 조회"와 "수백 건 순회"가 같은 인터페이스에
+   얽혀 어느 쪽 계약도 깔끔하지 않다. 실제 어댑터(예: wanted)가 내부적으로 같은 상세 API를 쓰는 건
+   괜찮다 — 인터페이스가 같아야 한다는 뜻은 아니다.
+2. **매칭(하드컷/트랙/스코어링/지원가능성)은 domain의 순수 함수다.** `domain/job_screening.py`,
+   `domain/job_applicability.py`는 플랫폼을 모른다 — `JobPosting`(contracts/job.py)만 받는다.
+   v1은 이 판정을 어댑터 근처에 흩어두지 않고 이미 분리해뒀던 부분이라 구조는 그대로 가져왔다.
+   다만 v1의 `evaluate_applicability`는 함수 안에서 레시피 파일을 직접 읽었는데(§11.1 원칙 위반),
+   여기서는 `recipe_exists`/`form_has_essays`/`session_ok`/`required_gaps`를 호출부(미래의 activity)가
+   미리 확인해 인자로 넘긴다 — domain은 파일도 DB도 모른다.
+3. **매칭 규칙(키워드/트랙/하드컷)은 `MatchingConfigSource` port 뒤의 데이터다.** `config/matching.yaml`은
+   Recipe와 같은 이유로 코드가 아니라 데이터다 — 이 프로젝트 사용자의 직무 취향이 바뀌면 코드를
+   고치지 않고 이 파일만 고친다. v1의 값(하드컷/트랙/스코어링 키워드)을 그대로 옮겼다 — 같은
+   사용자의 실제 구직 취향이라 새로 지어낼 이유가 없었지만, **로직 구조**(파일 하나에서 플랫폼별로
+   분기하던 v1의 실수)는 반복하지 않았다.
+
+```python
+# ports/job_source.py
+class JobSource(Protocol):
+    @property
+    def platform(self) -> str: ...
+    def list_jobs(self) -> AsyncIterator[JobPosting]: ...
+    async def enrich(self, job: JobPosting) -> JobPosting: ...
+
+# ports/matching_config.py
+class MatchingConfigSource(Protocol):
+    async def load(self) -> MatchingConfig: ...
+```
+
+새 플랫폼을 추가하는 절차는 §11.2 원칙 그대로다: `adapters/job_source/`에 클래스 하나 추가하고
+`bootstrap.py`의 `_build_job_sources`에 등록하면, `domain/job_screening.py` 이하는 손대지 않는다.
+
+`JobCollectionWorkflow`(§2)는 플랫폼별로 `collect_platform_jobs` activity 하나를 동시에 돌린다
+(`asyncio.gather` — 한 플랫폼이 느리거나 실패해도 나머지 결과를 지우지 않는다). 그 activity
+하나가 목록 수집 → 스크리닝 → 상세 조회 → 재스크리닝 → 지원가능성 판정 → `jobs` 저장까지
+전부 담당한다(`activities/job_collection.py`) — 공고 하나씩 별도 activity로 쪼개지 않는 이유는
+플랫폼당 수백 건을 개별 activity 스케줄링하면 Temporal 히스토리만 커지고 얻는 게 없어서다
+(재시도 단위는 "이 플랫폼 전체"로 충분하다 — 부분 실패는 activity 안에서 흡수한다:
+상세 조회 한 건이 실패해도 나머지는 계속 처리하고 `enrich_errors`로만 센다).
+
+`jobs` 저장은 `applications`와 같은 `UnitOfWork`(§4.1) 뒤에 있다 — `JobRepository.upsert()`는
+`(platform, platform_job_id)` 기준 멱등이라 재수집이 행을 늘리지 않는다. M1 은 파일 기반
+(`FileJobRepository`)이고, §4의 `jobs` 테이블(Postgres)은 M2 에서 같은 port 로 교체한다.
+
+Schedule(cron) 배선은 아직 코드로 안 들어갔다 — 지금은
+`uv run python -m auto_apply.cli collect --platforms wanted,saramin`으로 수동 실행한다.
+운영에 올릴 때는 `temporal schedule create`로 이 workflow를 주기 실행하도록 등록하면 된다.
 
 ### 11.3 Temporal에서의 주입 — activity가 곧 seam
 

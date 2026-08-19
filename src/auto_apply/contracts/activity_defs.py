@@ -25,6 +25,7 @@ from auto_apply.contracts.dto import (
     VerifyInput,
     VerifyResult,
 )
+from auto_apply.contracts.job import PlatformCollectionResult
 from auto_apply.contracts.recipe import AutomationRecipe
 
 _ONLY = "interface only — 구현은 auto_apply.activities 에 있다"
@@ -89,4 +90,10 @@ async def persist_state(state: PersistState) -> None:
 @activity.defn(name="ping")
 async def ping(message: str) -> str:
     """M0 smoke test 용."""
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="collect_platform_jobs")
+async def collect_platform_jobs(platform: str) -> PlatformCollectionResult:
+    """목록 수집 → 스크리닝 → 상세 조회 → 지원가능성 판정 → 저장 (§11.2b)."""
     raise NotImplementedError(_ONLY)

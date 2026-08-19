@@ -12,6 +12,7 @@ from types import TracebackType
 from typing import Self
 
 from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.job import JobRecord
 
 
 class FileApplicationRepository:
@@ -55,9 +56,50 @@ class FileApplicationRepository:
         return await asyncio.to_thread(self._read, self._path(application_id))
 
 
+class FileJobRepository:
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self._lock = asyncio.Lock()
+
+    def _path(self, platform: str, platform_job_id: str) -> Path:
+        safe = f"{platform}__{platform_job_id}".replace("/", "_")
+        return self._root / "jobs" / f"{safe}.json"
+
+    async def upsert(self, record: JobRecord) -> None:
+        path = self._path(record.job.platform, record.job.platform_job_id)
+
+        def _write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(record.model_dump(mode="json"), indent=2))
+            tmp.replace(path)  # 원자적 교체 — 같은 공고를 다시 수집해도 행이 늘지 않는다
+
+        async with self._lock:
+            await asyncio.to_thread(_write)
+
+    async def get(self, platform: str, platform_job_id: str) -> JobRecord | None:
+        return await asyncio.to_thread(self._read, self._path(platform, platform_job_id))
+
+    def _read(self, path: Path) -> JobRecord | None:
+        if not path.is_file():
+            return None
+        return JobRecord.model_validate(json.loads(path.read_text()))
+
+    async def actionable(self) -> list[JobRecord]:
+        def _scan() -> list[JobRecord]:
+            jobs_dir = self._root / "jobs"
+            if not jobs_dir.is_dir():
+                return []
+            records = (self._read(p) for p in jobs_dir.glob("*.json"))
+            return [r for r in records if r and r.applicability and r.applicability.actionable]
+
+        return await asyncio.to_thread(_scan)
+
+
 class FileUnitOfWork:
     def __init__(self, root: Path) -> None:
         self.applications = FileApplicationRepository(root)
+        self.jobs = FileJobRepository(root)
 
     async def __aenter__(self) -> Self:
         return self

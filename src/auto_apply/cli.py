@@ -18,8 +18,10 @@ from auto_apply.contracts.dto import (
     RescheduleSignal,
     StartApplication,
 )
+from auto_apply.contracts.job import CollectJobsInput
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_DEFAULT
 from auto_apply.workflows.application import ApplicationWorkflow
+from auto_apply.workflows.job_collection import JobCollectionWorkflow
 
 
 def _parse_at(raw: str | None) -> datetime | None:
@@ -39,6 +41,23 @@ async def _client() -> Client:
 async def _run(args: argparse.Namespace) -> None:
     client = await _client()
     cfg = load_settings()
+
+    if args.command == "collect":
+        run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+        collect_handle = await client.start_workflow(
+            JobCollectionWorkflow.run,
+            CollectJobsInput(platforms=args.platforms.split(",")),
+            id=f"job-collection-{run_id}",  # Schedule 이 붙기 전까지의 수동 트리거용
+            task_queue=QUEUE_DEFAULT,
+        )
+        result = await collect_handle.result()
+        for r in result.results:
+            print(
+                f"{r.platform}: found={r.found} passed={r.passed} actionable={r.actionable}"
+                f"{f' error={r.error}' if r.error else ''}"
+            )
+        return
+
     wf_id = f"application-{args.id}"
 
     match args.command:
@@ -107,6 +126,9 @@ def main() -> None:
     schedule = sub.add_parser("schedule", help="예약 시각 재조정")
     schedule.add_argument("id")
     schedule.add_argument("--at", required=True)
+
+    collect = sub.add_parser("collect", help="공고 수집 1회 실행 (Schedule 붙기 전 수동 트리거)")
+    collect.add_argument("--platforms", required=True, help="쉼표 구분, 예: wanted,saramin")
 
     asyncio.run(_run(parser.parse_args()))
 

@@ -94,6 +94,9 @@ api         라우터는 컨테이너에서 꺼내 쓴다
   타입을 노출하면 타입 체크에 실패한다.
 - 로그는 structlog, **모든 로그에 `workflow_id`를 구조화 필드로** 넣는다. DB·S3·트레이스를 잇는 유일한 키다.
 - 주석은 "왜"만 쓴다. 설계 근거는 `ARCHITECTURE.md §N`으로 참조한다.
+- **파일 하나를 너무 키우지 않는다.** 대략 200줄을 넘어가면 책임을 쪼갤 지점을 찾는다
+  (예: action dispatch를 별 모듈로, 큰 워크플로우는 헬퍼 파일로). 무조건적인 상한이 아니라
+  "한 파일 = 한 책임"이 흐려지는 신호로 쓴다.
 
 ## 하지 말 것
 
@@ -114,3 +117,8 @@ api         라우터는 컨테이너에서 꺼내 쓴다
 아직 **없는** 것: DB 모델·Alembic(파일 기반 repository로 대체 중), Telegram 어댑터,
 Playwright executor(replay 대역만), Anthropic 어댑터, S3 어댑터, LangGraph(M3에서 판단),
 `AutomationRepairWorkflow`(M4).
+
+**공고 수집·매칭** (M1과 별도 트랙) — `JobSource`(wanted/saramin/jasoseol) + 순수 domain
+매칭(`job_screening`/`job_applicability`) + `JobCollectionWorkflow`까지 구현됨. Temporal
+Schedule(cron) 배선은 아직 없다 — `uv run python -m auto_apply.cli collect --platforms wanted`로
+수동 트리거. 자세한 설계는 ARCHITECTURE.md §11.2b.
