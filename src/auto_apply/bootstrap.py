@@ -7,6 +7,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
+from auto_apply.adapters.credentials.json_queue import JsonQueueCredentialSource
+from auto_apply.adapters.credentials.static import StaticCredentialSource
 from auto_apply.adapters.executor.playwright import PlaywrightExecutor
 from auto_apply.adapters.executor.replay import ReplayExecutor
 from auto_apply.adapters.facts.static import StaticFactSource
@@ -39,10 +41,13 @@ from auto_apply.adapters.repository.postgres import sqlalchemy_uow_factory
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
 from auto_apply.adapters.storage.local import LocalBlobStore
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
+from auto_apply.adapters.web_agent.aside_cli import AsideCliExecutor
+from auto_apply.adapters.web_agent.replay import ReplayWebAgentExecutor
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import PersistState
 from auto_apply.contracts.job import JobRecord
 from auto_apply.ports.clock import Clock, IdGen
+from auto_apply.ports.credentials import CredentialSource
 from auto_apply.ports.executor import RecipeExecutor
 from auto_apply.ports.facts import FactSource
 from auto_apply.ports.guide import GuideSource
@@ -57,6 +62,7 @@ from auto_apply.ports.recipe_source import RecipeSource
 from auto_apply.ports.repository import UnitOfWork
 from auto_apply.ports.resume import ResumeGenerator, ResumeReviewer
 from auto_apply.ports.storage import BlobStore
+from auto_apply.ports.web_agent import WebAgentExecutor
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +85,8 @@ class Container:
     facts: FactSource
     profile: ProfileSource
     guide: GuideSource
+    credentials: CredentialSource
+    web_agent: WebAgentExecutor
 
 
 def _build_store(cfg: Settings) -> BlobStore:
@@ -201,6 +209,30 @@ def _build_guide(cfg: Settings) -> GuideSource:
             return FileGuideSource(cfg.resume_guide_dir)
 
 
+def _build_credentials(cfg: Settings) -> CredentialSource:
+    match cfg.credential_source:
+        case "static":
+            return StaticCredentialSource()
+        case "json":
+            return JsonQueueCredentialSource(cfg.credential_queue_path)
+
+
+def _build_web_agent(
+    cfg: Settings, clock: Clock, store: BlobStore, credentials: CredentialSource
+) -> WebAgentExecutor:
+    match cfg.web_agent:
+        case "replay":
+            return ReplayWebAgentExecutor(clock)
+        case "aside_cli":
+            return AsideCliExecutor(
+                credentials,
+                store,
+                clock,
+                binary=cfg.aside_cli_binary,
+                account=cfg.aside_cli_account or None,
+            )
+
+
 def _build_pdf(cfg: Settings, store: BlobStore) -> PdfRenderer:
     match cfg.pdf_renderer:
         case "stub":
@@ -217,6 +249,7 @@ def build_container(cfg: Settings) -> Container:
     facts = _build_facts(cfg)
     profile = _build_profile(cfg)
     guide = _build_guide(cfg)
+    credentials = _build_credentials(cfg)
     return Container(
         settings=cfg,
         clock=clock,
@@ -244,4 +277,6 @@ def build_container(cfg: Settings) -> Container:
         facts=facts,
         profile=profile,
         guide=guide,
+        credentials=credentials,
+        web_agent=_build_web_agent(cfg, clock, store, credentials),
     )

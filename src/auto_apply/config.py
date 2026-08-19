@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     profile_source: Literal["static", "yaml"] = "yaml"
     guide_source: Literal["static", "file"] = "file"
     pdf_renderer: Literal["stub", "weasyprint"] = "weasyprint"
+    web_agent: Literal["replay", "aside_cli"] = "replay"
+    credential_source: Literal["static", "json"] = "static"
 
     # 인프라
     database_url: str = "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply"
@@ -36,6 +38,10 @@ class Settings(BaseSettings):
     facts_path: Path = Path("./config/facts.yaml")
     profile_path: Path = Path("./config/profile.yaml")
     resume_guide_dir: Path = Path("./config")  # resume_guide.{platform}.md 를 이 안에서 찾는다
+    credential_queue_path: Path = Path("./config/credentials.json")
+    # WEB_AGENT=aside_cli 일 때만 — 이 머신에 aside CLI가 설치되고 로그인돼 있어야 한다.
+    aside_cli_binary: str = "aside"
+    aside_cli_account: str = ""
 
     # 공고 수집 Schedule (§11.2b) — `cli.py collect-schedule`이 이 값으로 등록/갱신한다.
     job_collection_cron: str = "0 9 * * *"
