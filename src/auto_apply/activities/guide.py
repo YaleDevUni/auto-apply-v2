@@ -11,8 +11,8 @@ from temporalio import activity
 
 from auto_apply.ai.prompts import build_guide_patch_prompt
 from auto_apply.ai.schemas import GuidePatchSchema
-from auto_apply.contracts.dto import GuidePatchProposal, ProposeGuidePatchRequest
-from auto_apply.domain.guide_patch import apply_patch
+from auto_apply.contracts.dto import GuidePatchItem, GuidePatchProposal, ProposeGuidePatchRequest
+from auto_apply.domain.guide_patch import apply_patches
 from auto_apply.ports.guide import GuideSource
 from auto_apply.ports.llm import LLMClient
 
@@ -29,15 +29,14 @@ class GuideActivities:
         # 이 activity 는 재시도/재프롬프트 루프가 없는 단발 호출이라 재사용할 캐시 경계가
         # 없다 — cache_prefix 를 안 넘긴다([[claude-cli-prompt-cache-redesign]]).
         out = await self._llm.structured(prompt, GuidePatchSchema)
-        return GuidePatchProposal(
-            old=out.old, new=out.new, rationale=out.rationale, platform=req.job.platform
-        )
+        patches = [GuidePatchItem(old=p.old, new=p.new, rationale=p.rationale) for p in out.patches]
+        return GuidePatchProposal(patches=patches, platform=req.job.platform)
 
     @activity.defn(name="apply_guide_patch")
     async def apply_guide_patch(self, patch: GuidePatchProposal) -> None:
         """사람이 diff 를 이미 승인한 뒤에만 호출된다 (workflows/_revision.py)."""
         text = await self._guide.get(patch.platform)
-        patched = apply_patch(text, patch.old, patch.new)
+        patched = apply_patches(text, [(p.old, p.new) for p in patch.patches])
         await self._guide.save(patch.platform, patched)
 
     def all(self) -> list[Callable[..., Any]]:

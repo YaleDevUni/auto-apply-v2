@@ -45,8 +45,15 @@ _PERSIST = RetryPolicy(maximum_attempts=10, initial_interval=timedelta(seconds=1
 
 
 def _guide_patch_summary(proposal: GuidePatchProposal) -> str:
-    before = proposal.old or "(새 규칙 추가)"
-    return f"- 기존: {before}\n+ 변경: {proposal.new}\n\n사유: {proposal.rationale or '(없음)'}"
+    """한 REVISE(general) 피드백에 여러 지시가 섞여 있으면 patch 도 여러 개다 — 번호를 매겨
+
+    diff 여러 개로 보여준다(메모리 resume-revise-feedback-design).
+    """
+    parts = []
+    for i, p in enumerate(proposal.patches, start=1):
+        before = p.old or "(새 규칙 추가)"
+        parts.append(f"[{i}] - 기존: {before}\n+ 변경: {p.new}\n사유: {p.rationale or '(없음)'}")
+    return "\n\n".join(parts)
 
 
 @workflow.defn

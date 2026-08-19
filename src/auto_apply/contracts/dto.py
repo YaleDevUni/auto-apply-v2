@@ -116,16 +116,27 @@ class ProposeGuidePatchRequest(_Frozen):
     feedback: str
 
 
-class GuidePatchProposal(_Frozen):
-    """LLM 출력 + platform. 전문이 아니라 치환 쌍만 — apply_guide_patch 가 정확히 1번 매치될 때만
-
-    반영한다. `platform`은 어느 `resume_guide.{platform}.md`에 적용할지를 propose 에서 apply 까지
-    activity 경계를 넘어 들고 가는 값이다(활동 인자는 하나뿐이라 여기 실어야 한다).
-    """
+class GuidePatchItem(_Frozen):
+    """치환 쌍 하나 — ai/schemas.GuidePatchItem 을 activities/guide.py 가 그대로 옮겨 담는다."""
 
     old: str
     new: str
     rationale: str = ""
+
+
+class GuidePatchProposal(_Frozen):
+    """LLM 출력 + platform. 전문이 아니라 치환 쌍 목록만 — apply_guide_patch 가 각 patch 를
+
+    순서대로 적용하며, 하나라도 정확히 1번 매치되지 않으면 그 자리에서 실패한다(전체 patch
+    가 원자적으로 적용되진 않는다 — GuidePatchNotFound/Ambiguous 는 재시도 없이 사람에게
+    넘기는 실패라 부분 적용 상태를 그대로 노출해도 된다는 판단). 한 번의 REVISE(general)
+    피드백에 서로 다른 지시가 여러 개 섞여 있을 수 있어 리스트다(메모리
+    resume-revise-feedback-design). `platform`은 어느 `resume_guide.{platform}.md`에 적용할지를
+    propose 에서 apply 까지 activity 경계를 넘어 들고 가는 값이다(활동 인자는 하나뿐이라 여기
+    실어야 한다).
+    """
+
+    patches: list[GuidePatchItem]
     platform: str = ""
 
 

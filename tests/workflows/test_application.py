@@ -257,7 +257,9 @@ async def test_revise_with_stale_nonce_from_previous_round_is_ignored(env: Workf
 async def test_revise_general_applies_guide_patch_after_second_approval(env: WorkflowEnvironment):
     """REVISE(general) — 가이드 patch 는 사람이 diff 를 한 번 더 승인해야 반영된다."""
     h = Harness(
-        guide_patch_payloads=[{"old": "", "new": "항상 존댓말로 쓴다.", "rationale": "사용자 요청"}]
+        guide_patch_payloads=[
+            {"patches": [{"old": "", "new": "항상 존댓말로 쓴다.", "rationale": "사용자 요청"}]}
+        ]
     )
     async with _Workers(env.client, h):
         handle = await _start(env.client, _cmd())
@@ -287,9 +289,54 @@ async def test_revise_general_applies_guide_patch_after_second_approval(env: Wor
     assert result.state is ApplicationState.COMPLETED
 
 
+async def test_revise_general_applies_all_patches_from_one_multi_instruction_feedback(
+    env: WorkflowEnvironment,
+):
+    """한 REVISE(general) 피드백에 서로 다른 지시가 여러 개 섞여 있으면 모두 반영돼야 한다
+
+    (메모리 resume-revise-feedback-design — old/new 단일 쌍만 표현하던 스키마에서는 다지시
+    피드백 중 일부가 조용히 누락됐다, 라이브 테스트로 실측).
+    """
+    h = Harness(
+        guide_patch_payloads=[
+            {
+                "patches": [
+                    {"old": "", "new": "항상 존댓말로 쓴다.", "rationale": "지시 1"},
+                    {"old": "", "new": "프로젝트는 3~4개만 싣는다.", "rationale": "지시 2"},
+                ]
+            }
+        ]
+    )
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        assert h.notifier is not None
+        main_nonce = await _wait_new_nonce(h, set())
+
+        await handle.signal(
+            ApplicationWorkflow.revise,
+            ReviseSignal(feedback="정중체로 쓰고 프로젝트도 줄여줘", scope=RevisionScope.GENERAL),
+        )
+        guide_nonce = await _wait_new_nonce(h, {main_nonce})
+
+        await handle.signal(
+            ApplicationWorkflow.approve_guide_patch, GuidePatchDecisionSignal(nonce=guide_nonce)
+        )
+        round2_nonce = await _wait_new_nonce(h, {main_nonce, guide_nonce})
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal(nonce=round2_nonce))
+        result = await handle.result()
+
+        assert h.guide is not None
+        assert await h.guide.get("fixture") == ("항상 존댓말로 쓴다.\n\n프로젝트는 3~4개만 싣는다.")
+
+    assert result.state is ApplicationState.COMPLETED
+
+
 async def test_revise_general_rejected_guide_patch_still_regenerates(env: WorkflowEnvironment):
     """가이드 patch 를 거절해도 이번 라운드 재생성엔 feedback 이 반영된다 — 가이드만 안 바뀐다."""
-    h = Harness(guide_patch_payloads=[{"old": "", "new": "새 규칙", "rationale": "요청"}])
+    h = Harness(
+        guide_patch_payloads=[{"patches": [{"old": "", "new": "새 규칙", "rationale": "요청"}]}]
+    )
     async with _Workers(env.client, h):
         handle = await _start(env.client, _cmd())
         await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
@@ -322,8 +369,12 @@ async def test_guide_patch_revise_regenerates_proposal_then_approves(env: Workfl
     """
     h = Harness(
         guide_patch_payloads=[
-            {"old": "", "new": "존댓말로 쓴다.", "rationale": "1차 제안"},
-            {"old": "", "new": "항상 존댓말로 정중하게 쓴다.", "rationale": "코멘트 반영"},
+            {"patches": [{"old": "", "new": "존댓말로 쓴다.", "rationale": "1차 제안"}]},
+            {
+                "patches": [
+                    {"old": "", "new": "항상 존댓말로 정중하게 쓴다.", "rationale": "코멘트 반영"}
+                ]
+            },
         ]
     )
     async with _Workers(env.client, h):
@@ -370,9 +421,9 @@ async def test_guide_patch_revise_exceeding_max_rounds_gives_up_guide_but_keeps_
     max_guide_revisions = 2
     h = Harness(
         guide_patch_payloads=[
-            {"old": "", "new": "제안 1", "rationale": "r1"},
-            {"old": "", "new": "제안 2", "rationale": "r2"},
-            {"old": "", "new": "제안 3", "rationale": "r3"},
+            {"patches": [{"old": "", "new": "제안 1", "rationale": "r1"}]},
+            {"patches": [{"old": "", "new": "제안 2", "rationale": "r2"}]},
+            {"patches": [{"old": "", "new": "제안 3", "rationale": "r3"}]},
         ]
     )
     async with _Workers(env.client, h):

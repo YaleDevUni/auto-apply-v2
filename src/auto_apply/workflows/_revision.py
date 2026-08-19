@@ -139,7 +139,11 @@ async def revise_guide(
                 f"가이드 patch 코멘트가 {cmd.max_guide_revisions}회를 넘어 포기했다",
             )
             return
+        prev_patches = "\n".join(
+            f"[{i}] old: {p.old or '(없음)'}\nnew: {p.new}"
+            for i, p in enumerate(proposal.patches, start=1)
+        )
         current_feedback = (
-            f"{feedback}\n\n[이전 제안]\nold: {proposal.old or '(없음)'}\nnew: {proposal.new}\n\n"
+            f"{feedback}\n\n[이전 제안]\n{prev_patches}\n\n"
             f"[이 제안에 대한 사용자 코멘트]\n{decision.feedback}"
         )
