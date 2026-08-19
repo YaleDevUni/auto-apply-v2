@@ -46,4 +46,7 @@ api: ## FastAPI 개발 서버
 worker: ## Temporal worker (QUEUE=default|ai|browser)
 	uv run python -m auto_apply.worker --queue $${QUEUE:-default}
 
-.PHONY: help setup up down reset fmt lint type arch test test-all check api worker
+telegram-listen: ## 텔레그램 롱폴링 리스너 (NOTIFIER=telegram, 공인 URL 없는 로컬 개발용)
+	uv run python -m auto_apply.telegram.listener
+
+.PHONY: help setup up down reset fmt lint type arch test test-all check api worker telegram-listen

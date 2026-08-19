@@ -1,31 +1,23 @@
-"""TelegramNotifier — 네트워크 없이 콜백 데이터 형식과 nonce 로직을 검증한다.
+"""TelegramNotifier — 네트워크 없이 콜백 데이터 형식을 검증한다.
 
-nonce 재사용 방지 자체는 tests/ports/test_notifier_contract.py 가 모든 구현에 강제한다.
-여기서는 Telegram 고유 표현(callback_data 형식, chat_id 브로드캐스트)만 본다.
+nonce 발급 자체는 tests/ports/test_notifier_contract.py 가 모든 구현에 강제하고, nonce
+검증(오래된 메시지 거부)은 워크플로우가 한다 — tests/workflows/test_application.py 와
+tests/api/test_telegram_webhook_api.py 참고. 여기서는 Telegram 고유 표현(callback_data
+형식, chat_id 브로드캐스트)만 본다.
 """
-
-from telegram import InlineKeyboardMarkup
 
 from auto_apply.adapters.clock.system import UuidIdGen
 from auto_apply.adapters.notifier.telegram import TelegramNotifier
 from auto_apply.contracts.dto import DecisionRequest, NotifyEvent
+from telegram import InlineKeyboardMarkup
 
 
 class FakeBot:
     def __init__(self) -> None:
         self.sent: list[dict[str, object]] = []
 
-    async def send_message(
-        self, chat_id: int, text: str, *, parse_mode: str | None = None, reply_markup: object = None
-    ) -> object:
-        self.sent.append(
-            {
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": parse_mode,
-                "reply_markup": reply_markup,
-            }
-        )
+    async def send_message(self, chat_id: int, text: str, *, reply_markup: object = None) -> object:
+        self.sent.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
         return object()
 
 
@@ -73,12 +65,26 @@ async def test_notify_sends_plain_message_without_keyboard() -> None:
     assert "reply_markup" not in bot.sent[0] or bot.sent[0].get("reply_markup") is None
 
 
-async def test_new_decision_round_invalidates_previous_nonce() -> None:
-    """같은 application 에 새 승인 요청이 나가면 이전 nonce 는 더 이상 유효하지 않다."""
+async def test_request_decision_passes_through_markdown_special_chars() -> None:
+    """회귀 테스트: 실제 라이브 스모크테스트에서 blob key 의 `_` 때문에 legacy Markdown
+
+    parse_mode 가 "can't find end of the entity" 로 전송 자체를 실패시켰다. 이제 평문으로
+    보내므로 어떤 특수문자가 섞여도 send_message 호출 자체는 그대로 나가야 한다.
+    """
     bot = FakeBot()
     notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="Fixture Inc. / 백엔드_엔지니어* 지원 승인",
+        summary="_짝이_안_맞는_밑줄_",
+        artifact_url="resumes/res_293033665fef4ddd.json",
+    )
 
-    first = await notifier.request_decision(_req())
-    await notifier.request_decision(_req())
+    await notifier.request_decision(req)
 
-    assert await notifier.consume_ticket("app_1", first.nonce) is False
+    assert bot.sent[0]["text"] == (
+        "Fixture Inc. / 백엔드_엔지니어* 지원 승인\n"
+        "_짝이_안_맞는_밑줄_\n\n"
+        "resumes/res_293033665fef4ddd.json"
+    )

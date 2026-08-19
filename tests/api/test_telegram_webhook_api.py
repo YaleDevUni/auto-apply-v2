@@ -1,9 +1,9 @@
 """POST /telegram/webhook — 콜백 → signal 변환을 실제 워크플로우로 검증한다.
 
 TelegramNotifier 고유 동작(콜백 데이터 형식, chat 브로드캐스트)은
-tests/adapters/test_telegram_notifier.py 가 이미 커버한다. 여기서는 웹훅 라우트가 nonce 를
-올바르게 소비하고 signal 로 바꾸는지만 본다 — 그래서 Notifier 대역은 `ConsoleNotifier` 로
-충분하다 (둘 다 같은 nonce 계약을 구현한다, §11.5).
+tests/adapters/test_telegram_notifier.py 가 이미 커버한다. 여기서는 웹훅 라우트가 콜백을
+signal 로 바꾸고, nonce 검증(워크플로우가 한다, ports/notifier.py 참고)이 실제로 오래된/
+위조된 버튼을 걸러내는지를 본다.
 """
 
 import asyncio
@@ -74,9 +74,10 @@ async def _awaiting_approval_with_nonce(env: WorkflowEnvironment, h: Harness):
     assert h.notifier is not None
     # 상태가 AWAITING_APPROVAL 로 보이는 시점과 request_approval activity(=nonce 발급)가
     # 끝나는 시점 사이에는 미세한 간극이 있다 — self._state 는 activity 실행 전에 바뀐다.
+    # (nonce 는 이제 워크플로우 안에만 있다 — h.notifier 는 테스트가 옆에서 훔쳐본 값이다.)
     nonce = None
     for _ in range(100):
-        nonce = h.notifier.peek_nonce(APP_ID)  # type: ignore[attr-defined]
+        nonce = h.notifier.last_ticket.get(APP_ID)
         if nonce is not None:
             break
         await asyncio.sleep(0.05)
@@ -123,6 +124,26 @@ async def test_replayed_callback_is_ignored(client):
 
     result = await handle.result()
     assert result.state is ApplicationState.COMPLETED
+
+
+async def test_stale_nonce_from_different_process_is_rejected(client):
+    """회귀 테스트: nonce 검증을 어댑터 메모리에 뒀을 때, 발급 프로세스(worker)와 검증
+
+    프로세스(webhook 서버)가 갈라지면 진짜 nonce 를 보내도 항상 거부됐다(라이브
+    스모크테스트에서 실측). 워크플로우가 검증하는 지금은 "가짜/오래된 nonce" 만 거부돼야
+    하고, 그 경우 signal 자체가 조용히 무시돼 워크플로우는 계속 대기해야 한다.
+    """
+    ac, env, h = client
+    handle, _real_nonce = await _awaiting_approval_with_nonce(env, h)
+
+    resp = await ac.post(
+        "/telegram/webhook",
+        json=_callback_body("a", APP_ID, "totally-different-nonce", ALLOWED_CHAT_ID),
+    )
+    assert resp.status_code == 200  # signal 배선 자체는 성공 — 워크플로우가 내용을 걸러낸다
+
+    view = await handle.query(ApplicationWorkflow.state)
+    assert view.state is ApplicationState.AWAITING_APPROVAL, "위조/오래된 nonce 는 무시돼야 한다"
 
 
 async def test_callback_from_unknown_chat_is_ignored(client):

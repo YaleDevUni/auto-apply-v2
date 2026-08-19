@@ -24,11 +24,31 @@ from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResum
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.bootstrap import Container
 from auto_apply.config import Settings
-from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.dto import DecisionRequest, DecisionTicket, NotifyEvent, PersistState
 from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.ports.notifier import Notifier
 
 JOB_URL = "https://fixture.local/jobs/1"
+
+
+@dataclass
+class _NonceSpy:
+    """테스트 전용 관찰자 — 실제 nonce 검증은 워크플로우가 한다(ports/notifier.py 참고).
+
+    웹훅/리스너 콜백을 흉내내려면 방금 발급된 nonce 를 알아야 하는데, 그건 이제 워크플로우
+    안에만 있어서 밖에서 조회할 방법이 없다. 그래서 여기서 발급 시점에 옆에서 훔쳐본다.
+    """
+
+    inner: Notifier
+    last_ticket: dict[str, str] = field(default_factory=dict)
+
+    async def request_decision(self, req: DecisionRequest) -> DecisionTicket:
+        ticket = await self.inner.request_decision(req)
+        self.last_ticket[req.application_id] = ticket.nonce
+        return ticket
+
+    async def notify(self, event: NotifyEvent) -> None:
+        await self.inner.notify(event)
 
 
 def sample_recipe(
@@ -61,13 +81,13 @@ class Harness:
     verified: bool = True
     fail_selectors: frozenset[str] = frozenset()
     recipe_status: str = "active"
-    # activities() 와 container() 가 같은 인스턴스를 써야 nonce 흐름을 끝까지 검증할 수 있다
-    # (웹훅이 소비하는 nonce 는 워커 쪽 activity 가 발급한 것과 같은 객체 상태여야 한다).
-    notifier: Notifier | None = None
+    # activities() 와 container() 가 같은 인스턴스를 써야 GET 이 workers 쪽 persist 결과를
+    # 그대로 읽는다(rows 공유) — nonce 검증 자체는 더 이상 여기 있지 않다(워크플로우가 한다).
+    notifier: _NonceSpy | None = None
 
-    def _shared_notifier(self) -> Notifier:
+    def _shared_notifier(self) -> _NonceSpy:
         if self.notifier is None:
-            self.notifier = ConsoleNotifier(UuidIdGen())
+            self.notifier = _NonceSpy(ConsoleNotifier(UuidIdGen()))
         return self.notifier
 
     def activities(self) -> list[object]:

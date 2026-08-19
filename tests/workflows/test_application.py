@@ -143,6 +143,39 @@ async def test_duplicate_approval_is_idempotent(env: WorkflowEnvironment):
     assert result.state is ApplicationState.COMPLETED
 
 
+async def test_approve_with_wrong_nonce_is_ignored(env: WorkflowEnvironment):
+    """회귀 테스트: nonce 검증은 워크플로우 안에서 한다(ports/notifier.py 참고) — 어댑터
+
+    메모리에 두면 발급 프로세스(worker)와 검증 프로세스(webhook/listener)가 갈라질 때
+    항상 실패한다(라이브 스모크테스트로 실측). 가짜/오래된 nonce 는 조용히 무시되고,
+    올바른 nonce 는 그대로 통과해야 한다.
+    """
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal(nonce="not-the-real-nonce"))
+        # 위조 nonce 는 무시됐어야 한다 — 여전히 승인 대기 상태
+        await _tick()
+        assert (await handle.query(ApplicationWorkflow.state)).state is (
+            ApplicationState.AWAITING_APPROVAL
+        )
+
+        assert h.notifier is not None
+        real_nonce = None
+        for _ in range(100):
+            real_nonce = h.notifier.last_ticket.get(APP_ID)
+            if real_nonce is not None:
+                break
+            await _tick()
+        assert real_nonce is not None, "request_approval activity 가 끝나지 않았다"
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal(nonce=real_nonce))
+        result = await handle.result()
+
+    assert result.state is ApplicationState.COMPLETED
+
+
 # ─────────────────────────── 타이머 / 스케줄 ───────────────────────────
 async def test_approval_timeout_expires(env: WorkflowEnvironment):
     """72시간 무응답 → expired. 무한 대기 워크플로우를 만들지 않는다."""

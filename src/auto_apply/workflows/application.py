@@ -56,6 +56,7 @@ class ApplicationWorkflow:
     def __init__(self) -> None:
         self._state: ApplicationState = ApplicationState.COLLECTING
         self._decision: Decision | None = None
+        self._decision_nonce: str | None = None
         self._scheduled_at: datetime | None = None
         self._cancelled = False
         self._attempts = 0
@@ -123,7 +124,7 @@ class ApplicationWorkflow:
         self, cmd: StartApplication, job: JobRef, pdf_key: str
     ) -> Decision | None:
         await self._persist(cmd, ApplicationState.AWAITING_APPROVAL)
-        await workflow.execute_activity(
+        ticket = await workflow.execute_activity(
             request_approval,
             DecisionRequest(
                 application_id=cmd.application_id,
@@ -135,6 +136,11 @@ class ApplicationWorkflow:
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_QUICK,
         )
+        # nonce 검증은 여기(워크플로우)에서만 한다 — Notifier 어댑터 메모리에 두면 발급 프로세스
+        # (worker)와 검증 프로세스(webhook/listener)가 갈라질 때 항상 실패한다. 실제로 라이브
+        # 스모크테스트에서 그렇게 터졌다. 워크플로우는 Temporal 이 프로세스 경계와 무관하게
+        # 들고 있는 유일한 상태라 여기가 맞는 자리다.
+        self._decision_nonce = ticket.nonce
         try:
             await workflow.wait_condition(
                 lambda: self._decision is not None,
@@ -284,14 +290,21 @@ class ApplicationWorkflow:
         return ApplicationResult(state=state, reason=reason, submitted_at=submitted_at)
 
     # ─────────────────────────── signals ───────────────────────────
+    def _nonce_ok(self, nonce: str) -> bool:
+        """nonce 를 안 보내는 발신자(CLI 등 신뢰된 직접 signal)는 항상 통과시킨다.
+
+        nonce 를 보냈는데 지금 발급된 것과 다르면 오래된 메시지/재전달로 보고 무시한다 (§6).
+        """
+        return not nonce or nonce == self._decision_nonce
+
     @workflow.signal
     def approve(self, sig: ApproveSignal) -> None:
-        if self._decision is None:  # 중복 승인 무시 = 멱등 (버튼은 두 번 눌린다)
+        if self._decision is None and self._nonce_ok(sig.nonce):  # 중복 승인 무시 = 멱등
             self._decision = Decision(kind=DecisionKind.APPROVE, scheduled_at=sig.scheduled_at)
 
     @workflow.signal
     def reject(self, sig: RejectSignal) -> None:
-        if self._decision is None:
+        if self._decision is None and self._nonce_ok(sig.nonce):
             self._decision = Decision(kind=DecisionKind.REJECT, reason=sig.reason)
 
     @workflow.signal

@@ -113,17 +113,20 @@ api         라우터는 컨테이너에서 꺼내 쓴다
 
 **M1 완료** — 승인 흐름을 `ConsoleNotifier`로 먼저 완성한 뒤(durability는
 `tests/workflows/test_durability.py`가 "워커를 강제 종료해도 예약이 살아있다"로 증명),
-`TelegramNotifier` + `POST /telegram/webhook` + `/applications` 승인 엔드포인트(§7)를
-얹었다. `Notifier` port에 `consume_ticket`(nonce 1회성 검증, §6)을 추가해 콘솔/텔레그램
-둘 다 같은 계약을 구현한다 — nonce는 아직 DB(`approvals` 테이블, M2)가 아니라 어댑터
-인스턴스의 in-memory 상태다. `NOTIFIER=telegram` + `TELEGRAM_BOT_TOKEN` +
-`TELEGRAM_ALLOWED_CHAT_IDS`로 켠다.
+`TelegramNotifier` + `/applications` 승인 엔드포인트(§7) + 텔레그램 인바운드 경로 둘(웹훅
+`POST /telegram/webhook`, 롱폴링 `telegram/listener.py` — `make telegram-listen`)을 얹었다.
+nonce(§6, 오래된 버튼 재사용 방지)는 **`ApplicationWorkflow` 가 직접 들고 검증**한다 —
+Notifier 어댑터 메모리에 뒀더니 발급 프로세스(worker)와 검증 프로세스(webhook 서버/리스너)가
+갈라질 때 항상 실패했다(라이브 스모크테스트로 실측, `workflows/application.py`의
+`_decision_nonce`/`_nonce_ok` 참고). `NOTIFIER=telegram` + `TELEGRAM_BOT_TOKEN` +
+`TELEGRAM_ALLOWED_CHAT_IDS`로 켠다. 로컬 개발은 공인 URL이 없으므로 웹훅 대신
+`make telegram-listen`(getUpdates 롱폴링)을 쓴다.
 
 Playwright executor(`adapters/executor/playwright.py`)도 구현돼 있다 — `EXECUTOR=playwright`.
 
 아직 **없는** 것: DB 모델·Alembic(파일 기반 repository로 대체 중), Anthropic 어댑터,
-S3 어댑터, LangGraph(M3에서 판단), `AutomationRepairWorkflow`(M4), `approvals` 테이블
-기반 nonce 영속화, `/recipes/{platform}` 계열 엔드포인트.
+S3 어댑터, LangGraph(M3에서 판단), `AutomationRepairWorkflow`(M4), `/recipes/{platform}`
+계열 엔드포인트.
 
 **공고 수집·매칭** (M1과 별도 트랙) — `JobSource`(wanted/saramin/jasoseol) + 순수 domain
 매칭(`job_screening`/`job_applicability`) + `JobCollectionWorkflow` + Temporal Schedule(cron)
