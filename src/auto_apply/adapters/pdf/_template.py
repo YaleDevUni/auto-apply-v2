@@ -45,9 +45,12 @@ ul.bullets li { margin-bottom: 0.8mm; }
 .edu-head .school { font-weight: 700; }
 .edu-degree { font-size: 9.5pt; }
 .edu-note { color: #666; font-size: 8.5pt; }
-.chips { display: flex; flex-wrap: wrap; gap: 2mm; }
+/* .chips 는 flex 를 안 쓴다 — weasyprint 가 flex 아이템 + border-radius 조합에서 border 를
+   두 겹으로 그리는 렌더링 버그가 있다(실측, 69.0). inline-block + margin 으로 같은 줄바꿈
+   레이아웃을 만들면 버그를 피해간다. */
 .chip {
-  border: 1pt solid #ccc; border-radius: 3mm; padding: 1mm 3mm; font-size: 9pt;
+  display: inline-block; border: 1pt solid #ccc; border-radius: 3mm; padding: 1mm 3mm;
+  font-size: 9pt; margin: 0 2mm 2mm 0;
 }
 .languages div + div { margin-top: 1mm; }
 """
