@@ -11,26 +11,22 @@ from functools import partial
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError, ApplicationError, ChildWorkflowError
+from temporalio.exceptions import ChildWorkflowError
 
 from auto_apply.contracts.activity_defs import (
     collect_job,
     evaluate_eligibility,
-    execute_application,
     load_active_recipe,
     notify,
     persist_state,
     render_pdf,
     request_approval,
-    verify_submission,
 )
 from auto_apply.contracts.dto import (
     ApplicationResult,
     ApproveSignal,
     Decision,
     DecisionRequest,
-    ExecuteInput,
-    ExecutionContext,
     GenerateResumeRequest,
     JobRef,
     NotifyEvent,
@@ -39,13 +35,12 @@ from auto_apply.contracts.dto import (
     RescheduleSignal,
     StartApplication,
     StateView,
-    VerifyInput,
 )
-from auto_apply.domain.enums import ApplicationState, DecisionKind, ExecutionMode
+from auto_apply.domain.enums import ApplicationState, DecisionKind
+from auto_apply.workflows import _execution
 from auto_apply.workflows.resume import ResumeWorkflow
 
 QUEUE_AI = "ai"
-QUEUE_BROWSER = "browser"
 
 _QUICK = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
 _PERSIST = RetryPolicy(maximum_attempts=10, initial_interval=timedelta(seconds=1))
@@ -187,65 +182,21 @@ class ApplicationWorkflow:
             start_to_close_timeout=timedelta(minutes=1),
             retry_policy=_QUICK,
         )
-        mode = self._resolve_mode(cmd, recipe.status)
-
-        try:
-            result = await workflow.execute_activity(
-                execute_application,
-                ExecuteInput(
-                    recipe=recipe,
-                    ctx=ExecutionContext(
-                        application_id=cmd.application_id,
-                        attempt=self._attempts,
-                        profile={"email": "user@example.com", "name": "지원자"},
-                        upload_keys={"resume": resume_pdf_key},
-                    ),
-                    mode=mode,
-                ),
-                task_queue=QUEUE_BROWSER,
-                start_to_close_timeout=timedelta(minutes=15),
-                heartbeat_timeout=timedelta(seconds=30),
-                retry_policy=RetryPolicy(maximum_attempts=2),
-            )
-        except ActivityError as e:
-            # Temporal 은 예외를 ApplicationError 로 감싸며 원래 클래스는 .type 문자열로 남는다.
-            # 그래서 isinstance 가 아니라 type 비교를 해야 한다.
-            failure_type = e.cause.type if isinstance(e.cause, ApplicationError) else None
-            reason = f"{failure_type or 'unknown'}: {e.cause}"
-            if failure_type == "RecipeExecutionError":
-                # M4: 여기서 AutomationRepairWorkflow 로 분기한다 (§2.4).
-                await self._notify_needs_human(cmd, reason)
-                return await self._finish(cmd, ApplicationState.NEEDS_HUMAN, reason)
-            await self._notify_needs_human(cmd, reason)
-            return await self._finish(cmd, ApplicationState.NEEDS_HUMAN, reason)
-
-        if mode is ExecutionMode.DRY_RUN:
-            return await self._finish(cmd, ApplicationState.COMPLETED, f"dry_run: {result.detail}")
-
-        await self._persist(cmd, ApplicationState.VERIFYING)
-        verified = await workflow.execute_activity(
-            verify_submission,
-            VerifyInput(application_id=cmd.application_id, platform=job.platform),
-            start_to_close_timeout=timedelta(minutes=5),
-            retry_policy=_QUICK,
+        # executing~verifying 구간(§2.2)은 _execution.py 로 분리했다 — attempt 감사 로그(§4, §5)
+        # 까지 포함하면 이 파일 하나로는 200줄 기준을 크게 넘는다.
+        outcome = await _execution.run_execution(
+            cmd,
+            job,
+            recipe,
+            self._attempts,
+            resume_pdf_key,
+            persist=lambda state: self._persist(cmd, state),
         )
-        if not verified.verified:
-            reason = f"제출 확인 실패: {verified.detail}"
-            await self._notify_needs_human(cmd, reason)
-            return await self._finish(cmd, ApplicationState.NEEDS_HUMAN, reason)
-
+        if outcome.state is ApplicationState.NEEDS_HUMAN:
+            await self._notify_needs_human(cmd, outcome.reason)
         return await self._finish(
-            cmd, ApplicationState.COMPLETED, result.detail, submitted_at=result.submitted_at
+            cmd, outcome.state, outcome.reason, submitted_at=outcome.submitted_at
         )
-
-    @staticmethod
-    def _resolve_mode(cmd: StartApplication, recipe_status: str) -> ExecutionMode:
-        """제출 여부 결정. 안전한 쪽이 기본값이다 (§9.5)."""
-        if cmd.dry_run_only:
-            return ExecutionMode.DRY_RUN
-        if recipe_status == "candidate":
-            return ExecutionMode.SUPERVISED
-        return ExecutionMode.LIVE
 
     async def _notify_needs_human(self, cmd: StartApplication, reason: str) -> None:
         await workflow.execute_activity(

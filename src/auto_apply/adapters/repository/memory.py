@@ -1,11 +1,12 @@
 from types import TracebackType
 from typing import Self
 
-from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.dto import ApplicationAttempt, PersistState
 from auto_apply.contracts.job import JobRecord
 
 Rows = dict[str, list[PersistState]]
 JobRows = dict[tuple[str, str], JobRecord]
+AttemptRows = dict[str, list[ApplicationAttempt]]
 
 
 class InMemoryApplicationRepository:
@@ -39,10 +40,32 @@ class InMemoryJobRepository:
         return [r for r in self._rows.values() if r.applicability and r.applicability.actionable]
 
 
+class InMemoryAttemptRepository:
+    def __init__(self, rows: AttemptRows) -> None:
+        self._rows = rows
+
+    async def record(self, attempt: ApplicationAttempt) -> None:
+        history = self._rows.setdefault(attempt.application_id, [])
+        for i, existing in enumerate(history):
+            if existing.attempt == attempt.attempt:
+                history[i] = attempt
+                return
+        history.append(attempt)
+
+    async def history(self, application_id: str) -> list[ApplicationAttempt]:
+        return list(self._rows.get(application_id, []))
+
+
 class InMemoryUnitOfWork:
-    def __init__(self, rows: Rows, job_rows: JobRows | None = None) -> None:
+    def __init__(
+        self,
+        rows: Rows,
+        job_rows: JobRows | None = None,
+        attempt_rows: AttemptRows | None = None,
+    ) -> None:
         self.applications = InMemoryApplicationRepository(rows)
         self.jobs = InMemoryJobRepository(job_rows if job_rows is not None else {})
+        self.attempts = InMemoryAttemptRepository(attempt_rows if attempt_rows is not None else {})
 
     async def __aenter__(self) -> Self:
         return self

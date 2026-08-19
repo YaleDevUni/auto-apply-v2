@@ -11,7 +11,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
-from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.dto import ApplicationAttempt, PersistState
 from auto_apply.contracts.job import JobRecord
 
 
@@ -96,10 +96,49 @@ class FileJobRepository:
         return await asyncio.to_thread(_scan)
 
 
+class FileAttemptRepository:
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self._lock = asyncio.Lock()
+
+    def _path(self, application_id: str) -> Path:
+        safe = application_id.replace("/", "_")
+        return self._root / "attempts" / f"{safe}.json"
+
+    def _read(self, path: Path) -> list[ApplicationAttempt]:
+        if not path.is_file():
+            return []
+        raw = json.loads(path.read_text())
+        return [ApplicationAttempt.model_validate(r) for r in raw]
+
+    async def record(self, attempt: ApplicationAttempt) -> None:
+        path = self._path(attempt.application_id)
+
+        def _write() -> None:
+            history = self._read(path)
+            for i, existing in enumerate(history):
+                if existing.attempt == attempt.attempt:
+                    history[i] = attempt
+                    break
+            else:
+                history.append(attempt)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps([h.model_dump(mode="json") for h in history], indent=2))
+            tmp.replace(path)  # 원자적 교체
+
+        async with self._lock:
+            await asyncio.to_thread(_write)
+
+    async def history(self, application_id: str) -> list[ApplicationAttempt]:
+        return await asyncio.to_thread(self._read, self._path(application_id))
+
+
 class FileUnitOfWork:
     def __init__(self, root: Path) -> None:
         self.applications = FileApplicationRepository(root)
         self.jobs = FileJobRepository(root)
+        self.attempts = FileAttemptRepository(root)
 
     async def __aenter__(self) -> Self:
         return self

@@ -17,7 +17,7 @@ from auto_apply.contracts.dto import (
     RescheduleSignal,
     StartApplication,
 )
-from auto_apply.domain.enums import ApplicationState
+from auto_apply.domain.enums import ApplicationState, AttemptOutcome, ExecutionMode
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_AI, QUEUE_BROWSER, QUEUE_DEFAULT
 from auto_apply.workflows.application import ApplicationWorkflow
 from auto_apply.workflows.resume import ResumeWorkflow
@@ -113,6 +113,12 @@ async def test_approve_then_scheduled_execution_completes(env: WorkflowEnvironme
         "executing",
         "completed",
     ]
+    # 실행 1회 = application_attempts 1행 (§4)
+    attempt = h.attempt(APP_ID, 1)
+    assert attempt is not None
+    assert attempt.mode is ExecutionMode.DRY_RUN
+    assert attempt.outcome is AttemptOutcome.SUCCEEDED
+    assert attempt.recipe_platform == "fixture"
 
 
 async def test_reject_signal_ends_as_rejected(env: WorkflowEnvironment):
@@ -254,6 +260,34 @@ async def test_recipe_failure_goes_to_needs_human(env: WorkflowEnvironment):
     assert result.state is ApplicationState.NEEDS_HUMAN
     assert "RecipeExecutionError" in result.reason
     assert h.states(APP_ID)[-1] == "needs_human"
+    attempt = h.attempt(APP_ID, 1)
+    assert attempt is not None
+    assert attempt.outcome is AttemptOutcome.FAILED
+    assert attempt.error_code == "RecipeExecutionError"
+    assert attempt.snapshot_key != ""
+
+
+async def test_execution_failure_recovers_via_verify_before_needs_human(
+    env: WorkflowEnvironment,
+):
+    """부분 제출 위험 방어 (§5): submit 이 오류로 보고돼도, 실제로는 제출됐을 수 있다.
+
+    재개(여기서는 예외 처리 직후) 시 verify_submission 을 먼저 돌려서 확인되면 사람에게
+    넘기지 않고 완료로 처리한다 — 안 그러면 이미 낸 지원서를 사람이 다시 손대게 된다.
+    """
+    h = Harness(fail_selectors=frozenset({"#submit"}), verified=True)
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd(dry_run_only=False))
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal())
+        result = await handle.result()
+
+    assert result.state is ApplicationState.COMPLETED
+    assert "제출 확인됨" in result.reason
+    attempt = h.attempt(APP_ID, 1)
+    assert attempt is not None
+    assert attempt.outcome is AttemptOutcome.SUCCEEDED
+    assert attempt.mode is ExecutionMode.LIVE
 
 
 async def test_dry_run_never_submits(env: WorkflowEnvironment):
@@ -280,6 +314,11 @@ async def test_live_mode_submits_and_verifies(env: WorkflowEnvironment):
     assert result.state is ApplicationState.COMPLETED
     assert result.submitted_at is not None
     assert "verifying" in h.states(APP_ID)
+    attempt = h.attempt(APP_ID, 1)
+    assert attempt is not None
+    assert attempt.mode is ExecutionMode.LIVE
+    assert attempt.outcome is AttemptOutcome.SUCCEEDED
+    assert attempt.submitted_at is not None
 
 
 async def test_verification_failure_goes_to_needs_human(env: WorkflowEnvironment):
@@ -293,6 +332,10 @@ async def test_verification_failure_goes_to_needs_human(env: WorkflowEnvironment
 
     assert result.state is ApplicationState.NEEDS_HUMAN
     assert "제출 확인 실패" in result.reason
+    attempt = h.attempt(APP_ID, 1)
+    assert attempt is not None
+    assert attempt.outcome is AttemptOutcome.UNKNOWN, "제출됐는지 결론이 안 났다 (§5)"
+    assert attempt.error_code == "verify_failed"
 
 
 async def test_unknown_platform_url_is_refused(env: WorkflowEnvironment):

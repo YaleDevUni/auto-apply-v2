@@ -9,9 +9,9 @@ import pytest
 
 from auto_apply.adapters.repository.file import FileUnitOfWork
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
-from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.dto import ApplicationAttempt, PersistState
 from auto_apply.contracts.job import ApplicabilityVerdict, JobPosting, JobRecord, ScreeningVerdict
-from auto_apply.domain.enums import ApplicationState
+from auto_apply.domain.enums import ApplicationState, AttemptOutcome, ExecutionMode
 from auto_apply.ports.repository import UnitOfWork
 
 
@@ -20,7 +20,8 @@ def uow_factory(request: pytest.FixtureRequest, tmp_path):
     if request.param == "memory":
         rows: dict = {}
         job_rows: dict = {}
-        return lambda: InMemoryUnitOfWork(rows, job_rows)
+        attempt_rows: dict = {}
+        return lambda: InMemoryUnitOfWork(rows, job_rows, attempt_rows)
     return lambda: FileUnitOfWork(tmp_path)
 
 
@@ -96,6 +97,63 @@ async def test_satisfies_protocol(uow_factory):
     uow: UnitOfWork = uow_factory()
     assert hasattr(uow.applications, "upsert_state")
     assert hasattr(uow.jobs, "upsert")
+    assert hasattr(uow.attempts, "record")
+
+
+# ─────────────────────────── AttemptRepository ───────────────────────────
+# 실행 1회 = 1행, (application_id, attempt) 기준 멱등 upsert 가 계약의 핵심이다 (§4, §5).
+
+
+def _attempt(attempt_no: int = 1, **kw) -> ApplicationAttempt:
+    base: dict = {
+        "application_id": "app_1",
+        "attempt": attempt_no,
+        "recipe_platform": "fixture",
+        "recipe_version": 1,
+        "mode": ExecutionMode.DRY_RUN,
+        "outcome": AttemptOutcome.UNKNOWN,
+        "started_at": datetime(2026, 9, 1, 9, 0, tzinfo=UTC),
+    }
+    base.update(kw)
+    return ApplicationAttempt(**base)
+
+
+async def test_attempt_record_then_history(uow_factory):
+    async with uow_factory() as uow:
+        await uow.attempts.record(_attempt())
+        await uow.commit()
+    async with uow_factory() as uow:
+        history = await uow.attempts.history("app_1")
+    assert len(history) == 1
+    assert history[0].outcome is AttemptOutcome.UNKNOWN
+
+
+async def test_attempt_duplicate_record_does_not_duplicate_rows(uow_factory):
+    """submit 직전 UNKNOWN 기록 → 결과로 덮어쓰기 (§5). 같은 attempt 번호는 1행이어야 한다."""
+    async with uow_factory() as uow:
+        await uow.attempts.record(_attempt())
+        await uow.attempts.record(_attempt(outcome=AttemptOutcome.SUCCEEDED))
+        await uow.commit()
+    async with uow_factory() as uow:
+        history = await uow.attempts.history("app_1")
+    assert len(history) == 1
+    assert history[0].outcome is AttemptOutcome.SUCCEEDED
+
+
+async def test_different_attempts_are_appended_in_order(uow_factory):
+    async with uow_factory() as uow:
+        await uow.attempts.record(_attempt(1, outcome=AttemptOutcome.FAILED))
+        await uow.attempts.record(_attempt(2, outcome=AttemptOutcome.SUCCEEDED))
+        await uow.commit()
+    async with uow_factory() as uow:
+        history = await uow.attempts.history("app_1")
+    assert [a.attempt for a in history] == [1, 2]
+    assert [a.outcome for a in history] == [AttemptOutcome.FAILED, AttemptOutcome.SUCCEEDED]
+
+
+async def test_unknown_application_returns_empty_attempt_history(uow_factory):
+    async with uow_factory() as uow:
+        assert await uow.attempts.history("nope") == []
 
 
 # ─────────────────────────── JobRepository ───────────────────────────

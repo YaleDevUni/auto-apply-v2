@@ -24,7 +24,13 @@ from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResum
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.bootstrap import Container
 from auto_apply.config import Settings
-from auto_apply.contracts.dto import DecisionRequest, DecisionTicket, NotifyEvent, PersistState
+from auto_apply.contracts.dto import (
+    ApplicationAttempt,
+    DecisionRequest,
+    DecisionTicket,
+    NotifyEvent,
+    PersistState,
+)
 from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.ports.notifier import Notifier
 
@@ -76,6 +82,7 @@ class Harness:
     """워크플로우 테스트용 조립체. rows 로 DB projection 을 검사한다."""
 
     rows: dict[str, list[PersistState]] = field(default_factory=dict)
+    attempt_rows: dict[str, list[ApplicationAttempt]] = field(default_factory=dict)
     eligible: bool = True
     reject_reason: str = ""
     verified: bool = True
@@ -101,11 +108,12 @@ class Harness:
         )
         recipes = InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)})
         rows = self.rows
+        attempt_rows = self.attempt_rows
         app = ApplicationActivities(
             registry=StaticPlatformRegistry([adapter]),
             notifier=self._shared_notifier(),
             recipes=recipes,
-            uow=lambda: InMemoryUnitOfWork(rows),
+            uow=lambda: InMemoryUnitOfWork(rows, attempt_rows=attempt_rows),
         )
         resume = ResumeActivities(
             SimpleResumeGenerator(StubLLM(responses=["요건에 맞춘 경력 요약"] * 20), idgen),
@@ -126,6 +134,7 @@ class Harness:
         store = InMemoryBlobStore()
         llm = StubLLM(responses=["요건에 맞춘 경력 요약"] * 20)
         rows = self.rows
+        attempt_rows = self.attempt_rows
         return Container(
             settings=settings
             or Settings(notifier="console", storage="memory", llm_provider="stub"),
@@ -134,7 +143,7 @@ class Harness:
             store=store,
             llm=llm,
             notifier=self._shared_notifier(),
-            uow=lambda: InMemoryUnitOfWork(rows),
+            uow=lambda: InMemoryUnitOfWork(rows, attempt_rows=attempt_rows),
             registry=StaticPlatformRegistry([FixturePlatformAdapter(eligible=self.eligible)]),
             recipes=InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)}),
             executor=ReplayExecutor(clock, fail_selectors=self.fail_selectors),
@@ -153,4 +162,14 @@ class Harness:
         for r in self.rows.get(application_id, []):
             if str(r.state) == state:
                 return r
+        return None
+
+    def attempts(self, application_id: str) -> list[ApplicationAttempt]:
+        return list(self.attempt_rows.get(application_id, []))
+
+    def attempt(self, application_id: str, attempt_no: int) -> ApplicationAttempt | None:
+        """멱등 upsert 때문에 같은 시도 번호는 1행으로 합쳐진다. 그 행의 최신 값을 본다."""
+        for a in self.attempt_rows.get(application_id, []):
+            if a.attempt == attempt_no:
+                return a
         return None

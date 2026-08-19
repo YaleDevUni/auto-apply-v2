@@ -182,3 +182,28 @@ class VerifyInput(_Frozen):
 class VerifyResult(_Frozen):
     verified: bool
     detail: str = ""
+
+
+# ── Attempt audit log (§4, §5) ───────────────────────────────────────────
+class ApplicationAttempt(_Frozen):
+    """`application_attempts` 1행. 실행 1회 = 1행 (§4).
+
+    submit 직전에 outcome=UNKNOWN("submitting")으로 먼저 기록하고, 결과가 나오면 같은
+    (application_id, attempt) 를 덮어쓴다. 그래야 부분 제출 중 크래시가 나도 "아직 결론이
+    안 난 시도가 있었다"는 사실이 감사 로그에 남는다 — 재개 시 verify_submission 을 먼저
+    돌려야 하는 이유가 바로 이 UNKNOWN 상태다.
+    """
+
+    application_id: str
+    attempt: int
+    recipe_platform: str
+    recipe_version: int
+    mode: ExecutionMode
+    outcome: AttemptOutcome
+    started_at: datetime
+    ended_at: datetime | None = None
+    submitted_at: datetime | None = None
+    error_code: str = ""
+    snapshot_key: str = ""
+    artifact_keys: list[str] = Field(default_factory=list)
+    detail: str = ""

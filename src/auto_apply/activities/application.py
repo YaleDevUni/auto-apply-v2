@@ -7,6 +7,7 @@ import structlog
 from temporalio import activity
 
 from auto_apply.contracts.dto import (
+    ApplicationAttempt,
     DecisionRequest,
     DecisionTicket,
     Eligibility,
@@ -75,6 +76,21 @@ class ApplicationActivities:
             workflow_id=activity.info().workflow_id,
         )
 
+    @activity.defn(name="record_attempt")
+    async def record_attempt(self, attempt: ApplicationAttempt) -> None:
+        """`application_attempts` 감사 로그를 쓰는 유일한 통로 (§4, §5). 멱등해야 한다."""
+        async with self._uow() as uow:
+            await uow.attempts.record(attempt)
+            await uow.commit()
+        log.info(
+            "attempt.recorded",
+            application_id=attempt.application_id,
+            attempt=attempt.attempt,
+            outcome=attempt.outcome,
+            mode=attempt.mode,
+            workflow_id=activity.info().workflow_id,
+        )
+
     def all(self) -> list[Callable[..., Any]]:
         return [
             self.collect_job,
@@ -84,4 +100,5 @@ class ApplicationActivities:
             self.notify,
             self.verify_submission,
             self.persist_state,
+            self.record_attempt,
         ]

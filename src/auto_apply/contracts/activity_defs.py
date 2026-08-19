@@ -9,6 +9,7 @@ worker 에 등록된 실제 구현을 찾는다. 덕분에 workflow → 구현 �
 from temporalio import activity
 
 from auto_apply.contracts.dto import (
+    ApplicationAttempt,
     DecisionRequest,
     DecisionTicket,
     Eligibility,
@@ -84,6 +85,12 @@ async def notify(event: NotifyEvent) -> None:
 @activity.defn(name="persist_state")
 async def persist_state(state: PersistState) -> None:
     """상태를 DB 에 쓰는 유일한 통로 (§4.1). 멱등해야 한다."""
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="record_attempt")
+async def record_attempt(attempt: ApplicationAttempt) -> None:
+    """`application_attempts` 감사 로그를 쓰는 유일한 통로 (§4, §5). 멱등해야 한다."""
     raise NotImplementedError(_ONLY)
 
 

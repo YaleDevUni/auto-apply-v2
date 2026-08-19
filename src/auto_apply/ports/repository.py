@@ -1,7 +1,7 @@
 from types import TracebackType
 from typing import Protocol, Self
 
-from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.dto import ApplicationAttempt, PersistState
 from auto_apply.contracts.job import JobRecord
 
 
@@ -35,6 +35,20 @@ class JobRepository(Protocol):
         ...
 
 
+class AttemptRepository(Protocol):
+    """`application_attempts` 감사 로그 (§4, §5). 실행 1회 = 1행."""
+
+    async def record(self, attempt: ApplicationAttempt) -> None:
+        """(application_id, attempt) 기준 멱등 upsert.
+
+        같은 시도 번호로 여러 번 불려도(진행 중 → 최종 상태) 행이 늘지 않고 최신 값으로
+        덮어써야 한다 — activity 재시도와, submit 전/후 두 번 기록하는 패턴 둘 다 이걸 요구한다.
+        """
+        ...
+
+    async def history(self, application_id: str) -> list[ApplicationAttempt]: ...
+
+
 class UnitOfWork(Protocol):
     # @property 로 선언한다. Protocol 의 일반 속성은 invariant 로 취급되어
     # 구현체가 더 구체적인 타입을 노출하면 타입 체크에 실패한다.
@@ -43,6 +57,9 @@ class UnitOfWork(Protocol):
 
     @property
     def jobs(self) -> JobRepository: ...
+
+    @property
+    def attempts(self) -> AttemptRepository: ...
 
     async def __aenter__(self) -> Self: ...
 

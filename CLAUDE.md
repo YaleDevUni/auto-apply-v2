@@ -122,11 +122,19 @@ Notifier 어댑터 메모리에 뒀더니 발급 프로세스(worker)와 검증 
 `TELEGRAM_ALLOWED_CHAT_IDS`로 켠다. 로컬 개발은 공인 URL이 없으므로 웹훅 대신
 `make telegram-listen`(getUpdates 롱폴링)을 쓴다.
 
-Playwright executor(`adapters/executor/playwright.py`)도 구현돼 있다 — `EXECUTOR=playwright`.
+**M2 진행 중** — Playwright executor(`adapters/executor/playwright.py`, `EXECUTOR=playwright`),
+`RecipeSource`(JSON 파일 기반), `_resolve_mode`(dry_run/supervised/live 분기)에 이어
+`application_attempts` 감사 로그를 얹었다. `AttemptRepository` port(파일 + in-memory,
+`tests/ports/test_repository_contract.py`) + `record_attempt` activity로 실행 1회 = 1행을
+남긴다 — `(application_id, attempt)` 기준 멱등 upsert라 submit 직전 `UNKNOWN`("submitting")
+선기록 → 결과로 덮어쓰는 패턴(§5)이 가능하다. 실행 activity가 실패해도 `verify_submission`을
+먼저 돌려 실제로는 제출됐는지 확인한 뒤에야 `needs_human`으로 넘긴다(부분 제출 위험 방어,
+§5) — 그 로직은 `workflows/_execution.py`로 분리했다(`application.py`가 감사 로그까지
+넣으면 한 파일 책임이 흐려져서).
 
 아직 **없는** 것: DB 모델·Alembic(파일 기반 repository로 대체 중), Anthropic 어댑터,
 S3 어댑터, LangGraph(M3에서 판단), `AutomationRepairWorkflow`(M4), `/recipes/{platform}`
-계열 엔드포인트.
+계열 엔드포인트(승격은 지금은 손으로 recipe JSON의 `status`를 고쳐서 한다).
 
 **공고 수집·매칭** (M1과 별도 트랙) — `JobSource`(wanted/saramin/jasoseol) + 순수 domain
 매칭(`job_screening`/`job_applicability`) + `JobCollectionWorkflow` + Temporal Schedule(cron)
