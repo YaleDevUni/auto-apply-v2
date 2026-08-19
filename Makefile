@@ -18,6 +18,9 @@ down: ## 인프라 정지
 reset: ## 인프라 + 볼륨 삭제 (데이터 날아감)
 	docker compose down -v
 
+migrate: ## Alembic 마이그레이션 적용 (REPOSITORY=postgres 일 때, make up 필요)
+	uv run alembic upgrade head
+
 fmt: ## 포매팅
 	uv run ruff format src tests
 	uv run ruff check --fix src tests
@@ -49,4 +52,4 @@ worker: ## Temporal worker (QUEUE=default|ai|browser)
 telegram-listen: ## 텔레그램 롱폴링 리스너 (NOTIFIER=telegram, 공인 URL 없는 로컬 개발용)
 	uv run python -m auto_apply.telegram.listener
 
-.PHONY: help setup up down reset fmt lint type arch test test-all check api worker telegram-listen
+.PHONY: help setup up down reset migrate fmt lint type arch test test-all check api worker telegram-listen

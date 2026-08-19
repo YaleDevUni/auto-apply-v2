@@ -11,6 +11,7 @@
 ```bash
 make setup     # uv sync + .env 생성
 make up        # 인프라 기동 (postgres/temporal/temporal-ui/minio) → UI: localhost:8080
+make migrate   # Alembic 마이그레이션 적용 (REPOSITORY=postgres 일 때)
 make check     # lint + type + arch + test  ← 커밋 전 필수
 make test      # 단위/계약 테스트 (인프라 불필요)
 make test-all  # 통합 테스트 포함
@@ -130,11 +131,18 @@ Notifier 어댑터 메모리에 뒀더니 발급 프로세스(worker)와 검증 
 선기록 → 결과로 덮어쓰는 패턴(§5)이 가능하다. 실행 activity가 실패해도 `verify_submission`을
 먼저 돌려 실제로는 제출됐는지 확인한 뒤에야 `needs_human`으로 넘긴다(부분 제출 위험 방어,
 §5) — 그 로직은 `workflows/_execution.py`로 분리했다(`application.py`가 감사 로그까지
-넣으면 한 파일 책임이 흐려져서).
+넣으면 한 파일 책임이 흐려져서). 이어서 Postgres/Alembic(`adapters/repository/postgres.py`,
+`REPOSITORY=postgres`)을 얹었다 — 같은 `UnitOfWork` port를 `INSERT ... ON CONFLICT`로
+구현한 세 번째 대역이다(§9.1). 테이블은 `applications`(§4 ERD)를 그대로 정규화하지 않고
+DTO를 JSONB `payload`에 담고 조회/유니크 키만 실제 컬럼으로 뺐다 — port가 요구하는 계약이
+"멱등 upsert + 이력 조회"뿐이라 파일 어댑터와 같은 모양을 유지하는 쪽을 택했다. contract
+test에 `postgres` 파라미터를 추가했고(`@pytest.mark.integration`, `make up` 필요),
+`alembic/versions/`의 초기 마이그레이션은 실제 DB에 대고 autogenerate + upgrade/downgrade
+왕복까지 검증했다. 기본값은 여전히 `REPOSITORY=file`이다 — 바꾸는 결정은 사용자 몫으로 남긴다.
 
-아직 **없는** 것: DB 모델·Alembic(파일 기반 repository로 대체 중), Anthropic 어댑터,
-S3 어댑터, LangGraph(M3에서 판단), `AutomationRepairWorkflow`(M4), `/recipes/{platform}`
-계열 엔드포인트(승격은 지금은 손으로 recipe JSON의 `status`를 고쳐서 한다).
+아직 **없는** 것: Anthropic 어댑터, S3 어댑터, LangGraph(M3에서 판단),
+`AutomationRepairWorkflow`(M4), `/recipes/{platform}` 계열 엔드포인트(승격은 지금은 손으로
+recipe JSON의 `status`를 고쳐서 한다).
 
 **공고 수집·매칭** (M1과 별도 트랙) — `JobSource`(wanted/saramin/jasoseol) + 순수 domain
 매칭(`job_screening`/`job_applicability`) + `JobCollectionWorkflow` + Temporal Schedule(cron)

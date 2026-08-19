@@ -1,28 +1,47 @@
 """ApplicationRepository contract test — 멱등성이 계약의 핵심이다 (§4.1).
 
 activity 는 최소 1회 실행이므로 같은 값으로 두 번 불려도 결과가 같아야 한다.
+postgres 파라미터만 실제 DB 라운드트립이라 `integration`으로 표시한다 — `make test`(인프라
+불필요)는 memory/file 만 돌고, postgres 는 `make up` 이 떠 있는 `make test-all`에서만 돈다.
 """
 
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from auto_apply.adapters.repository.file import FileUnitOfWork
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
+from auto_apply.adapters.repository.postgres import SqlAlchemyUnitOfWork, build_engine
+from auto_apply.config import Settings
 from auto_apply.contracts.dto import ApplicationAttempt, PersistState
 from auto_apply.contracts.job import ApplicabilityVerdict, JobPosting, JobRecord, ScreeningVerdict
 from auto_apply.domain.enums import ApplicationState, AttemptOutcome, ExecutionMode
 from auto_apply.ports.repository import UnitOfWork
 
+_PG_TABLES = "application_state_history, jobs, application_attempts"
 
-@pytest.fixture(params=["memory", "file"])
-def uow_factory(request: pytest.FixtureRequest, tmp_path):
+
+@pytest.fixture(params=["memory", "file", pytest.param("postgres", marks=pytest.mark.integration)])
+async def uow_factory(request: pytest.FixtureRequest, tmp_path):
     if request.param == "memory":
         rows: dict = {}
         job_rows: dict = {}
         attempt_rows: dict = {}
-        return lambda: InMemoryUnitOfWork(rows, job_rows, attempt_rows)
-    return lambda: FileUnitOfWork(tmp_path)
+        yield lambda: InMemoryUnitOfWork(rows, job_rows, attempt_rows)
+        return
+    if request.param == "file":
+        yield lambda: FileUnitOfWork(tmp_path)
+        return
+
+    # postgres — 매 테스트 전에 비워서 이전 테스트의 app_1 행과 섞이지 않게 한다.
+    engine = build_engine(Settings().database_url)
+    async with engine.begin() as conn:
+        await conn.execute(text(f"TRUNCATE TABLE {_PG_TABLES} RESTART IDENTITY"))
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    yield lambda: SqlAlchemyUnitOfWork(session_factory)
+    await engine.dispose()
 
 
 def _state(state: ApplicationState, run_id: str = "run_1", **kw) -> PersistState:

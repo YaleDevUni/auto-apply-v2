@@ -26,6 +26,7 @@ from auto_apply.adapters.recipe.jsonfile import JsonFileRecipeSource
 from auto_apply.adapters.recipe.memory import InMemoryRecipeSource
 from auto_apply.adapters.repository.file import FileUnitOfWork
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
+from auto_apply.adapters.repository.postgres import sqlalchemy_uow_factory
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
 from auto_apply.adapters.storage.local import LocalBlobStore
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
@@ -105,7 +106,7 @@ def _build_uow(cfg: Settings) -> Callable[[], UnitOfWork]:
             root = cfg.data_dir
             return lambda: FileUnitOfWork(root)
         case "postgres":
-            raise NotImplementedError("SqlAlchemyUnitOfWork 는 M2 에서 추가한다")
+            return sqlalchemy_uow_factory(cfg.database_url)
 
 
 def _build_executor(cfg: Settings, clock: Clock, store: BlobStore) -> RecipeExecutor:
