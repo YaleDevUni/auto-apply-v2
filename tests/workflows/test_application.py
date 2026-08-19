@@ -441,6 +441,12 @@ async def test_revise_exceeding_max_rounds_goes_needs_human(env: WorkflowEnviron
 
     assert result.state is ApplicationState.NEEDS_HUMAN
     assert "수정요청" in result.reason
+    # 회귀 테스트: 여기서 조용히 끝나면 텔레그램을 안 보는 한 아무도 모른다(라이브 세션 실측).
+    assert h.notifier is not None
+    needs_human_events = [e for e in h.notifier.notified if e.kind == "NEEDS_HUMAN"]
+    assert len(needs_human_events) == 1
+    assert needs_human_events[0].application_id == APP_ID
+    assert "수정요청" in needs_human_events[0].message
 
 
 # ─────────────────────────── 타이머 / 스케줄 ───────────────────────────
@@ -453,6 +459,8 @@ async def test_approval_timeout_expires(env: WorkflowEnvironment):
 
     assert result.state is ApplicationState.EXPIRED
     assert h.states(APP_ID)[-1] == "expired"
+    assert h.notifier is not None
+    assert any(e.kind == "EXPIRED" for e in h.notifier.notified)
 
 
 async def test_reschedule_while_waiting_moves_the_timer(env: WorkflowEnvironment):

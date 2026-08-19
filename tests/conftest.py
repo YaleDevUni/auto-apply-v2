@@ -103,6 +103,9 @@ class _NonceSpy:
 
     inner: Notifier
     last_ticket: dict[str, str] = field(default_factory=dict)
+    # NEEDS_HUMAN/EXPIRED 종료 시 실제로 notify 가 나가는지(라이브 세션에서 실측된 회귀,
+    # workflows/application.py `_finish` 참고) 관찰하기 위한 로그.
+    notified: list[NotifyEvent] = field(default_factory=list)
 
     async def request_decision(self, req: DecisionRequest) -> DecisionTicket:
         ticket = await self.inner.request_decision(req)
@@ -110,6 +113,7 @@ class _NonceSpy:
         return ticket
 
     async def notify(self, event: NotifyEvent) -> None:
+        self.notified.append(event)
         await self.inner.notify(event)
 
     async def send_scope_picker(self, application_id: str, nonce: str) -> None:

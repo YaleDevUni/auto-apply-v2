@@ -264,8 +264,6 @@ class ApplicationWorkflow:
             resume_pdf_key,
             persist=lambda state: self._persist(cmd, state),
         )
-        if outcome.state is ApplicationState.NEEDS_HUMAN:
-            await self._notify(cmd, "NEEDS_HUMAN", outcome.reason)
         return await self._finish(
             cmd, outcome.state, outcome.reason, submitted_at=outcome.submitted_at
         )
@@ -309,6 +307,13 @@ class ApplicationWorkflow:
         reason: str,
         submitted_at: datetime | None = None,
     ) -> ApplicationResult:
+        # NEEDS_HUMAN/EXPIRED 는 사람이 자기가 안 시킨 시점에 갑자기 멈춘 것 — 사람이 직접
+        # 누른 REJECT/CANCELLED 나 정상 COMPLETED 와 달리 알려주지 않으면 API/로그를 뒤져야만
+        # 알 수 있다(실제로 REVISE 최대 횟수 초과로 여기 걸렸는데 텔레그램 알림이 없어서 사용자가
+        # 몰랐던 문제, 라이브 세션에서 실측). 여기 한 곳에서 걸어야 새 NEEDS_HUMAN 종료 경로가
+        # 늘어나도 알림을 빠뜨리지 않는다.
+        if state in (ApplicationState.NEEDS_HUMAN, ApplicationState.EXPIRED):
+            await self._notify(cmd, str(state).upper(), reason)
         await self._persist(cmd, state, reason=reason, submitted_at=submitted_at)
         return ApplicationResult(state=state, reason=reason, submitted_at=submitted_at)
 
