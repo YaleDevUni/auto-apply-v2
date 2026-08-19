@@ -20,6 +20,7 @@ dependencies = [
     "structlog>=24.4",
     "pyyaml>=6.0",
     "selectolax>=0.3.21",
+    "weasyprint>=69.0",
 ]
 
 [dependency-groups]
@@ -80,6 +81,11 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+# py.typed 없는 벤더 패키지 — HTML→PDF 렌더링만 하고 타입 시그니처는 안 쓴다.
+module = ["weasyprint.*"]
+ignore_missing_imports = true
 
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]

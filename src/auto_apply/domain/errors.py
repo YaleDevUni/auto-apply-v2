@@ -46,6 +46,13 @@ class BlobNotFound(AutoApplyError):
     """BlobStore 계약: 없는 키를 get 하면 이 에러 (§11.5 예외 계약)."""
 
 
+class ProfileNotFound(AutoApplyError):
+    """ProfileSource 계약: 없는 user_id 를 get 하면 이 에러.
+
+    config/profile.yaml 미기재 = 설정 오류라 재시도해도 결과가 같다.
+    """
+
+
 class AlreadySubmitted(AutoApplyError):
     """멱등 충돌. verify 로 확인한 뒤 성공으로 간주한다."""
 
@@ -59,4 +66,5 @@ NON_RETRYABLE: tuple[str, ...] = (
     # generator 가 이미 내부에서 2회 재프롬프트했다(§5) — activity 레벨 재시도는
     # 같은 실패를 반복할 뿐이라 여기서 non-retryable 로 끊는다.
     LLMSchemaViolation.__name__,
+    ProfileNotFound.__name__,
 )

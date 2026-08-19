@@ -23,8 +23,11 @@ from auto_apply.adapters.matching_config.yaml_file import YamlMatchingConfigSour
 from auto_apply.adapters.notifier.console import ConsoleNotifier
 from auto_apply.adapters.notifier.telegram import TelegramNotifier
 from auto_apply.adapters.pdf.stub import StubPdfRenderer
+from auto_apply.adapters.pdf.weasyprint import WeasyPrintPdfRenderer
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
 from auto_apply.adapters.platform.registry import StaticPlatformRegistry
+from auto_apply.adapters.profile.static import StaticProfileSource
+from auto_apply.adapters.profile.yaml_source import YamlProfileSource
 from auto_apply.adapters.recipe.jsonfile import JsonFileRecipeSource
 from auto_apply.adapters.recipe.memory import InMemoryRecipeSource
 from auto_apply.adapters.repository.file import FileUnitOfWork
@@ -45,6 +48,7 @@ from auto_apply.ports.matching_config import MatchingConfigSource
 from auto_apply.ports.notifier import Notifier
 from auto_apply.ports.pdf import PdfRenderer
 from auto_apply.ports.platform import PlatformRegistry
+from auto_apply.ports.profile import ProfileSource
 from auto_apply.ports.recipe_source import RecipeSource
 from auto_apply.ports.repository import UnitOfWork
 from auto_apply.ports.resume import ResumeGenerator, ResumeReviewer
@@ -69,6 +73,7 @@ class Container:
     job_sources: Sequence[JobSource]
     matching_config: MatchingConfigSource
     facts: FactSource
+    profile: ProfileSource
 
 
 def _build_store(cfg: Settings) -> BlobStore:
@@ -167,12 +172,29 @@ def _build_facts(cfg: Settings) -> FactSource:
             return YamlFactSource(cfg.facts_path)
 
 
+def _build_profile(cfg: Settings) -> ProfileSource:
+    match cfg.profile_source:
+        case "static":
+            return StaticProfileSource()
+        case "yaml":
+            return YamlProfileSource(cfg.profile_path)
+
+
+def _build_pdf(cfg: Settings, store: BlobStore) -> PdfRenderer:
+    match cfg.pdf_renderer:
+        case "stub":
+            return StubPdfRenderer(store)
+        case "weasyprint":
+            return WeasyPrintPdfRenderer(store)
+
+
 def build_container(cfg: Settings) -> Container:
     idgen = UuidIdGen()
     clock = SystemClock()
     store = _build_store(cfg)
     llm = _build_llm(cfg)
     facts = _build_facts(cfg)
+    profile = _build_profile(cfg)
     return Container(
         settings=cfg,
         clock=clock,
@@ -184,10 +206,11 @@ def build_container(cfg: Settings) -> Container:
         registry=StaticPlatformRegistry([FixturePlatformAdapter()]),
         recipes=_build_recipes(cfg),
         executor=_build_executor(cfg, clock, store),
-        generator=SimpleResumeGenerator(llm, idgen, facts),
+        generator=SimpleResumeGenerator(llm, idgen, facts, profile),
         reviewer=SimpleResumeReviewer(facts),
-        pdf=StubPdfRenderer(store),
+        pdf=_build_pdf(cfg, store),
         job_sources=_build_job_sources(cfg, store),
         matching_config=_build_matching_config(cfg),
         facts=facts,
+        profile=profile,
     )

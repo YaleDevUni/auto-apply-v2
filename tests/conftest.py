@@ -19,6 +19,7 @@ from auto_apply.adapters.notifier.console import ConsoleNotifier
 from auto_apply.adapters.pdf.stub import StubPdfRenderer
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
 from auto_apply.adapters.platform.registry import StaticPlatformRegistry
+from auto_apply.adapters.profile.static import StaticProfileSource
 from auto_apply.adapters.recipe.memory import InMemoryRecipeSource
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
@@ -33,6 +34,7 @@ from auto_apply.contracts.dto import (
     PersistState,
 )
 from auto_apply.contracts.fact import Fact
+from auto_apply.contracts.profile import Profile
 from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.ports.notifier import Notifier
 
@@ -57,6 +59,10 @@ def _sample_facts(user_id: str = "u1") -> list[Fact]:
             keywords=["백엔드"],
         )
     ]
+
+
+def _sample_profile(user_id: str = "u1") -> StaticProfileSource:
+    return StaticProfileSource([Profile(user_id=user_id, name="테스트 사용자")])
 
 
 @dataclass
@@ -139,7 +145,9 @@ class Harness:
         )
         facts = StaticFactSource(_sample_facts())
         resume = ResumeActivities(
-            SimpleResumeGenerator(StubLLM(payloads=list(_RESUME_PAYLOADS)), idgen, facts),
+            SimpleResumeGenerator(
+                StubLLM(payloads=list(_RESUME_PAYLOADS)), idgen, facts, _sample_profile()
+            ),
             SimpleResumeReviewer(facts),
             StubPdfRenderer(store),
         )
@@ -157,6 +165,7 @@ class Harness:
         store = InMemoryBlobStore()
         llm = StubLLM(payloads=list(_RESUME_PAYLOADS))
         facts = StaticFactSource(_sample_facts())
+        profile = _sample_profile()
         rows = self.rows
         attempt_rows = self.attempt_rows
         return Container(
@@ -171,12 +180,13 @@ class Harness:
             registry=StaticPlatformRegistry([FixturePlatformAdapter(eligible=self.eligible)]),
             recipes=InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)}),
             executor=ReplayExecutor(clock, fail_selectors=self.fail_selectors),
-            generator=SimpleResumeGenerator(llm, idgen, facts),
+            generator=SimpleResumeGenerator(llm, idgen, facts, profile),
             reviewer=SimpleResumeReviewer(facts),
             pdf=StubPdfRenderer(store),
             job_sources=[FixtureJobSource()],
             matching_config=StaticMatchingConfigSource(),
             facts=facts,
+            profile=profile,
         )
 
     def states(self, application_id: str) -> list[str]:

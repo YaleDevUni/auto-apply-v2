@@ -2,6 +2,10 @@
 
 Recipe 의 `value_ref`(참조만, 리터럴 금지, §3)와 같은 철학 — 이력서의 모든 서술도 fact_id 로
 근거를 참조해야 한다. `ground_check`가 review 게이트의 첫 체크(hallucinated claim 탐지)다.
+
+경력/프로젝트 블록 조립(`FactBlock`/`group_facts_for_resume`/`select_relevant_blocks`)은 같은
+철학의 연장이지만 `domain/resume_blocks.py`로 분리했다 — "블록 조립"과 "fact 선별/grounding
+검증"은 서로 다른 책임이다.
 """
 
 from auto_apply.contracts.dto import ResumeDraft
@@ -27,19 +31,12 @@ def select_relevant_facts(facts: list[Fact], job_text: str, *, limit: int = 8) -
     return ranked[:limit]
 
 
-def ground_check(draft: ResumeDraft, facts: list[Fact]) -> list[str]:
-    """draft 의 모든 서술이 실제 fact 로 근거되는지 확인한다.
+def _as_list(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
 
-    - highlight 에 fact_id 가 하나도 없으면: 근거 없는 서술 (hallucination 위험).
-    - 존재하지 않는 fact_id 를 인용하면: 지어낸 근거 (명백한 hallucination).
-    """
-    known_ids = {f.id for f in facts}
-    issues: list[str] = []
 
-    highlights = draft.content.get("highlights", [])
-    if not isinstance(highlights, list):
-        highlights = []
-    for item in highlights:
+def _check_bullets(items: object, known_ids: set[str], issues: list[str]) -> None:
+    for item in _as_list(items):
         if not isinstance(item, dict):
             continue
         text = item.get("text", "")
@@ -50,6 +47,33 @@ def ground_check(draft: ResumeDraft, facts: list[Fact]) -> list[str]:
         for fid in fact_ids:
             if fid not in known_ids:
                 issues.append(f"존재하지 않는 fact_id 참조: {fid!r} ({text!r})")
+
+
+def ground_check(draft: ResumeDraft, facts: list[Fact]) -> list[str]:
+    """draft 의 모든 서술이 실제 fact 로 근거되는지 확인한다.
+
+    - 불릿에 fact_id 가 하나도 없으면: 근거 없는 서술 (hallucination 위험).
+    - 존재하지 않는 fact_id 를 인용하면: 지어낸 근거 (명백한 hallucination).
+
+    top-level highlights/ai_usage 뿐 아니라 career[].blocks[].bullets, projects[].bullets 도
+    같은 기준으로 검사한다 — 블록 제목/기간/기술스택은 결정론 코드가 조립하므로 여기서는
+    LLM 이 실제로 쓴 불릿 문장만 본다.
+    """
+    known_ids = {f.id for f in facts}
+    issues: list[str] = []
+
+    _check_bullets(draft.content.get("highlights", []), known_ids, issues)
+    _check_bullets(draft.content.get("ai_usage", []), known_ids, issues)
+
+    for company in _as_list(draft.content.get("career", [])):
+        if isinstance(company, dict):
+            for block in _as_list(company.get("blocks", [])):
+                if isinstance(block, dict):
+                    _check_bullets(block.get("bullets", []), known_ids, issues)
+
+    for project in _as_list(draft.content.get("projects", [])):
+        if isinstance(project, dict):
+            _check_bullets(project.get("bullets", []), known_ids, issues)
 
     for fid in draft.used_fact_ids:
         if fid not in known_ids:

@@ -158,6 +158,25 @@ match_skills/select_projects를 한 단계로 합침, 0건 매칭이면 필터�
 뒤에서 갈아끼울 수 있게만 열어뒀다. `ResumeGenerator`/`ResumeReviewer`는 아직 구현이
 `SimpleResume*` 하나뿐이라 §11.1의 "구현 2개" 원칙을 완전히 채우지는 못한 상태다.
 
+**M3 연장 — 경력/프로젝트 블록 구조 + 실제 PDF 출력.** `summary`+`highlights` 뿐이던 스키마로는
+원티드 PDF 내보내기 같은 실제 이력서 문서(회사 헤더 + 하위 블록별 불릿·기술스택, 개인 프로젝트,
+학력, 스킬 태그, 언어)를 못 만들어서 확장했다. `Fact`에 `entity`/`entity_label`/`entity_period`/
+`block`/`block_label`/`block_period`를 추가해(§4) 회사명·기간·블록 제목을 **결정론 코드로**
+조립하고(`domain/resume_blocks.group_facts_for_resume` → `FactBlock`), LLM은 그 블록 안에서
+불릿 문장만 쓴다(`ai/schemas.py`의 `BlockBullets`) — Recipe와 같은 "AI는 생성만, 판정·조합은
+코드" 철학의 연장. 개인 프로젝트는 여러 개일 수 있어 `select_relevant_blocks`로 job 관련도 상위
+N개만 추리고(경력은 전부 유지), `ground_check`는 `career[].blocks[].bullets`/`projects[].bullets`
+까지 재귀 검사하도록 확장했다. 이름·연락처·학력 상세·스킬 태그·언어처럼 서술이 필요 없는 정형
+정보는 Fact가 아니라 별도 `ProfileSource` port(`config/profile.yaml`, `FactSource`와 동일 패턴)
+에서 와서 LLM을 거치지 않는다. `adapters/resume/_assemble.py`가 이 셋(결정론 블록 메타데이터 +
+LLM 불릿 + Profile)을 `contracts/resume_content.AssembledResume`로 합쳐 `ResumeDraft.content`에
+담고, `PdfRenderer`는 그 모양만 알면 된다. `PdfRenderer`는 §9.1에서 후보로만 적어뒀던
+`WeasyPrintPdfRenderer`를 실제로 구현했다(HTML/CSS 템플릿은 `adapters/pdf/_template.py`로 분리해
+weasyprint 없이도 순수 함수로 테스트) — macOS(Homebrew)에서 weasyprint가 dlopen 하는
+libgobject/pango/cairo 를 찾으려면 `DYLD_FALLBACK_LIBRARY_PATH`가 필요해서, 셸 설정에 기대는
+대신 어댑터 모듈 로드 시점에 보정한다. weasyprint 렌더 테스트는 시스템 라이브러리가 있어야 돌아서
+`@pytest.mark.integration`(`make up` 불필요), `PDF_RENDERER` 기본값은 `weasyprint`다.
+
 아직 **없는** 것: S3 어댑터, `AutomationRepairWorkflow`(M4), `/recipes/{platform}` 계열
 엔드포인트(승격은 지금은 손으로 recipe JSON의 `status`를 고쳐서 한다).
 

@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     job_source: Literal["fixture", "live"] = "fixture"
     matching_config: Literal["static", "yaml"] = "yaml"
     facts_source: Literal["static", "yaml"] = "yaml"
+    profile_source: Literal["static", "yaml"] = "yaml"
+    pdf_renderer: Literal["stub", "weasyprint"] = "weasyprint"
 
     # 인프라
     database_url: str = "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply"
@@ -31,6 +33,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./var")
     matching_config_path: Path = Path("./config/matching.yaml")
     facts_path: Path = Path("./config/facts.yaml")
+    profile_path: Path = Path("./config/profile.yaml")
 
     # 공고 수집 Schedule (§11.2b) — `cli.py collect-schedule`이 이 값으로 등록/갱신한다.
     job_collection_cron: str = "0 9 * * *"

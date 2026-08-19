@@ -71,3 +71,23 @@ def test_ground_check_flags_fabricated_fact_id():
     assert any("존재하지 않는 fact_id" in i for i in issues)
     # used_fact_ids 경로도 같은 위반을 잡는다(두 경로가 서로 다른 계약을 지켜 중복은 허용).
     assert sum("f-nonexistent" in i for i in issues) >= 1
+
+
+def test_ground_check_flags_hallucinated_bullet_nested_under_career_block():
+    """career[].blocks[].bullets 도 top-level highlights 와 같은 기준으로 검사한다."""
+    draft = ResumeDraft(
+        resume_id="r1",
+        content={
+            "summary": "요약",
+            "career": [
+                {
+                    "company": "Acme",
+                    "blocks": [
+                        {"title": "블록", "bullets": [{"text": "지어낸 성과", "fact_ids": []}]}
+                    ],
+                }
+            ],
+        },
+    )
+    issues = ground_check(draft, [FACT_BACKEND])
+    assert any("근거 fact 없는 서술" in i for i in issues)

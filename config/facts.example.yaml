@@ -12,13 +12,41 @@
 #   - content: 이력서 문장에 그대로 인용될 수 있는 원문 서술.
 #   - keywords: job 설명과 겹침을 판정하는 명시적 신호(matching.yaml 의 TrackRule.keywords 와 동일 철학).
 #   - source: 이 사실의 근거(예: "2024 이력서", "포트폴리오 v3"). 검증 추적용.
+#   - entity/block 계열: 이력서 경력·프로젝트 블록을 조립하는 그룹핑 키(kind=experience|project
+#     에서만 쓴다). 경력은 회사 헤더 fact(block 없음) + 하위 블록 fact 여러 개, 개인 프로젝트는
+#     헤더 fact 없이 block="main" 하나로 묶는다. 나머지 kind 는 전부 생략한다.
 
-- id: exp-example-1
+- id: exp-example-role
+  user_id: default
+  kind: experience
+  content: "예시: Acme(스타트업)에서 2022.01~2023.12 백엔드 엔지니어로 근무했다."
+  keywords: [Acme, 백엔드]
+  source: "예시 — 실제 값으로 교체"
+  entity: acme
+  entity_label: "Acme(백엔드 엔지니어)"
+  entity_period: "2022.01 - 2023.12"
+
+- id: exp-example-payment-api
   user_id: default
   kind: experience
   content: "예시: 3년간 FastAPI 기반 결제 API를 설계·운영했다."
   keywords: [FastAPI, 결제, API, 백엔드]
   source: "예시 — 실제 값으로 교체"
+  entity: acme
+  block: payment-api
+  block_label: "결제 API 설계·운영"
+  block_period: "2022.01 - 2022.12"
+
+- id: proj-example-summary
+  user_id: default
+  kind: project
+  content: "예시: 개인 프로젝트로 실시간 채팅 서비스를 개발했다."
+  keywords: [WebSocket, React]
+  source: "예시 — 실제 값으로 교체"
+  entity: proj-example
+  block: main
+  block_label: "실시간 채팅 서비스"
+  block_period: "2024.01 - 2024.02"
 
 - id: skill-example-1
   user_id: default

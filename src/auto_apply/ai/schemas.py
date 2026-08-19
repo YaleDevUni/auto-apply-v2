@@ -18,6 +18,19 @@ class ResumeHighlight(_Frozen):
     fact_ids: list[str] = Field(default_factory=list)
 
 
+class BlockBullets(_Frozen):
+    """경력/프로젝트 블록 하나에 대한 LLM 서술.
+
+    `block_id`는 프롬프트에 준 블록 id(domain/resume_matching.py의 FactBlock.id)를 그대로
+    인용해야 한다 — 회사명·기간·기술스택은 LLM 이 만들지 않는다.
+    """
+
+    block_id: str
+    bullets: list[ResumeHighlight] = Field(default_factory=list)
+
+
 class ResumeContentSchema(_Frozen):
     summary: str
     highlights: list[ResumeHighlight] = Field(default_factory=list)
+    blocks: list[BlockBullets] = Field(default_factory=list)
+    ai_usage: list[ResumeHighlight] = Field(default_factory=list)

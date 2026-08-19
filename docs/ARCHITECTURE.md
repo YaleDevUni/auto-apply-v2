@@ -274,6 +274,30 @@ flowchart LR
   hallucination으로 잡는다. Recipe의 `value_ref`(참조만, 리터럴 금지, §3)와 같은 철학 — 이력서의 모든
   서술도 리터럴이 아니라 fact_id 참조여야 한다.
 - 이 파이프라인은 여전히 분기·병렬 없는 선형 체인이다 — §9.2 도입 기준을 못 채워 plain 함수로 남아있다.
+- **경력/프로젝트 블록 구조 + PDF 출력 (M3 연장)**: 실제 이력서 문서(원티드 PDF 내보내기 형식 참고 —
+  이름/연락처 헤더 → 한줄 요약 → 상단 하이라이트 → 경력(회사 헤더 + 하위 블록별 불릿·기술스택) →
+  개인 프로젝트 → AI 활용 경험 → 학력 → 스킬 태그 → 언어)를 만들려면 `summary`+`highlights` 뿐인
+  스키마로는 부족했다. `Fact`에 `entity`/`entity_label`/`entity_period`/`block`/`block_label`/
+  `block_period`를 추가해(`config/facts.yaml`) 회사명·기간·블록 제목을 **결정론 코드로** 조립하고
+  (`domain/resume_blocks.group_facts_for_resume` → `FactBlock`), LLM은 그 블록 안에서 불릿
+  문장만 쓴다(`ai/schemas.py`의 `BlockBullets`, 프롬프트가 block_id를 그대로 인용하도록 강제) —
+  Recipe/AutomationRecipe와 같은 "AI는 생성만, 판정·조합은 코드" 철학의 연장이다. 개인 프로젝트가
+  여러 개일 수 있어 `select_relevant_blocks`로 job 관련도 상위 N개만 추리고(경력은 전부 유지),
+  `ground_check`는 `career[].blocks[].bullets`/`projects[].bullets`/`ai_usage`까지 재귀적으로
+  검사하도록 확장했다. 이름·연락처·학력 상세·스킬 태그·언어처럼 **서술이 필요 없는 정형 정보**는
+  Fact(LLM 근거)가 아니라 별도 `ProfileSource` port(`config/profile.yaml`, `FactSource`와 동일
+  패턴)에서 와서 LLM을 거치지 않고 템플릿에 그대로 꽂힌다. `adapters/resume/_assemble.py`가 이
+  셋(결정론 블록 메타데이터 + LLM 불릿 + Profile)을 `contracts/resume_content.AssembledResume`
+  모양으로 합쳐 `ResumeDraft.content`에 담고, `PdfRenderer`는 그 모양만 알면 된다 — LLM 스키마나
+  Fact 그룹핑을 몰라도 되게 경계를 나눴다. `PdfRenderer`는 §9.1에서 candidate로만 적어뒀던
+  WeasyPrint를 실제로 구현했다(`adapters/pdf/weasyprint.py`, HTML/CSS 템플릿은
+  `adapters/pdf/_template.py`에 분리해 weasyprint 없이도 순수 함수로 테스트한다). macOS(Homebrew)
+  환경에서 weasyprint가 요구하는 libgobject/pango/cairo dlopen에 `DYLD_FALLBACK_LIBRARY_PATH`가
+  필요해서 어댑터 모듈 로드 시점에 보정한다 — 사용자 셸 설정에 기대면 `make api`/`make worker`가
+  새 셸에서 조용히 깨진다. weasyprint 렌더 테스트는 시스템 라이브러리(cairo/pango/glib)가 있어야
+  돌아서 `@pytest.mark.integration`(`make test-all`, `make up` 불필요 — Docker가 아니라 시스템
+  라이브러리 문제라서 별도다)이고, `PDF_RENDERER` 기본값은 `weasyprint`다(`stub`는 JSON 덤프로
+  남겨뒀다 — 인프라 없는 개발 환경을 위한 대역).
 
 ### 2.4 AutomationRepairWorkflow
 
@@ -480,9 +504,11 @@ auto-apply-v2/
 ├── alembic/
 ├── config/
 │   ├── matching.yaml             하드컷/트랙/스코어링 규칙 — 사용자의 직무 취향 데이터 (§11.2b)
-│   └── facts.yaml                이력서 생성의 유일한 사실 원천 — 사람이 직접 채운다 (§2.3, §4).
+│   ├── facts.yaml                이력서 생성의 유일한 사실 원천 — 사람이 직접 채운다 (§2.3, §4).
 │                                  개인정보라 gitignore 대상. facts.example.yaml(형식만, git 추적)을
 │                                  복사해서 만든다 — .env.example과 같은 패턴
+│   └── profile.yaml              이력서 헤더/학력/스킬태그/언어 — LLM 을 거치지 않는 정형 정보(§2.3).
+│                                  facts.yaml 과 같은 이유로 gitignore, profile.example.yaml 이 형식만 공유
 ├── src/auto_apply/
 │   ├── api/                      FastAPI (routers, deps, schemas)
 │   ├── telegram/                 bot handlers, keyboards, nonce
@@ -501,6 +527,8 @@ auto-apply-v2/
 │   │   ├── job.py                JobPosting · ScreeningVerdict · ApplicabilityVerdict (§11.2b)
 │   │   ├── matching_config.py    TrackRule · HardcutRule · MatchingConfig (§11.2b)
 │   │   ├── fact.py               Fact (§2.3, §4)
+│   │   ├── profile.py            Profile · EducationEntry · LanguageEntry (§2.3)
+│   │   ├── resume_content.py     AssembledResume — ResumeDraft.content 의 실제 모양 (§2.3)
 │   │   └── activity_defs.py      activity 인터페이스 stub (@activity.defn)
 │   ├── ports/                    ★ Protocol 정의. 구현을 import 하지 않는다
 │   │   ├── llm.py                LLMClient
@@ -512,7 +540,9 @@ auto-apply-v2/
 │   │   ├── job_source.py         JobSource (플랫폼 대량 수집 — §11.2b)
 │   │   ├── matching_config.py    MatchingConfigSource (§11.2b)
 │   │   ├── facts.py              FactSource (§2.3)
+│   │   ├── profile.py            ProfileSource (§2.3)
 │   │   ├── resume.py             ResumeGenerator / ResumeReviewer
+│   │   ├── pdf.py                PdfRenderer
 │   │   └── clock.py              Clock, IdGen (테스트 결정성)
 │   ├── adapters/                 ★ port별 구현체. 서로를 모른다
 │   │   ├── llm/anthropic.py · llm/stub.py
@@ -524,9 +554,11 @@ auto-apply-v2/
 │   │   ├── job_source/wanted.py · saramin.py · jasoseol.py · fixture.py (§11.2b)
 │   │   ├── matching_config/yaml_file.py · static.py (§11.2b)
 │   │   ├── facts/yaml_file.py · static.py (§2.3)
-│   │   └── resume/simple.py     (오케스트레이션 프레임워크 구현은 §9.2 결정 뒤로 보류)
+│   │   ├── profile/yaml_source.py · static.py (§2.3)
+│   │   ├── resume/simple.py · resume/_assemble.py (오케스트레이션 프레임워크 구현은 §9.2 결정 뒤로 보류)
+│   │   └── pdf/weasyprint.py · pdf/_template.py · pdf/stub.py (§2.3)
 │   ├── ai/                       ★ 프레임워크 무의존: 순수 Pydantic + 문자열 함수 (§9.2)
-│   │   ├── schemas.py            ResumeContentSchema 등 — LLM 구조화 출력 스키마
+│   │   ├── schemas.py            ResumeContentSchema · BlockBullets 등 — LLM 구조화 출력 스키마
 │   │   └── prompts.py            프롬프트 조립 (LLM 호출 자체는 adapters/ 쪽에서)
 │   ├── automation/
 │   │   ├── policy.py             Recipe 정책 검증 (스키마 검증과 별도, §3)
@@ -535,7 +567,8 @@ auto-apply-v2/
 │   │   ├── job_identity.py       정규화 · canonical_key (§11.2b)
 │   │   ├── job_screening.py      축1 적합도: 하드컷 · 트랙 · 스코어링 (§11.2b)
 │   │   ├── job_applicability.py  축2 지원가능성: blocker · requires (§11.2b)
-│   │   └── resume_matching.py    select_relevant_facts · ground_check (§2.3)
+│   │   ├── resume_matching.py    select_relevant_facts · ground_check (§2.3)
+│   │   └── resume_blocks.py      group_facts_for_resume · select_relevant_blocks (§2.3)
 │   ├── bootstrap.py              ★ composition root: 설정 → 구현체 조립
 │   ├── config.py                 pydantic-settings
 │   ├── schedule.py               JobCollectionWorkflow Temporal Schedule 등록/삭제 (§11.2b)
@@ -629,9 +662,10 @@ Grafana 스택 전체를 초기에 세우지 않는다. 대신 **Temporal UI를 
 | `JobSource` | wanted/saramin/jasoseol | `FixtureJobSource` | **높음** | 공고 대량 수집. §11.2b |
 | `MatchingConfigSource` | `YamlMatchingConfigSource` | `StaticMatchingConfigSource` | 중간 | 하드컷/트랙 규칙. §11.2b |
 | `FactSource` | `YamlFactSource` | `StaticFactSource` | 중간 | 이력서 생성의 유일한 사실 원천(§2.3). `MatchingConfigSource`와 동일 패턴 |
+| `ProfileSource` | `YamlProfileSource` | `StaticProfileSource` | 중간 | 이력서 헤더/학력/스킬태그/언어(§2.3). `FactSource`와 동일 패턴 |
 | `ResumeGenerator` / `ResumeReviewer` | plain 함수(`SimpleResume*`) | — (§9.2 보류, 아직 2번째 구현 없음) | **높음** | LangGraph/PydanticAI 등, 프레임워크는 미정 — §9.2 보류 결정을 가능하게 하는 seam |
 | `Clock` / `IdGen` | 시스템 | 고정값 | 중간 | 테스트 결정성 |
-| `PdfRenderer` | WeasyPrint | `StubRenderer` | 낮음 | 교체 가능성보다 격리 목적 |
+| `PdfRenderer` | `WeasyPrintPdfRenderer`(구현 완료, §2.3) | `StubPdfRenderer`(JSON 덤프) | 낮음 | 교체 가능성보다 격리 목적. weasyprint 렌더 테스트는 시스템 라이브러리 필요해 integration |
 
 ```python
 # ports/llm.py — 구현을 전혀 모른다

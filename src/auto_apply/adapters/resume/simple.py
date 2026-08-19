@@ -5,6 +5,7 @@
 미루는 자리가 `ports/resume.py`(경계는 고정, 구현만 갈아끼운다)다.
 """
 
+from auto_apply.adapters.resume._assemble import assemble_resume, used_fact_ids
 from auto_apply.ai.prompts import build_resume_prompt, reprompt_with_error
 from auto_apply.ai.schemas import ResumeContentSchema
 from auto_apply.contracts.dto import (
@@ -14,10 +15,12 @@ from auto_apply.contracts.dto import (
     ReviewVerdict,
 )
 from auto_apply.domain.errors import LLMSchemaViolation
+from auto_apply.domain.resume_blocks import group_facts_for_resume, select_relevant_blocks
 from auto_apply.domain.resume_matching import ground_check, select_relevant_facts
 from auto_apply.ports.clock import IdGen
 from auto_apply.ports.facts import FactSource
 from auto_apply.ports.llm import LLMClient
+from auto_apply.ports.profile import ProfileSource
 
 
 class SimpleResumeGenerator:
@@ -26,25 +29,32 @@ class SimpleResumeGenerator:
         llm: LLMClient,
         idgen: IdGen,
         facts: FactSource,
+        profile: ProfileSource,
         *,
         max_reprompts: int = 2,
     ) -> None:
         self._llm = llm
         self._idgen = idgen
         self._facts = facts
+        self._profile = profile
         self._max_reprompts = max_reprompts
 
     async def generate(self, req: GenerateResumeRequest) -> ResumeDraft:
         facts = await self._facts.list_for_user(req.user_id)
+        profile = await self._profile.get(req.user_id)
         job_text = f"{req.job.title}\n{req.job.description}"
-        relevant = select_relevant_facts(facts, job_text)
 
-        content = await self._structured_with_reprompt(build_resume_prompt(req.job, relevant))
-        used_ids = sorted({fid for h in content.highlights for fid in h.fact_ids})
+        relevant = select_relevant_facts(facts, job_text)
+        blocks = select_relevant_blocks(group_facts_for_resume(facts), job_text)
+
+        content = await self._structured_with_reprompt(
+            build_resume_prompt(req.job, relevant, blocks)
+        )
+        assembled = assemble_resume(profile, blocks, content)
         return ResumeDraft(
             resume_id=self._idgen.new_id("res"),
-            content=content.model_dump(),
-            used_fact_ids=used_ids,
+            content=assembled.model_dump(),
+            used_fact_ids=used_fact_ids(content),
         )
 
     async def _structured_with_reprompt(self, prompt: str) -> ResumeContentSchema:
