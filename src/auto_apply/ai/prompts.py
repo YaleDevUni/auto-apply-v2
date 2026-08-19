@@ -19,7 +19,7 @@ def build_resume_prompt(
     정했다 — LLM 은 block_id 를 그대로 인용하고 그 블록에 속한 fact 를 근거로 불릿만 쓴다.
 
     `guide`는 REVISE(general)로 사람이 승인한, 앞으로 모든 이력서에 적용할 규칙이다
-    (config/resume_guide.md, 캐시 없이 매번 새로 읽힌다). `feedback`은 REVISE(specific)로
+    (config/resume_guide.{platform}.md, 캐시 없이 매번 새로 읽힌다). `feedback`은 REVISE(specific)로
     이번 재생성 1회에만 반영할 지시다 — 영속 저장되지 않는다.
     """
     fact_lines = "\n".join(f"- ({f.id}) {f.content}" for f in facts) or "(등록된 사실 없음)"

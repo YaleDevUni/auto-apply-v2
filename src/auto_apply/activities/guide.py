@@ -24,19 +24,21 @@ class GuideActivities:
 
     @activity.defn(name="propose_guide_patch")
     async def propose_guide_patch(self, req: ProposeGuidePatchRequest) -> GuidePatchProposal:
-        text = await self._guide.get()
+        text = await self._guide.get(req.job.platform)
         prompt = build_guide_patch_prompt(text, req.feedback, req.job)
         # 이 activity 는 재시도/재프롬프트 루프가 없는 단발 호출이라 재사용할 캐시 경계가
         # 없다 — cache_prefix 를 안 넘긴다([[claude-cli-prompt-cache-redesign]]).
         out = await self._llm.structured(prompt, GuidePatchSchema)
-        return GuidePatchProposal(old=out.old, new=out.new, rationale=out.rationale)
+        return GuidePatchProposal(
+            old=out.old, new=out.new, rationale=out.rationale, platform=req.job.platform
+        )
 
     @activity.defn(name="apply_guide_patch")
     async def apply_guide_patch(self, patch: GuidePatchProposal) -> None:
         """사람이 diff 를 이미 승인한 뒤에만 호출된다 (workflows/_revision.py)."""
-        text = await self._guide.get()
+        text = await self._guide.get(patch.platform)
         patched = apply_patch(text, patch.old, patch.new)
-        await self._guide.save(patched)
+        await self._guide.save(patch.platform, patched)
 
     def all(self) -> list[Callable[..., Any]]:
         return [self.propose_guide_patch, self.apply_guide_patch]

@@ -282,7 +282,7 @@ async def test_revise_general_applies_guide_patch_after_second_approval(env: Wor
         result = await handle.result()
 
         assert h.guide is not None
-        assert await h.guide.get() == "항상 존댓말로 쓴다."
+        assert await h.guide.get("fixture") == "항상 존댓말로 쓴다."
 
     assert result.state is ApplicationState.COMPLETED
 
@@ -310,7 +310,7 @@ async def test_revise_general_rejected_guide_patch_still_regenerates(env: Workfl
         result = await handle.result()
 
         assert h.guide is not None
-        assert await h.guide.get() == ""  # 거절했으니 가이드는 그대로
+        assert await h.guide.get("fixture") == ""  # 거절했으니 가이드는 그대로
 
     assert result.state is ApplicationState.COMPLETED
 
@@ -353,7 +353,7 @@ async def test_guide_patch_revise_regenerates_proposal_then_approves(env: Workfl
         result = await handle.result()
 
         assert h.guide is not None
-        assert await h.guide.get() == "항상 존댓말로 정중하게 쓴다."
+        assert await h.guide.get("fixture") == "항상 존댓말로 정중하게 쓴다."
 
     assert result.state is ApplicationState.COMPLETED
 
@@ -407,7 +407,7 @@ async def test_guide_patch_revise_exceeding_max_rounds_gives_up_guide_but_keeps_
         result = await handle.result()
 
         assert h.guide is not None
-        assert await h.guide.get() == ""  # 가이드 patch 는 결국 반영되지 않았다
+        assert await h.guide.get("fixture") == ""  # 가이드 patch 는 결국 반영되지 않았다
 
     assert result.state is ApplicationState.COMPLETED
 
