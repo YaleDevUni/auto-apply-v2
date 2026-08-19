@@ -116,7 +116,7 @@ class ApplicationWorkflow:
             return await self._finish(cmd, ApplicationState.CANCELLED, "사용자 취소")
 
         # ── 실행 ──
-        return await self._execute(cmd, job)
+        return await self._execute(cmd, job, pdf.blob_key)
 
     # ─────────────────────── 단계별 헬퍼 ───────────────────────
     async def _await_decision(
@@ -170,7 +170,9 @@ class ApplicationWorkflow:
     def _schedule_changed(self, target: datetime) -> bool:
         return self._cancelled or self._scheduled_at != target
 
-    async def _execute(self, cmd: StartApplication, job: JobRef) -> ApplicationResult:
+    async def _execute(
+        self, cmd: StartApplication, job: JobRef, resume_pdf_key: str
+    ) -> ApplicationResult:
         self._attempts += 1
         await self._persist(cmd, ApplicationState.EXECUTING)
         recipe = await workflow.execute_activity(
@@ -190,6 +192,7 @@ class ApplicationWorkflow:
                         application_id=cmd.application_id,
                         attempt=self._attempts,
                         profile={"email": "user@example.com", "name": "지원자"},
+                        upload_keys={"resume": resume_pdf_key},
                     ),
                     mode=mode,
                 ),

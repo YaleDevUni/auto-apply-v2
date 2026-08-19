@@ -1,0 +1,199 @@
+"""RecipeExecutor port 의 실제 구현 (M2).
+
+ReplayExecutor 와 완전히 같은 계약을 지킨다 — 그래서 contract test 하나가 둘 다에 돈다.
+  - Recipe 가 현재 DOM 과 안 맞으면 RecipeExecutionError(snapshot_key, form_hash)
+  - CAPTCHA 는 우회하지 않고 CaptchaEncountered 로 즉시 사람에게 넘긴다
+  - 로그인 안 된 platform 은 AuthRequired — 비밀번호를 코드가 타이핑하지 않는다.
+    storage_state 는 scripts/save_auth_state.py 로 사람이 직접 로그인해 만든다.
+  - dry_run 은 submit 직전까지만 실행한다 (§2.4)
+"""
+
+import tempfile
+from datetime import UTC
+from pathlib import Path
+
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import Locator, Page, async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+from auto_apply.contracts.dto import ExecutionContext, ExecutionResult
+from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
+from auto_apply.domain.enums import AttemptOutcome, ExecutionMode
+from auto_apply.domain.errors import AuthRequired, CaptchaEncountered, RecipeExecutionError
+from auto_apply.ports.clock import Clock
+from auto_apply.ports.storage import BlobStore
+
+# CDP 로 열리는 실제 Chromium 페이지 안에서 이 마커들이 보이면 사람에게 넘긴다 (§9.5).
+_CAPTCHA_MARKERS = ("recaptcha", "hcaptcha", "cf-turnstile", "자동입력 방지", "보안문자")
+
+_NEEDS_SELECTOR = {
+    ActionType.CLICK,
+    ActionType.FILL,
+    ActionType.SELECT,
+    ActionType.UPLOAD,
+    ActionType.WAIT_FOR,
+    ActionType.ASSERT_VISIBLE,
+    ActionType.SUBMIT,
+}
+
+
+class PlaywrightExecutor:
+    def __init__(
+        self,
+        clock: Clock,
+        store: BlobStore,
+        *,
+        auth_dir: Path,
+        headless: bool = True,
+    ) -> None:
+        self._clock = clock
+        self._store = store
+        self._auth_dir = auth_dir
+        self._headless = headless
+
+    async def run(
+        self, recipe: AutomationRecipe, ctx: ExecutionContext, mode: ExecutionMode
+    ) -> ExecutionResult:
+        state_path = self._auth_dir / f"{recipe.platform}.json"
+        if not state_path.is_file():
+            raise AuthRequired(
+                f"{recipe.platform} 로그인 상태가 없다 — "
+                f"scripts/save_auth_state.py 로 먼저 로그인해라 ({state_path})"
+            )
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=self._headless)
+            try:
+                context = await browser.new_context(storage_state=str(state_path))
+                page = await context.new_page()
+                try:
+                    return await self._run_actions(recipe, ctx, mode, page)
+                finally:
+                    await context.close()
+            finally:
+                await browser.close()
+
+    async def _run_actions(
+        self, recipe: AutomationRecipe, ctx: ExecutionContext, mode: ExecutionMode, page: Page
+    ) -> ExecutionResult:
+        artifacts: list[str] = []
+        for i, action in enumerate(recipe.actions):
+            if action.type is ActionType.SUBMIT:
+                if mode is ExecutionMode.DRY_RUN:
+                    return ExecutionResult(
+                        outcome=AttemptOutcome.SUCCEEDED,
+                        submitted_at=None,
+                        artifact_keys=artifacts,
+                        detail="dry_run: submit 을 실행하지 않았다",
+                    )
+                await self._check_captcha(page, recipe, ctx)
+
+            key = await self._run_one(i, action, ctx, recipe, page)
+            if key:
+                artifacts.append(key)
+            if action.type is ActionType.GOTO:
+                await self._check_captcha(page, recipe, ctx)
+
+        submitted = self._clock.now().astimezone(UTC) if recipe.has_submit else None
+        return ExecutionResult(
+            outcome=AttemptOutcome.SUCCEEDED,
+            submitted_at=submitted,
+            artifact_keys=artifacts,
+            detail=f"playwright/{mode}",
+        )
+
+    async def _run_one(
+        self,
+        index: int,
+        action: Action,
+        ctx: ExecutionContext,
+        recipe: AutomationRecipe,
+        page: Page,
+    ) -> str | None:
+        try:
+            return await self._dispatch(index, action, ctx, page)
+        except (PlaywrightTimeoutError, PlaywrightError) as e:
+            if action.optional:
+                return None
+            snapshot_key = await self._snapshot(page, recipe, ctx, index)
+            raise RecipeExecutionError(
+                f"{action.type} 실패 ({action.selector}): {e}",
+                snapshot_key=snapshot_key,
+                form_hash=recipe.form_hash,
+            ) from e
+
+    async def _dispatch(
+        self, index: int, action: Action, ctx: ExecutionContext, page: Page
+    ) -> str | None:
+        locator: Locator | None = page.locator(action.selector) if action.selector else None
+
+        match action.type:
+            case ActionType.GOTO:
+                await page.goto(self._resolve_value(action, ctx), timeout=action.timeout_ms)
+            case ActionType.CLICK | ActionType.SUBMIT:
+                assert locator is not None
+                await locator.click(timeout=action.timeout_ms)
+            case ActionType.FILL:
+                assert locator is not None
+                await locator.fill(self._resolve_value(action, ctx), timeout=action.timeout_ms)
+            case ActionType.SELECT:
+                assert locator is not None
+                await locator.select_option(
+                    self._resolve_value(action, ctx), timeout=action.timeout_ms
+                )
+            case ActionType.UPLOAD:
+                assert locator is not None
+                data = await self._resolve_upload(action, ctx)
+                with tempfile.NamedTemporaryFile(suffix=".upload") as tmp:
+                    tmp.write(data)
+                    tmp.flush()
+                    await locator.set_input_files(tmp.name, timeout=action.timeout_ms)
+            case ActionType.WAIT_FOR:
+                assert locator is not None
+                await locator.wait_for(timeout=action.timeout_ms)
+            case ActionType.ASSERT_VISIBLE:
+                assert locator is not None
+                await locator.wait_for(state="visible", timeout=action.timeout_ms)
+            case ActionType.SCREENSHOT:
+                data = await page.screenshot(timeout=action.timeout_ms)
+                key = f"application-artifacts/{ctx.application_id}/{ctx.attempt}/{index:02d}.png"
+                await self._store.put(key, data, content_type="image/png")
+                return key
+        return None
+
+    def _resolve_value(self, action: Action, ctx: ExecutionContext) -> str:
+        if action.value_literal is not None:
+            return action.value_literal
+        assert action.value_ref is not None  # 스키마 model_validator 가 이미 보장한다
+        key = action.value_ref.removeprefix("profile.")
+        if key not in ctx.profile:
+            raise ValueError(f"프로필에 값이 없다: {action.value_ref}")
+        return ctx.profile[key]
+
+    async def _resolve_upload(self, action: Action, ctx: ExecutionContext) -> bytes:
+        assert action.value_ref is not None
+        key = action.value_ref.removeprefix("upload.")
+        if key not in ctx.upload_keys:
+            raise ValueError(f"업로드 파일이 없다: {action.value_ref}")
+        return await self._store.get(ctx.upload_keys[key])
+
+    async def _check_captcha(
+        self, page: Page, recipe: AutomationRecipe, ctx: ExecutionContext
+    ) -> None:
+        content = (await page.content()).lower()
+        if any(marker.lower() in content for marker in _CAPTCHA_MARKERS):
+            await self._snapshot(page, recipe, ctx, -1)
+            raise CaptchaEncountered(f"{recipe.platform} 에서 CAPTCHA 감지")
+
+    async def _snapshot(
+        self, page: Page, recipe: AutomationRecipe, ctx: ExecutionContext, index: int
+    ) -> str:
+        key = (
+            f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/attempt-{ctx.attempt}-{index}.html"
+        )
+        try:
+            html = await page.content()
+            await self._store.put(key, html.encode("utf-8"), content_type="text/html")
+        except PlaywrightError:
+            pass
+        return key

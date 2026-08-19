@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
+from auto_apply.adapters.executor.playwright import PlaywrightExecutor
 from auto_apply.adapters.executor.replay import ReplayExecutor
 from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.adapters.notifier.console import ConsoleNotifier
@@ -89,12 +90,17 @@ def _build_uow(cfg: Settings) -> Callable[[], UnitOfWork]:
             raise NotImplementedError("SqlAlchemyUnitOfWork 는 M2 에서 추가한다")
 
 
-def _build_executor(cfg: Settings, clock: Clock) -> RecipeExecutor:
+def _build_executor(cfg: Settings, clock: Clock, store: BlobStore) -> RecipeExecutor:
     match cfg.executor:
         case "replay":
             return ReplayExecutor(clock)
         case "playwright":
-            raise NotImplementedError("PlaywrightExecutor 는 M2 에서 추가한다")
+            return PlaywrightExecutor(
+                clock,
+                store,
+                auth_dir=cfg.data_dir / "auth",
+                headless=cfg.playwright_headless,
+            )
 
 
 def _build_recipes(cfg: Settings) -> RecipeSource:
@@ -119,7 +125,7 @@ def build_container(cfg: Settings) -> Container:
         uow=_build_uow(cfg),
         registry=StaticPlatformRegistry([FixturePlatformAdapter()]),
         recipes=_build_recipes(cfg),
-        executor=_build_executor(cfg, clock),
+        executor=_build_executor(cfg, clock, store),
         generator=SimpleResumeGenerator(llm, idgen),
         reviewer=SimpleResumeReviewer(),
         pdf=StubPdfRenderer(store),

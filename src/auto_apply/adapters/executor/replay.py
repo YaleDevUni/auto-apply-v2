@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from auto_apply.contracts.dto import ExecutionContext, ExecutionResult
 from auto_apply.contracts.recipe import ActionType, AutomationRecipe
 from auto_apply.domain.enums import AttemptOutcome, ExecutionMode
-from auto_apply.domain.errors import RecipeExecutionError
+from auto_apply.domain.errors import AuthRequired, CaptchaEncountered, RecipeExecutionError
 from auto_apply.ports.clock import Clock
 
 
@@ -19,14 +19,25 @@ class ReplayExecutor:
         clock: Clock,
         *,
         fail_selectors: frozenset[str] = frozenset(),
+        captcha: bool = False,
+        authed_platforms: frozenset[str] | None = None,
     ) -> None:
         self._clock = clock
-        # 테스트에서 DOM 변경 상황을 재현하기 위한 주입점
+        # 아래 셋 다 테스트에서 실제 브라우저 없이 executor 계약(§11.2)을 재현하는 주입점.
+        # PlaywrightExecutor 와 동일한 contract test 를 돌리기 위해 존재한다.
         self._fail_selectors = fail_selectors
+        self._captcha = captcha
+        # None = 인증 검사 안 함(기존 동작 유지). 값이 있으면 그 목록에만 있는 platform 만 인증됨.
+        self._authed_platforms = authed_platforms
 
     async def run(
         self, recipe: AutomationRecipe, ctx: ExecutionContext, mode: ExecutionMode
     ) -> ExecutionResult:
+        if self._authed_platforms is not None and recipe.platform not in self._authed_platforms:
+            raise AuthRequired(f"{recipe.platform} 로그인 상태가 없다")
+        if self._captcha:
+            raise CaptchaEncountered(f"{recipe.platform} 에서 CAPTCHA 감지")
+
         artifacts: list[str] = []
         for i, action in enumerate(recipe.actions):
             if action.selector and action.selector in self._fail_selectors:
