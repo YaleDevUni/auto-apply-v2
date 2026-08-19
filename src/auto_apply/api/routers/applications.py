@@ -14,7 +14,13 @@ from auto_apply.api.schemas import (
     StartApplicationRequest,
     StartApplicationResponse,
 )
-from auto_apply.contracts.dto import ApproveSignal, RejectSignal, RescheduleSignal, StartApplication
+from auto_apply.contracts.dto import (
+    ApproveSignal,
+    RejectSignal,
+    RescheduleSignal,
+    ReviseSignal,
+    StartApplication,
+)
 from auto_apply.temporal_config import QUEUE_DEFAULT
 from auto_apply.workflows.application import ApplicationWorkflow
 
@@ -86,6 +92,19 @@ async def reject_application(
     application_id: str, sig: RejectSignal, client: TemporalClientDep
 ) -> None:
     await _signal_reject(client, application_id, sig)
+
+
+@router.post("/{application_id}/revise", status_code=202)
+async def revise_application(
+    application_id: str, sig: ReviseSignal, client: TemporalClientDep
+) -> None:
+    """텔레그램 없이(콘솔/테스트) REVISE 를 트리거하는 경로 — approve/reject 와 같은 모양."""
+    try:
+        await client.get_workflow_handle(_wf_id(application_id)).signal(
+            ApplicationWorkflow.revise, sig
+        )
+    except RPCError as e:
+        raise _not_found(e, application_id) from e
 
 
 @router.post("/{application_id}/schedule", status_code=202)

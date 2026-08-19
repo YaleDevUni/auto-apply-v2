@@ -19,6 +19,7 @@ from auto_apply.domain.resume_blocks import group_facts_for_resume, select_relev
 from auto_apply.domain.resume_matching import ground_check, select_relevant_facts
 from auto_apply.ports.clock import IdGen
 from auto_apply.ports.facts import FactSource
+from auto_apply.ports.guide import GuideSource
 from auto_apply.ports.llm import LLMClient
 from auto_apply.ports.profile import ProfileSource
 
@@ -30,6 +31,7 @@ class SimpleResumeGenerator:
         idgen: IdGen,
         facts: FactSource,
         profile: ProfileSource,
+        guide: GuideSource,
         *,
         max_reprompts: int = 2,
     ) -> None:
@@ -37,18 +39,21 @@ class SimpleResumeGenerator:
         self._idgen = idgen
         self._facts = facts
         self._profile = profile
+        self._guide = guide
         self._max_reprompts = max_reprompts
 
     async def generate(self, req: GenerateResumeRequest) -> ResumeDraft:
         facts = await self._facts.list_for_user(req.user_id)
         profile = await self._profile.get(req.user_id)
+        guide = await self._guide.get()
         job_text = f"{req.job.title}\n{req.job.description}"
 
         relevant = select_relevant_facts(facts, job_text)
         blocks = select_relevant_blocks(group_facts_for_resume(facts), job_text)
 
         content = await self._structured_with_reprompt(
-            build_resume_prompt(req.job, relevant, blocks), cache_key=req.user_id
+            build_resume_prompt(req.job, relevant, blocks, guide=guide, feedback=req.feedback),
+            cache_key=req.user_id,
         )
         assembled = assemble_resume(profile, blocks, content)
         return ResumeDraft(

@@ -20,16 +20,30 @@ class ConsoleNotifier:
         ticket = DecisionTicket(
             ticket_id=self._idgen.new_id("tkt"), nonce=self._idgen.new_id("nonce")
         )
+        # 가이드 patch 승인은 approve/reject 뿐이다 — 그 자체를 다시 REVISE 할 순 없다.
+        revise_cmd = (
+            {}
+            if req.guide_patch
+            else {
+                "revise_cmd": (
+                    f"temporal workflow signal --workflow-id {req.workflow_id} "
+                    f'--name revise --input \'{{"feedback":"...","scope":"specific"}}\''
+                )
+            }
+        )
         log.info(
             "decision.requested",
             application_id=req.application_id,
             workflow_id=req.workflow_id,
             title=req.title,
             artifact_url=req.artifact_url,
+            guide_patch=req.guide_patch,
             approve_cmd=(
                 f"temporal workflow signal --workflow-id {req.workflow_id} "
-                f'--name approve --input \'{{"kind":"approve"}}\''
+                f"--name {'approve_guide_patch' if req.guide_patch else 'approve'} "
+                f"--input '{{}}'"
             ),
+            **revise_cmd,
         )
         return ticket
 

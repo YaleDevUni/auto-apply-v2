@@ -10,6 +10,7 @@ from auto_apply.domain.enums import (
     AttemptOutcome,
     DecisionKind,
     ExecutionMode,
+    RevisionScope,
 )
 
 
@@ -62,6 +63,9 @@ class DecisionRequest(_Frozen):
     title: str
     summary: str
     artifact_url: str | None = None
+    # True 면 이력서 가이드 patch 승인 요청이다 — Notifier 가 승인/거절 2버튼만 보여준다
+    # (중첩 승인이라 그 자체를 다시 REVISE 할 순 없다).
+    guide_patch: bool = False
 
 
 class DecisionTicket(_Frozen):
@@ -82,6 +86,8 @@ class GenerateResumeRequest(_Frozen):
     application_id: str
     user_id: str
     job: JobRef
+    # REVISE(SPECIFIC) 로 재생성할 때만 채워진다. 영속 저장 안 함 — 이 호출 한 번에만 반영된다.
+    feedback: str = ""
 
 
 class ResumeDraft(_Frozen):
@@ -99,6 +105,21 @@ class ReviewVerdict(_Frozen):
 class RenderedPdf(_Frozen):
     blob_key: str
     bytes_written: int
+
+
+# ── Resume guide patch (REVISE/general, domain/guide_patch.py) ────────────
+class ProposeGuidePatchRequest(_Frozen):
+    user_id: str
+    job: JobRef
+    feedback: str
+
+
+class GuidePatchProposal(_Frozen):
+    """LLM 출력. 전문이 아니라 치환 쌍만 — apply_guide_patch 가 정확히 1번 매치될 때만 반영한다."""
+
+    old: str
+    new: str
+    rationale: str = ""
 
 
 # ── Execution ────────────────────────────────────────────────────────────
@@ -150,6 +171,9 @@ class Decision(_Frozen):
     kind: DecisionKind
     scheduled_at: datetime | None = None
     reason: str = ""
+    # kind=REVISE 일 때만 쓰인다.
+    feedback: str = ""
+    scope: RevisionScope | None = None
 
 
 # ── Signals ──────────────────────────────────────────────────────────────
@@ -161,6 +185,22 @@ class ApproveSignal(_Frozen):
 
 class RejectSignal(_Frozen):
     reason: str = ""
+    decided_by: str = ""
+    nonce: str = ""
+
+
+class ReviseSignal(_Frozen):
+    """텔레그램 3번째 갈래. `scope`가 저장 위치를 가른다 (domain/enums.RevisionScope)."""
+
+    feedback: str
+    scope: RevisionScope
+    decided_by: str = ""
+    nonce: str = ""
+
+
+class GuidePatchDecisionSignal(_Frozen):
+    """가이드 patch 제안에 대한 2차 승인. 본 승인/거절 signal 과 nonce 슬롯이 분리돼 있다."""
+
     decided_by: str = ""
     nonce: str = ""
 

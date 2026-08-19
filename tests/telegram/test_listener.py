@@ -10,7 +10,8 @@ import httpx
 from auto_apply.telegram.listener import _fetch_updates
 
 
-async def test_fetch_updates_sends_offset_and_restricts_to_callback_query():
+async def test_fetch_updates_sends_offset_and_restricts_to_callback_query_and_message():
+    """`message` 도 받는다 — REVISE ForceReply 답장이 이 타입으로 온다(telegram/bridge.py)."""
     captured: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -24,7 +25,7 @@ async def test_fetch_updates_sends_offset_and_restricts_to_callback_query():
     assert updates == [{"update_id": 42}]
     assert "getUpdates" in captured["url"]
     assert captured["params"]["offset"] == "41"
-    assert captured["params"]["allowed_updates"] == '["callback_query"]'
+    assert captured["params"]["allowed_updates"] == '["callback_query","message"]'
 
 
 async def test_fetch_updates_omits_offset_when_none():

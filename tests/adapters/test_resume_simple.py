@@ -4,6 +4,7 @@ import pytest
 
 from auto_apply.adapters.clock.system import UuidIdGen
 from auto_apply.adapters.facts.static import StaticFactSource
+from auto_apply.adapters.guide.static import StaticGuideSource
 from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.adapters.profile.static import StaticProfileSource
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
@@ -11,6 +12,7 @@ from auto_apply.contracts.dto import GenerateResumeRequest, JobRef, ResumeDraft,
 from auto_apply.contracts.fact import Fact
 from auto_apply.contracts.profile import Profile
 from auto_apply.domain.errors import LLMSchemaViolation
+from auto_apply.ports.guide import GuideSource
 
 JOB = JobRef(
     job_id="j1",
@@ -47,15 +49,49 @@ def _profile_source() -> StaticProfileSource:
     return StaticProfileSource([PROFILE])
 
 
+class _RecordingLLM(StubLLM):
+    """StubLLM 을 감싸 마지막 structured() 호출의 prompt 를 기록한다 — guide/feedback 이
+
+    실제로 프롬프트에 실리는지(SimpleResumeGenerator 배선) 검증하는 데 쓴다.
+    """
+
+    def __init__(self, payloads: list[dict[str, object]]) -> None:
+        super().__init__(payloads=payloads)
+        self.last_prompt: str = ""
+
+    async def structured(self, prompt, schema, *, max_tokens=2048, cache_key=None):  # type: ignore[override]
+        self.last_prompt = prompt
+        return await super().structured(prompt, schema, max_tokens=max_tokens, cache_key=cache_key)
+
+
 async def test_generate_grounds_used_fact_ids_from_llm_output():
     facts = StaticFactSource([FACT])
     gen = SimpleResumeGenerator(
-        StubLLM(payloads=[VALID_PAYLOAD]), UuidIdGen(), facts, _profile_source()
+        StubLLM(payloads=[VALID_PAYLOAD]),
+        UuidIdGen(),
+        facts,
+        _profile_source(),
+        StaticGuideSource(),
     )
     draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
     assert draft.used_fact_ids == ["exp-1"]
     assert draft.content["summary"] == VALID_PAYLOAD["summary"]
     assert draft.content["name"] == "테스터"
+
+
+async def test_generate_passes_guide_and_feedback_into_the_prompt():
+    """가이드(영속, general REVISE)와 feedback(1회성, specific REVISE)이 모두 프롬프트에 실린다."""
+    facts = StaticFactSource([FACT])
+    llm = _RecordingLLM([VALID_PAYLOAD])
+    guide: GuideSource = StaticGuideSource("항상 존댓말로 쓴다")
+    gen = SimpleResumeGenerator(llm, UuidIdGen(), facts, _profile_source(), guide)
+    await gen.generate(
+        GenerateResumeRequest(
+            application_id="a1", user_id="u1", job=JOB, feedback="자기소개를 더 짧게"
+        )
+    )
+    assert "항상 존댓말로 쓴다" in llm.last_prompt
+    assert "자기소개를 더 짧게" in llm.last_prompt
 
 
 async def test_generate_assembles_block_bullets_into_career_section():
@@ -70,7 +106,9 @@ async def test_generate_assembles_block_bullets_into_career_section():
             }
         ],
     }
-    gen = SimpleResumeGenerator(StubLLM(payloads=[payload]), UuidIdGen(), facts, _profile_source())
+    gen = SimpleResumeGenerator(
+        StubLLM(payloads=[payload]), UuidIdGen(), facts, _profile_source(), StaticGuideSource()
+    )
     draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
     career = draft.content["career"]
     assert career[0]["company"] == "Acme(백엔드 인턴)"
@@ -85,7 +123,7 @@ async def test_generate_reprompts_on_schema_violation_then_succeeds():
     facts = StaticFactSource([FACT])
     bad_payload = {**VALID_PAYLOAD, "made_up_field": "LLM이 창작한 필드"}
     llm = StubLLM(payloads=[bad_payload, VALID_PAYLOAD])
-    gen = SimpleResumeGenerator(llm, UuidIdGen(), facts, _profile_source())
+    gen = SimpleResumeGenerator(llm, UuidIdGen(), facts, _profile_source(), StaticGuideSource())
     draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
     assert draft.used_fact_ids == ["exp-1"]
 
@@ -94,7 +132,9 @@ async def test_generate_raises_after_exhausting_reprompts():
     facts = StaticFactSource([FACT])
     bad_payload = {**VALID_PAYLOAD, "made_up_field": "x"}
     llm = StubLLM(payloads=[bad_payload, bad_payload, bad_payload])
-    gen = SimpleResumeGenerator(llm, UuidIdGen(), facts, _profile_source(), max_reprompts=2)
+    gen = SimpleResumeGenerator(
+        llm, UuidIdGen(), facts, _profile_source(), StaticGuideSource(), max_reprompts=2
+    )
     with pytest.raises(LLMSchemaViolation):
         await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
 

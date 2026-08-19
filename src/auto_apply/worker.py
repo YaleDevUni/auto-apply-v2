@@ -15,6 +15,7 @@ from temporalio.worker import Worker
 
 from auto_apply.activities.application import ApplicationActivities
 from auto_apply.activities.browser import BrowserActivities
+from auto_apply.activities.guide import GuideActivities
 from auto_apply.activities.job_collection import JobCollectionActivities
 from auto_apply.activities.ping import PingActivities
 from auto_apply.activities.resume import ResumeActivities
@@ -57,7 +58,10 @@ def _registrations(
         case "ai":
             return (
                 [ResumeWorkflow],
-                [*ResumeActivities(c.generator, c.reviewer, c.pdf).all()],
+                [
+                    *ResumeActivities(c.generator, c.reviewer, c.pdf).all(),
+                    *GuideActivities(c.llm, c.guide).all(),
+                ],
             )
         case "browser":
             return [], [*BrowserActivities(c.executor).all()]

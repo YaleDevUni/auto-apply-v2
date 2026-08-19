@@ -106,6 +106,7 @@ stateDiagram-v2
     rendering_pdf --> awaiting_approval
     awaiting_approval --> rejected: reject signal
     awaiting_approval --> scheduled: approve signal
+    awaiting_approval --> generating_resume: revise signal (M3 연장, MAX_REVISIONS=3)
     awaiting_approval --> expired: timeout 72h
     scheduled --> executing: timer 만료
     scheduled --> scheduled: reschedule signal
@@ -245,6 +246,11 @@ class ApplicationWorkflow:
 - `/status`는 DB를 조회하지 않고 **워크플로우를 query**한다. 상태의 원본이 하나로 유지된다.
 - 스케줄은 `sleep`이 아니라 `wait_condition(timeout=...)`. 그래야 대기 중에 재조정/취소가 먹는다.
 - 승인 대기는 무한이 아니라 72시간. 무한 대기 워크플로우가 쌓이면 그게 또 운영 부채다.
+- **REVISE(M3 연장)**: 위 의사코드의 2갈래(approve/reject)는 실제로는 3갈래다.
+  `DecisionKind.REVISE`가 오면 `RevisionScope.SPECIFIC`(이번 재생성 1회에만, 영속 저장 안 함)
+  /`GENERAL`(`config/resume_guide.md`에 영속 — 단 사람이 diff를 한 번 더 승인해야 반영)로
+  갈라서 이력서를 재생성하고 `awaiting_approval`로 되돌아간다. `MAX_REVISIONS`(3)를 넘으면
+  `needs_human`. 자세한 구현은 CLAUDE.md "M3 연장 — REVISE" 항목과 `workflows/_revision.py`.
 
 ### 2.3 ResumeWorkflow (AI child)
 
@@ -473,6 +479,12 @@ DAILY_DIGEST                    /recipes wanted
 - 명령 → FastAPI → `client.get_workflow_handle(f"application-{id}").signal(...)`.
   Telegram 핸들러가 DB를 직접 쓰지 않는다.
 - 발신자 `chat_id` allowlist. 이 봇은 실제 제출 권한을 가진 콘솔이다.
+- **REVISE(M3 연장)**: 승인/거절 버튼 옆에 "✏️ 수정요청"이 있다. 누르면 scope 선택(이번만/항상)
+  버튼 → ForceReply로 자유 텍스트 피드백을 받는 3단계다. 이 자유 텍스트를 어느
+  application/nonce/scope에 연결할지가 nonce와 같은 문제였다(발급 프로세스와 webhook/리스너
+  프로세스가 갈라진다) — `[revise:{application_id}:{nonce}:{scope}]` 태그를 ForceReply 프롬프트
+  본문에 실어 보내고, 사용자 답장의 `reply_to_message.text`에서 그 태그를 파싱해 복원한다
+  (상태를 안 들고도 왕복). `telegram/bridge.py`의 `handle_message`가 이 답장을 처리한다.
 
 ---
 
@@ -484,6 +496,7 @@ POST   /applications                  → ApplicationWorkflow 시작 (즉시 202
 GET    /applications/{id}             DB 사실 + Temporal query 병합
 POST   /applications/{id}/approve     → signal
 POST   /applications/{id}/reject      → signal
+POST   /applications/{id}/revise      → signal (M3 연장 — 텔레그램 없이도 REVISE 트리거)
 POST   /applications/{id}/schedule    → signal
 POST   /applications/{id}/cancel      → signal
 GET    /recipes/{platform}            버전 목록

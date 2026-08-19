@@ -11,6 +11,8 @@ from auto_apply.adapters.executor.playwright import PlaywrightExecutor
 from auto_apply.adapters.executor.replay import ReplayExecutor
 from auto_apply.adapters.facts.static import StaticFactSource
 from auto_apply.adapters.facts.yaml_file import YamlFactSource
+from auto_apply.adapters.guide.file import FileGuideSource
+from auto_apply.adapters.guide.static import StaticGuideSource
 from auto_apply.adapters.job_source._http import ThrottledClient
 from auto_apply.adapters.job_source.fixture import FixtureJobSource
 from auto_apply.adapters.job_source.jasoseol import JasoseolJobSource
@@ -43,6 +45,7 @@ from auto_apply.contracts.job import JobRecord
 from auto_apply.ports.clock import Clock, IdGen
 from auto_apply.ports.executor import RecipeExecutor
 from auto_apply.ports.facts import FactSource
+from auto_apply.ports.guide import GuideSource
 from auto_apply.ports.job_source import JobSource
 from auto_apply.ports.llm import LLMClient
 from auto_apply.ports.matching_config import MatchingConfigSource
@@ -75,6 +78,7 @@ class Container:
     matching_config: MatchingConfigSource
     facts: FactSource
     profile: ProfileSource
+    guide: GuideSource
 
 
 def _build_store(cfg: Settings) -> BlobStore:
@@ -187,6 +191,14 @@ def _build_profile(cfg: Settings) -> ProfileSource:
             return YamlProfileSource(cfg.profile_path)
 
 
+def _build_guide(cfg: Settings) -> GuideSource:
+    match cfg.guide_source:
+        case "static":
+            return StaticGuideSource()
+        case "file":
+            return FileGuideSource(cfg.resume_guide_path)
+
+
 def _build_pdf(cfg: Settings, store: BlobStore) -> PdfRenderer:
     match cfg.pdf_renderer:
         case "stub":
@@ -202,6 +214,7 @@ def build_container(cfg: Settings) -> Container:
     llm = _build_llm(cfg)
     facts = _build_facts(cfg)
     profile = _build_profile(cfg)
+    guide = _build_guide(cfg)
     return Container(
         settings=cfg,
         clock=clock,
@@ -213,11 +226,12 @@ def build_container(cfg: Settings) -> Container:
         registry=StaticPlatformRegistry([FixturePlatformAdapter()]),
         recipes=_build_recipes(cfg),
         executor=_build_executor(cfg, clock, store),
-        generator=SimpleResumeGenerator(llm, idgen, facts, profile),
+        generator=SimpleResumeGenerator(llm, idgen, facts, profile, guide),
         reviewer=SimpleResumeReviewer(facts),
         pdf=_build_pdf(cfg, store),
         job_sources=_build_job_sources(cfg, store),
         matching_config=_build_matching_config(cfg),
         facts=facts,
         profile=profile,
+        guide=guide,
     )

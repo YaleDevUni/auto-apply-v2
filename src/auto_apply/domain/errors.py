@@ -83,6 +83,18 @@ class AlreadySubmitted(AutoApplyError):
     """멱등 충돌. verify 로 확인한 뒤 성공으로 간주한다."""
 
 
+class GuidePatchNotFound(TerminalError):
+    """domain/guide_patch.py: LLM 이 낸 `old` 가 현재 가이드 본문에 한 번도 없다.
+
+    가이드가 그 사이 바뀌었거나(§ resume-revise-feedback-design, 동시 REVISE) LLM 이
+    본문을 살짝 바꿔 인용했다는 뜻 — 재시도해도 같은 `old`로는 또 안 맞으니 재시도하지 않는다.
+    """
+
+
+class GuidePatchAmbiguous(TerminalError):
+    """domain/guide_patch.py: `old` 가 가이드 본문에 2번 이상 나타나 어디를 바꿀지 모호하다."""
+
+
 NON_RETRYABLE: tuple[str, ...] = (
     RecipeExecutionError.__name__,
     CaptchaEncountered.__name__,
@@ -96,4 +108,6 @@ NON_RETRYABLE: tuple[str, ...] = (
     # 재시도로 저절로 안 풀리는 claude CLI 실패 — 사람이 개입해야 한다 (로그인/한도 리셋).
     LLMAuthRequired.__name__,
     LLMQuotaExceeded.__name__,
+    GuidePatchNotFound.__name__,
+    GuidePatchAmbiguous.__name__,
 )

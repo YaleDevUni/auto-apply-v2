@@ -206,6 +206,38 @@ activity(승인 흐름과 같은 `Notifier` 채널)를 `task_queue=QUEUE_DEFAULT
 알린다(§11.2c). 타임아웃 등 분류 안 된 실패는 여전히 `LLMExecutionError`로 재시도 대상이라
 알림을 안 보낸다.
 
+**M3 연장 — REVISE(수정요청), 텔레그램 3번째 갈래.** 승인/거절 2갈래뿐이던 `DecisionKind`에
+`REVISE`를 추가했다(`RevisionScope.SPECIFIC/GENERAL`로 반영 범위를 가른다) — "자기소개 더
+짧게" 같은 실시간 프롬프팅 요구가 나온 세션에서 설계하고 이번 세션에서 구현했다(메모리
+resume-revise-feedback-design). **SPECIFIC**은 영속 저장 안 함 — `ReviseSignal.feedback`이
+`GenerateResumeRequest.feedback`으로 그 재생성 1회에만 흐른다. **GENERAL**은
+`config/resume_guide.md`(신설, `GuideSource` port + `FileGuideSource`/`StaticGuideSource`,
+`FactSource`와 같은 캐시-없이-매번-읽기 패턴)에 영속되지만 LLM이 전문을 재작성하지 않고
+`{old, new}` 치환 쌍만 내고(`ai/schemas.GuidePatchSchema`) `domain/guide_patch.apply_patch`가
+`old`가 정확히 1번 매치될 때만 적용한다 — 여러 규칙이 섞인 가이드에서 전문 재작성을 시키면
+지시 안 한 규칙이 조용히 사라질 위험을 피하려는 선택(Recipe의 "AI는 생성만, 조합은 코드"
+철학의 연장). GENERAL은 반영 전 **사람이 diff를 한 번 더 승인**해야 한다(§CLAUDE.md "되돌릴
+수 없는 지점엔 사람" — 가이드는 이후 모든 생성에 영향을 주는 레버라 되돌리기 어려운 축)는
+설계 세션에서 사용자가 명시적으로 확정한 방향이다. `ApplicationWorkflow`는 승인 대기를
+while 루프로 바꿔 REVISE를 반복 처리하고(`MAX_REVISIONS=3` 초과 시 `needs_human`), 재생성/
+가이드-patch 로직은 `workflows/_revision.py`로 분리했다(`_execution.py`와 같은 이유 —
+`application.py` 한 파일에 다 넣으면 책임이 흐려진다). 가이드 patch용 2차 승인은 본 승인과
+별도의 nonce/decision 슬롯(`_guide_decision`/`_guide_nonce`, signal
+`approve_guide_patch`/`reject_guide_patch`)을 쓴다 — 섞으면 "가이드 반영 승인" 클릭이 "지원
+승인"으로 잘못 해석될 수 있어서다. 텔레그램 UX는 REVISE 버튼 → scope 선택(이번만/항상) →
+ForceReply로 자유 텍스트 피드백을 받는 3단계인데, 이 자유 텍스트를 어느 application/nonce/
+scope에 연결할지가 프로세스 경계(worker vs webhook/listener) 문제였다 — nonce와 같은 이유로
+어댑터/서버 메모리에 상태를 못 둔다. `[revise:{application_id}:{nonce}:{scope}]` 태그를
+ForceReply 프롬프트 본문에 실어 보내고 사용자의 답장이 담아오는 `reply_to_message.text`에서
+그 태그를 파싱해 복원하는 방식(상태 없이 왕복)으로 풀었다 — 이 세션에서 사용자에게 직접
+확인받은 방향이다. `TelegramNotifier`에 이 3단계 전송 메서드(`send_scope_picker`/
+`send_feedback_prompt`)를 추가했지만 `Notifier` port는 안 건드렸다 — nonce 발급을 동반하는
+`request_decision`과 달리 이 둘은 안내 메시지일 뿐이라 port 표면을 넓힐 필요가 없었고,
+`telegram/bridge.py`는 구조적 Protocol(`_RevisableNotifier`, `@runtime_checkable`)로만
+호출해서 "Telegram이라는 단어를 모르는 port" 원칙(§11.6)을 지켰다. `POST
+/applications/{id}/revise`(REST, 텔레그램 없이도 트리거 가능)도 approve/reject와 같은 모양으로
+얹었다.
+
 **공고 수집·매칭** (M1과 별도 트랙) — `JobSource`(wanted/saramin/jasoseol) + 순수 domain
 매칭(`job_screening`/`job_applicability`) + `JobCollectionWorkflow` + Temporal Schedule(cron)
 배선까지 구현됨. `uv run python -m auto_apply.cli collect-schedule`로 등록/갱신(idempotent),

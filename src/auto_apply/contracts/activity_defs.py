@@ -16,9 +16,11 @@ from auto_apply.contracts.dto import (
     ExecuteInput,
     ExecutionResult,
     GenerateResumeRequest,
+    GuidePatchProposal,
     JobRef,
     NotifyEvent,
     PersistState,
+    ProposeGuidePatchRequest,
     RenderedPdf,
     ResumeDraft,
     ReviewRequest,
@@ -49,6 +51,16 @@ async def generate_resume(req: GenerateResumeRequest) -> ResumeDraft:
 
 @activity.defn(name="review_resume")
 async def review_resume(req: ReviewRequest) -> ReviewVerdict:
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="propose_guide_patch")
+async def propose_guide_patch(req: ProposeGuidePatchRequest) -> GuidePatchProposal:
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="apply_guide_patch")
+async def apply_guide_patch(patch: GuidePatchProposal) -> None:
     raise NotImplementedError(_ONLY)
 
 

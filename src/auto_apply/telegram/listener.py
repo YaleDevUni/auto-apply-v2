@@ -15,15 +15,23 @@ offset 을 재시작 사이에 영속화하지 않는다 — nonce 가 1회성 �
 """
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import structlog
 
-from auto_apply.bootstrap import build_container
+from auto_apply.bootstrap import Container, build_container
 from auto_apply.config import load_settings
-from auto_apply.telegram.bridge import MalformedCallback, handle_callback_query
+from auto_apply.telegram.bridge import (
+    CallbackOutcome,
+    MalformedCallback,
+    handle_callback_query,
+    handle_message,
+)
 from auto_apply.temporal_config import DATA_CONVERTER
+
+if TYPE_CHECKING:
+    from temporalio.client import Client
 
 log = structlog.get_logger(__name__)
 
@@ -36,7 +44,7 @@ async def _fetch_updates(
 ) -> list[dict[str, Any]]:
     params: dict[str, str | int] = {
         "timeout": _POLL_TIMEOUT_S,
-        "allowed_updates": '["callback_query"]',
+        "allowed_updates": '["callback_query","message"]',
     }
     if offset is not None:
         params["offset"] = offset
@@ -77,17 +85,26 @@ async def main() -> None:
 
             for update in updates:
                 offset = int(update["update_id"]) + 1
-                callback = update.get("callback_query")
-                if not callback:
-                    continue
                 try:
-                    outcome = await handle_callback_query(callback, container, client)
-                except MalformedCallback:
-                    log.warning("telegram.listener.malformed_callback", data=callback)
+                    outcome = await _dispatch(update, container, client)
+                except MalformedCallback as e:
+                    log.warning("telegram.listener.malformed_callback", data=str(e))
+                    continue
+                if outcome is None:
                     continue
                 log.info(
                     "telegram.listener.callback", handled=outcome.handled, reason=outcome.reason
                 )
+
+
+async def _dispatch(
+    update: dict[str, Any], container: Container, client: "Client"
+) -> CallbackOutcome | None:
+    if (callback := update.get("callback_query")) is not None:
+        return await handle_callback_query(callback, container, client)
+    if (message := update.get("message")) is not None:
+        return await handle_message(message, container, client)
+    return None
 
 
 if __name__ == "__main__":

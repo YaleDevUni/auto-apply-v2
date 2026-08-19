@@ -13,12 +13,15 @@ from temporalio.worker import Worker
 
 from auto_apply.contracts.dto import (
     ApproveSignal,
+    GuidePatchDecisionSignal,
     RejectSignal,
     RescheduleSignal,
+    ReviseSignal,
     StartApplication,
 )
-from auto_apply.domain.enums import ApplicationState, AttemptOutcome, ExecutionMode
+from auto_apply.domain.enums import ApplicationState, AttemptOutcome, ExecutionMode, RevisionScope
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_AI, QUEUE_BROWSER, QUEUE_DEFAULT
+from auto_apply.workflows import _revision
 from auto_apply.workflows.application import ApplicationWorkflow
 from auto_apply.workflows.resume import ResumeWorkflow
 from tests.conftest import JOB_URL, Harness
@@ -180,6 +183,163 @@ async def test_approve_with_wrong_nonce_is_ignored(env: WorkflowEnvironment):
         result = await handle.result()
 
     assert result.state is ApplicationState.COMPLETED
+
+
+# ─────────────────────────── REVISE(수정요청) ───────────────────────────
+# `applications.status`(projection)는 §4.1 대로 (workflow_run_id, state) 로 멱등 upsert 된다
+# (adapters/repository/memory.py) — REVISE 로 같은 state(generating_resume 등)를 같은
+# 워크플로우 실행 안에서 다시 지나가도 새 행이 아니라 기존 행이 덮어써진다(예약 재조정과
+# 같은 이유, tests_reschedule 참고). 그래서 "라운드가 실제로 돌았다"는 신호는 상태 개수가
+# 아니라 매 라운드 새로 발급되는 decision nonce 로 확인한다.
+async def _wait_new_nonce(h: Harness, seen: set[str]) -> str:
+    """`h.notifier.last_ticket`에 `seen`에 없는 nonce 가 뜰 때까지 기다린다.
+
+    `_wait_state(AWAITING_APPROVAL)`는 `self._state`가 바뀌는 순간(= request_approval activity
+    호출 *전*)에 이미 반환되므로, 첫 nonce 조차 이 폴링 없이는 아직 안 채워져 있을 수 있다
+    (`test_approve_with_wrong_nonce_is_ignored`와 같은 이유).
+    """
+    assert h.notifier is not None
+    for _ in range(300):
+        candidate = h.notifier.last_ticket.get(APP_ID)
+        if candidate is not None and candidate not in seen:
+            return candidate
+        await _tick()
+    raise AssertionError(f"새 nonce 가 발급되지 않았다 (seen={seen})")
+
+
+async def test_revise_specific_regenerates_and_reapproves(env: WorkflowEnvironment):
+    """REVISE(specific) — 재생성 후 다시 승인 대기로 돌아온다. 피드백은 이번 라운드에만 쓰인다."""
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        assert h.notifier is not None
+        first_nonce = await _wait_new_nonce(h, set())
+
+        await handle.signal(
+            ApplicationWorkflow.revise,
+            ReviseSignal(feedback="자기소개를 더 짧게", scope=RevisionScope.SPECIFIC),
+        )
+        second_nonce = await _wait_new_nonce(h, {first_nonce})
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal(nonce=second_nonce))
+        result = await handle.result()
+
+    assert result.state is ApplicationState.COMPLETED
+
+
+async def test_revise_with_stale_nonce_from_previous_round_is_ignored(env: WorkflowEnvironment):
+    """라운드마다 새 nonce 가 발급된다 — 이전 라운드 nonce 로 보낸 승인은 무시돼야 한다."""
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        assert h.notifier is not None
+        first_nonce = await _wait_new_nonce(h, set())
+
+        await handle.signal(
+            ApplicationWorkflow.revise,
+            ReviseSignal(feedback="더 짧게", scope=RevisionScope.SPECIFIC),
+        )
+        second_nonce = await _wait_new_nonce(h, {first_nonce})
+
+        # 1라운드 nonce 로 보낸 승인은 무시돼야 한다 — 여전히 대기 상태여야 한다
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal(nonce=first_nonce))
+        await _tick()
+        state = await handle.query(ApplicationWorkflow.state)
+        assert state.state is ApplicationState.AWAITING_APPROVAL
+
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal(nonce=second_nonce))
+        result = await handle.result()
+
+    assert result.state is ApplicationState.COMPLETED
+
+
+async def test_revise_general_applies_guide_patch_after_second_approval(env: WorkflowEnvironment):
+    """REVISE(general) — 가이드 patch 는 사람이 diff 를 한 번 더 승인해야 반영된다."""
+    h = Harness(
+        guide_patch_payloads=[{"old": "", "new": "항상 존댓말로 쓴다.", "rationale": "사용자 요청"}]
+    )
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        assert h.notifier is not None
+        main_nonce = await _wait_new_nonce(h, set())
+
+        await handle.signal(
+            ApplicationWorkflow.revise,
+            ReviseSignal(feedback="항상 존댓말로 써줘", scope=RevisionScope.GENERAL),
+        )
+
+        # 가이드 patch 2차 승인 요청의 nonce 가 나올 때까지 기다린다 (본 승인 nonce 와 다르다)
+        guide_nonce = await _wait_new_nonce(h, {main_nonce})
+
+        await handle.signal(
+            ApplicationWorkflow.approve_guide_patch, GuidePatchDecisionSignal(nonce=guide_nonce)
+        )
+        # 가이드 반영 → 재생성 → 다시 본 승인 요청, 세 번째 nonce 가 발급된다
+        round2_nonce = await _wait_new_nonce(h, {main_nonce, guide_nonce})
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal(nonce=round2_nonce))
+        result = await handle.result()
+
+        assert h.guide is not None
+        assert await h.guide.get() == "항상 존댓말로 쓴다."
+
+    assert result.state is ApplicationState.COMPLETED
+
+
+async def test_revise_general_rejected_guide_patch_still_regenerates(env: WorkflowEnvironment):
+    """가이드 patch 를 거절해도 이번 라운드 재생성엔 feedback 이 반영된다 — 가이드만 안 바뀐다."""
+    h = Harness(guide_patch_payloads=[{"old": "", "new": "새 규칙", "rationale": "요청"}])
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        assert h.notifier is not None
+        main_nonce = await _wait_new_nonce(h, set())
+
+        await handle.signal(
+            ApplicationWorkflow.revise,
+            ReviseSignal(feedback="이번만 짧게", scope=RevisionScope.GENERAL),
+        )
+        guide_nonce = await _wait_new_nonce(h, {main_nonce})
+
+        await handle.signal(
+            ApplicationWorkflow.reject_guide_patch, GuidePatchDecisionSignal(nonce=guide_nonce)
+        )
+        round2_nonce = await _wait_new_nonce(h, {main_nonce, guide_nonce})
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal(nonce=round2_nonce))
+        result = await handle.result()
+
+        assert h.guide is not None
+        assert await h.guide.get() == ""  # 거절했으니 가이드는 그대로
+
+    assert result.state is ApplicationState.COMPLETED
+
+
+async def test_revise_exceeding_max_rounds_goes_needs_human(env: WorkflowEnvironment):
+    """무한 재생성 루프를 만들지 않는다 — MAX_REVISIONS 를 넘으면 사람에게 넘긴다."""
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        assert h.notifier is not None
+        seen = {await _wait_new_nonce(h, set())}
+
+        for i in range(_revision.MAX_REVISIONS):
+            await handle.signal(
+                ApplicationWorkflow.revise,
+                ReviseSignal(feedback=f"피드백 {i}", scope=RevisionScope.SPECIFIC),
+            )
+            seen.add(await _wait_new_nonce(h, seen))
+
+        # 이번이 MAX_REVISIONS 를 넘는 마지막 REVISE 다 — 더는 재승인 요청이 오지 않는다
+        await handle.signal(
+            ApplicationWorkflow.revise,
+            ReviseSignal(feedback="마지막", scope=RevisionScope.SPECIFIC),
+        )
+        result = await handle.result()
+
+    assert result.state is ApplicationState.NEEDS_HUMAN
+    assert "수정요청" in result.reason
 
 
 # ─────────────────────────── 타이머 / 스케줄 ───────────────────────────

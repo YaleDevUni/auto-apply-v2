@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from auto_apply.api.deps import ContainerDep, TemporalClientDep
-from auto_apply.telegram.bridge import MalformedCallback, handle_callback_query
+from auto_apply.telegram.bridge import MalformedCallback, handle_callback_query, handle_message
 
 router = APIRouter(tags=["telegram"])
 
@@ -23,12 +23,14 @@ async def telegram_webhook(
         raise HTTPException(404, "telegram notifier is not enabled")
 
     body = await request.json()
-    callback = body.get("callback_query")
-    if callback is None:
-        return {"ok": True}  # 이 봇이 다루는 유일한 인바운드는 승인/거절 버튼이다 — 나머지는 무시
-
     try:
-        outcome = await handle_callback_query(callback, c, client)
+        if (callback := body.get("callback_query")) is not None:
+            outcome = await handle_callback_query(callback, c, client)
+        elif (message := body.get("message")) is not None:
+            outcome = await handle_message(message, c, client)
+        else:
+            # 이 봇이 다루는 인바운드는 승인/거절/수정요청 버튼과 REVISE 답장뿐이다 — 나머지는 무시
+            return {"ok": True}
     except MalformedCallback as e:
         raise HTTPException(400, "malformed callback_data") from e
     return {"ok": True, "handled": outcome.handled, "reason": outcome.reason}

@@ -168,3 +168,85 @@ async def test_webhook_disabled_when_notifier_is_not_telegram(client):
     resp = await ac.post("/telegram/webhook", json={"callback_query": {}})
 
     assert resp.status_code == 404
+
+
+# ──────────────── REVISE(수정요청): 버튼 → scope 선택 → ForceReply 답장 ────────────────
+def _revise_start_body(application_id: str, nonce: str, chat_id: int) -> dict[str, Any]:
+    return _callback_body("v", application_id, nonce, chat_id)
+
+
+def _scope_choice_body(application_id: str, scope: str, nonce: str, chat_id: int) -> dict[str, Any]:
+    return {
+        "callback_query": {
+            "id": "cbq_2",
+            "from": {"id": chat_id},
+            "data": f"vs:{application_id}:{scope}:{nonce}",
+        }
+    }
+
+
+def _revise_reply_body(prompt_text: str, feedback: str, chat_id: int) -> dict[str, Any]:
+    return {
+        "message": {
+            "from": {"id": chat_id},
+            "text": feedback,
+            "reply_to_message": {"text": prompt_text},
+        }
+    }
+
+
+async def test_revise_button_flow_reaches_awaiting_approval_again(client):
+    """v 버튼 → scope 선택 → ForceReply 답장 — 전 구간이 signal 로 이어져 재생성된다."""
+    ac, env, h = client
+    handle, nonce = await _awaiting_approval_with_nonce(env, h)
+
+    v_resp = await ac.post(
+        "/telegram/webhook", json=_revise_start_body(APP_ID, nonce, ALLOWED_CHAT_ID)
+    )
+    assert v_resp.status_code == 200
+
+    vs_resp = await ac.post(
+        "/telegram/webhook", json=_scope_choice_body(APP_ID, "specific", nonce, ALLOWED_CHAT_ID)
+    )
+    assert vs_resp.status_code == 200
+
+    prompt_text = f"[revise:{APP_ID}:{nonce}:specific]"
+    reply_resp = await ac.post(
+        "/telegram/webhook",
+        json=_revise_reply_body(prompt_text, "자기소개를 더 짧게", ALLOWED_CHAT_ID),
+    )
+    assert reply_resp.status_code == 200
+    assert reply_resp.json()["handled"] is True
+
+    # 재생성이 끝나면 새 nonce 로 다시 승인을 요청한다 — 두 번째 nonce 가 뜰 때까지 기다린다
+    second_nonce = None
+    for _ in range(300):
+        candidate = h.notifier.last_ticket.get(APP_ID)
+        if candidate is not None and candidate != nonce:
+            second_nonce = candidate
+            break
+        await asyncio.sleep(0.05)
+    assert second_nonce is not None, "REVISE 이후 재승인 요청이 안 왔다"
+
+    resp = await ac.post(
+        "/telegram/webhook", json=_callback_body("a", APP_ID, second_nonce, ALLOWED_CHAT_ID)
+    )
+    assert resp.status_code == 200
+    result = await handle.result()
+    assert result.state is ApplicationState.COMPLETED
+
+
+async def test_revise_reply_without_matching_tag_is_ignored(client):
+    """태그가 안 붙은 일반 답장(REVISE 프롬프트가 아닌 메시지에 대한 답)은 조용히 무시된다."""
+    ac, env, h = client
+    handle, _nonce = await _awaiting_approval_with_nonce(env, h)
+
+    resp = await ac.post(
+        "/telegram/webhook",
+        json=_revise_reply_body("아무 태그도 없는 메시지", "이건 무시돼야 한다", ALLOWED_CHAT_ID),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["handled"] is False
+
+    view = await handle.query(ApplicationWorkflow.state)
+    assert view.state is ApplicationState.AWAITING_APPROVAL

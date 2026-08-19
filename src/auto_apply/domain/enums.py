@@ -61,6 +61,19 @@ class AttemptOutcome(StrEnum):
 class DecisionKind(StrEnum):
     APPROVE = "approve"
     REJECT = "reject"
+    REVISE = "revise"  # 텔레그램 3번째 갈래(수정요청) — RevisionScope 로 반영 범위를 가른다
+
+
+class RevisionScope(StrEnum):
+    """REVISE 피드백의 저장 위치를 가른다 (메모리 resume-revise-feedback-design 참고).
+
+    SPECIFIC 은 이번 workflow 인스턴스의 재생성에만 쓰이고 영속 저장되지 않는다. GENERAL 은
+    config/resume_guide.md 에 반영돼 앞으로 모든 이력서 생성에 영향을 준다 — 되돌리기 어려운
+    레버라 사람이 diff 를 한 번 더 승인해야 반영된다.
+    """
+
+    SPECIFIC = "specific"
+    GENERAL = "general"
 
 
 class BlockerCode(StrEnum):

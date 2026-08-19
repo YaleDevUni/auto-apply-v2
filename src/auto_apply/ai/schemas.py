@@ -34,3 +34,14 @@ class ResumeContentSchema(_Frozen):
     highlights: list[ResumeHighlight] = Field(default_factory=list)
     blocks: list[BlockBullets] = Field(default_factory=list)
     ai_usage: list[ResumeHighlight] = Field(default_factory=list)
+
+
+class GuidePatchSchema(_Frozen):
+    """이력서 가이드 치환 제안. 전문을 다시 쓰게 하지 않는다(domain/guide_patch.py 참고) —
+
+    `old`는 가이드 본문에서 정확히 그대로 인용해야 한다(활동 계층이 문자열 일치로 검증한다).
+    """
+
+    old: str
+    new: str
+    rationale: str = ""

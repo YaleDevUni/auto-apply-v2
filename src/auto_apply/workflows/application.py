@@ -11,7 +11,6 @@ from functools import partial
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ChildWorkflowError
 
 from auto_apply.contracts.activity_defs import (
     collect_job,
@@ -19,7 +18,6 @@ from auto_apply.contracts.activity_defs import (
     load_active_recipe,
     notify,
     persist_state,
-    render_pdf,
     request_approval,
 )
 from auto_apply.contracts.dto import (
@@ -27,23 +25,27 @@ from auto_apply.contracts.dto import (
     ApproveSignal,
     Decision,
     DecisionRequest,
-    GenerateResumeRequest,
+    GuidePatchDecisionSignal,
+    GuidePatchProposal,
     JobRef,
     NotifyEvent,
     PersistState,
     RejectSignal,
     RescheduleSignal,
+    ReviseSignal,
     StartApplication,
     StateView,
 )
-from auto_apply.domain.enums import ApplicationState, DecisionKind
-from auto_apply.workflows import _execution
-from auto_apply.workflows.resume import ResumeWorkflow
-
-QUEUE_AI = "ai"
+from auto_apply.domain.enums import ApplicationState, DecisionKind, RevisionScope
+from auto_apply.workflows import _execution, _revision
 
 _QUICK = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
 _PERSIST = RetryPolicy(maximum_attempts=10, initial_interval=timedelta(seconds=1))
+
+
+def _guide_patch_summary(proposal: GuidePatchProposal) -> str:
+    before = proposal.old or "(새 규칙 추가)"
+    return f"- 기존: {before}\n+ 변경: {proposal.new}\n\n사유: {proposal.rationale or '(없음)'}"
 
 
 @workflow.defn
@@ -52,6 +54,10 @@ class ApplicationWorkflow:
         self._state: ApplicationState = ApplicationState.COLLECTING
         self._decision: Decision | None = None
         self._decision_nonce: str | None = None
+        # 가이드 patch 2차 승인용 슬롯 — 본 승인/거절과 nonce/decision 을 분리해 둔다
+        # (섞으면 "가이드 반영 승인" 클릭이 "지원 승인"으로 잘못 해석될 수 있다).
+        self._guide_decision: bool | None = None
+        self._guide_nonce: str | None = None
         self._scheduled_at: datetime | None = None
         self._cancelled = False
         self._attempts = 0
@@ -77,34 +83,19 @@ class ApplicationWorkflow:
             return await self._finish(cmd, ApplicationState.REJECTED, verdict.reason)
 
         # ── 이력서 (child workflow: UI 에서 따로 추적·재실행 가능) ──
-        await self._persist(cmd, ApplicationState.GENERATING_RESUME)
-        try:
-            draft = await workflow.execute_child_workflow(
-                ResumeWorkflow.run,
-                GenerateResumeRequest(
-                    application_id=cmd.application_id, user_id=cmd.user_id, job=job
-                ),
-                id=f"resume-{cmd.application_id}-1",
-                task_queue=QUEUE_AI,
-            )
-        except ChildWorkflowError as e:
-            return await self._finish(cmd, ApplicationState.NEEDS_HUMAN, f"이력서 실패: {e.cause}")
+        generated = await self._generate_resume(cmd, job, feedback="", round_no=1)
+        if generated is None:
+            return await self._finish(cmd, ApplicationState.NEEDS_HUMAN, "이력서 생성 실패")
 
-        await self._persist(cmd, ApplicationState.RENDERING_PDF)
-        pdf = await workflow.execute_activity(
-            render_pdf,
-            draft,
-            start_to_close_timeout=timedelta(minutes=5),
-            task_queue=QUEUE_AI,
-            retry_policy=_QUICK,
-        )
-
-        # ── Human-in-the-loop ──
-        decision = await self._await_decision(cmd, job, pdf.blob_key)
+        # ── Human-in-the-loop: 승인 / 거절 / 수정요청(REVISE) ──
+        decision, generated = await self._approval_loop(cmd, job, generated)
         if decision is None:
             return await self._finish(cmd, ApplicationState.EXPIRED, "승인 대기 시간 초과")
         if decision.kind is DecisionKind.REJECT:
             return await self._finish(cmd, ApplicationState.REJECTED, decision.reason)
+        if decision.kind is DecisionKind.REVISE:
+            # _approval_loop 가 MAX_REVISIONS 초과/재생성 실패로 포기하고 반환한 경우다.
+            return await self._finish(cmd, ApplicationState.NEEDS_HUMAN, decision.reason)
 
         # ── Durable timer ──
         self._scheduled_at = decision.scheduled_at or workflow.now()
@@ -112,9 +103,87 @@ class ApplicationWorkflow:
             return await self._finish(cmd, ApplicationState.CANCELLED, "사용자 취소")
 
         # ── 실행 ──
-        return await self._execute(cmd, job, pdf.blob_key)
+        return await self._execute(cmd, job, generated.pdf.blob_key)
 
     # ─────────────────────── 단계별 헬퍼 ───────────────────────
+    async def _generate_resume(
+        self, cmd: StartApplication, job: JobRef, *, feedback: str, round_no: int
+    ) -> _revision.GeneratedResume | None:
+        await self._persist(cmd, ApplicationState.GENERATING_RESUME)
+        try:
+            return await _revision.generate_and_render(
+                cmd,
+                job,
+                feedback=feedback,
+                round_no=round_no,
+                persist=lambda state: self._persist(cmd, state),
+            )
+        except _revision.ResumeGenerationFailed:
+            return None
+
+    async def _approval_loop(
+        self, cmd: StartApplication, job: JobRef, generated: _revision.GeneratedResume
+    ) -> tuple[Decision | None, _revision.GeneratedResume]:
+        """승인/거절이 나올 때까지 REVISE 를 반복한다. `MAX_REVISIONS`를 넘으면 포기하고
+
+        REVISE 인 채로 반환한다 — 호출자가 그 경우를 NEEDS_HUMAN 으로 마무리한다.
+        """
+        revisions = 0
+        while True:
+            decision = await self._await_decision(cmd, job, generated.pdf.blob_key)
+            if decision is None or decision.kind is not DecisionKind.REVISE:
+                return decision, generated
+
+            self._decision = None  # 다음 라운드를 위해 idempotency 슬롯을 다시 비운다
+            revisions += 1
+            if revisions > _revision.MAX_REVISIONS:
+                reason = f"수정요청이 {_revision.MAX_REVISIONS}회를 넘었다"
+                return Decision(kind=DecisionKind.REVISE, reason=reason), generated
+
+            if decision.scope is RevisionScope.GENERAL:
+                await _revision.revise_guide(
+                    cmd,
+                    job,
+                    decision.feedback,
+                    await_guide_decision=lambda p: self._await_guide_patch_decision(cmd, job, p),
+                    notify=lambda kind, msg: self._notify(cmd, kind, msg),
+                )
+
+            next_generated = await self._generate_resume(
+                cmd, job, feedback=decision.feedback, round_no=revisions + 1
+            )
+            if next_generated is None:
+                reason = "이력서 재생성 실패"
+                return Decision(kind=DecisionKind.REVISE, reason=reason), generated
+            generated = next_generated
+
+    async def _await_guide_patch_decision(
+        self, cmd: StartApplication, job: JobRef, proposal: GuidePatchProposal
+    ) -> bool:
+        ticket = await workflow.execute_activity(
+            request_approval,
+            DecisionRequest(
+                application_id=cmd.application_id,
+                workflow_id=workflow.info().workflow_id,
+                title=f"{job.company} / {job.title} — 이력서 가이드 수정 제안",
+                summary=_guide_patch_summary(proposal),
+                guide_patch=True,
+            ),
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=_QUICK,
+        )
+        self._guide_nonce = ticket.nonce
+        try:
+            await workflow.wait_condition(
+                lambda: self._guide_decision is not None,
+                timeout=timedelta(hours=cmd.approval_timeout_hours),
+            )
+        except TimeoutError:
+            return False
+        approved = bool(self._guide_decision)
+        self._guide_decision = None  # 다음 REVISE(general) 라운드를 위해 슬롯을 비운다
+        return approved
+
     async def _await_decision(
         self, cmd: StartApplication, job: JobRef, pdf_key: str
     ) -> Decision | None:
@@ -193,15 +262,15 @@ class ApplicationWorkflow:
             persist=lambda state: self._persist(cmd, state),
         )
         if outcome.state is ApplicationState.NEEDS_HUMAN:
-            await self._notify_needs_human(cmd, outcome.reason)
+            await self._notify(cmd, "NEEDS_HUMAN", outcome.reason)
         return await self._finish(
             cmd, outcome.state, outcome.reason, submitted_at=outcome.submitted_at
         )
 
-    async def _notify_needs_human(self, cmd: StartApplication, reason: str) -> None:
+    async def _notify(self, cmd: StartApplication, kind: str, message: str) -> None:
         await workflow.execute_activity(
             notify,
-            NotifyEvent(kind="NEEDS_HUMAN", application_id=cmd.application_id, message=reason),
+            NotifyEvent(kind=kind, application_id=cmd.application_id, message=message),
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_QUICK,
         )
@@ -248,6 +317,9 @@ class ApplicationWorkflow:
         """
         return not nonce or nonce == self._decision_nonce
 
+    def _guide_nonce_ok(self, nonce: str) -> bool:
+        return not nonce or nonce == self._guide_nonce
+
     @workflow.signal
     def approve(self, sig: ApproveSignal) -> None:
         if self._decision is None and self._nonce_ok(sig.nonce):  # 중복 승인 무시 = 멱등
@@ -257,6 +329,23 @@ class ApplicationWorkflow:
     def reject(self, sig: RejectSignal) -> None:
         if self._decision is None and self._nonce_ok(sig.nonce):
             self._decision = Decision(kind=DecisionKind.REJECT, reason=sig.reason)
+
+    @workflow.signal
+    def revise(self, sig: ReviseSignal) -> None:
+        if self._decision is None and self._nonce_ok(sig.nonce):
+            self._decision = Decision(
+                kind=DecisionKind.REVISE, feedback=sig.feedback, scope=sig.scope
+            )
+
+    @workflow.signal
+    def approve_guide_patch(self, sig: GuidePatchDecisionSignal) -> None:
+        if self._guide_decision is None and self._guide_nonce_ok(sig.nonce):
+            self._guide_decision = True
+
+    @workflow.signal
+    def reject_guide_patch(self, sig: GuidePatchDecisionSignal) -> None:
+        if self._guide_decision is None and self._guide_nonce_ok(sig.nonce):
+            self._guide_decision = False
 
     @workflow.signal
     def reschedule(self, sig: RescheduleSignal) -> None:

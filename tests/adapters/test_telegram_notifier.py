@@ -9,7 +9,8 @@ tests/api/test_telegram_webhook_api.py 참고. 여기서는 Telegram 고유 표�
 from auto_apply.adapters.clock.system import UuidIdGen
 from auto_apply.adapters.notifier.telegram import TelegramNotifier
 from auto_apply.contracts.dto import DecisionRequest, NotifyEvent
-from telegram import InlineKeyboardMarkup
+from auto_apply.domain.enums import RevisionScope
+from telegram import ForceReply, InlineKeyboardMarkup
 
 
 class FakeBot:
@@ -48,9 +49,57 @@ async def test_request_decision_callback_data_encodes_app_id_and_nonce() -> None
 
     markup = bot.sent[0]["reply_markup"]
     assert isinstance(markup, InlineKeyboardMarkup)
-    approve, reject = markup.inline_keyboard[0]
+    approve, reject, revise = markup.inline_keyboard[0]
     assert approve.callback_data == f"a:app_1:{ticket.nonce}"
     assert reject.callback_data == f"r:app_1:{ticket.nonce}"
+    assert revise.callback_data == f"v:app_1:{ticket.nonce}"
+
+
+async def test_guide_patch_decision_has_only_approve_reject_no_revise() -> None:
+    """가이드 patch 승인은 중첩 승인이라 REVISE 버튼이 없다."""
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="이력서 가이드 수정 제안",
+        summary="- 기존: (없음)\n+ 변경: 항상 존댓말로 쓴다.",
+        guide_patch=True,
+    )
+
+    ticket = await notifier.request_decision(req)
+
+    markup = bot.sent[0]["reply_markup"]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    buttons = markup.inline_keyboard[0]
+    assert len(buttons) == 2
+    apply_btn, ignore_btn = buttons
+    assert apply_btn.callback_data == f"ga:app_1:{ticket.nonce}"
+    assert ignore_btn.callback_data == f"gr:app_1:{ticket.nonce}"
+
+
+async def test_send_scope_picker_encodes_specific_and_general_options() -> None:
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+
+    await notifier.send_scope_picker("app_1", "nonce_1")
+
+    markup = bot.sent[0]["reply_markup"]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    specific, general = markup.inline_keyboard[0]
+    assert specific.callback_data == "vs:app_1:specific:nonce_1"
+    assert general.callback_data == "vs:app_1:general:nonce_1"
+
+
+async def test_send_feedback_prompt_uses_force_reply_and_encodes_context() -> None:
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+
+    await notifier.send_feedback_prompt("app_1", "nonce_1", RevisionScope.GENERAL)
+
+    sent = bot.sent[0]
+    assert isinstance(sent["reply_markup"], ForceReply)
+    assert "[revise:app_1:nonce_1:general]" in sent["text"]
 
 
 async def test_notify_sends_plain_message_without_keyboard() -> None:
