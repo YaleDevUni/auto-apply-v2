@@ -105,6 +105,48 @@ def test_select_relevant_blocks_keeps_all_career_and_ranks_projects():
     )
     selected = select_relevant_blocks(blocks, "React 프론트엔드 개발자 채용", max_projects=1)
     ids = {b.id for b in selected}
-    assert {"acme:api", "acme:devops"} <= ids  # 경력은 전부 유지
+    # 경력 블록 2개는 기본 상한(max_career_blocks_per_entity=4) 안이라 둘 다 유지된다.
+    assert {"acme:api", "acme:devops"} <= ids
     assert "proj-x:main" in ids  # React 겹침 점수가 더 높은 프로젝트만 선택
     assert "proj-y:main" not in ids
+
+
+def test_select_relevant_blocks_caps_career_per_entity_by_relevance():
+    """회귀 테스트: 회사 하나에 세부 블록이 많으면(실측 — GTC 5개) 그 회사만 이력서에서
+
+    압도적으로 길어진다. 개인 프로젝트처럼 회사(entity)당 관련도 상위 N개로 줄인다 — 회사
+    자체를 솎아내진 않는다, 그 회사 안 블록 개수만 줄인다.
+    """
+    blocks = group_facts_for_resume([FACT_ROLE, FACT_API, FACT_DEVOPS])
+    selected = select_relevant_blocks(blocks, "FastAPI 백엔드 채용", max_career_blocks_per_entity=1)
+    ids = {b.id for b in selected}
+    assert ids == {"acme:api"}  # FastAPI 겹침 점수가 더 높은 블록만 남는다
+
+
+def test_select_relevant_blocks_caps_career_per_entity_independently():
+    """entity 가 여러 개면 회사마다 따로 상한이 적용된다 — 한 회사가 많다고 다른 회사가
+
+    깎이지 않는다.
+    """
+    other_role = Fact(
+        id="other-role",
+        user_id="u1",
+        kind="experience",
+        content="Other 에서 근무했다.",
+        entity="other",
+        entity_label="Other Inc.",
+    )
+    other_block = Fact(
+        id="other-block",
+        user_id="u1",
+        kind="experience",
+        content="배포를 담당했다.",
+        entity="other",
+        block="ops",
+        block_label="운영",
+    )
+    blocks = group_facts_for_resume([FACT_ROLE, FACT_API, FACT_DEVOPS, other_role, other_block])
+    selected = select_relevant_blocks(blocks, "", max_career_blocks_per_entity=1)
+    ids = {b.id for b in selected}
+    assert "other:ops" in ids  # other 는 블록이 1개뿐이라 그대로 유지
+    assert len([i for i in ids if i.startswith("acme:")]) == 1  # acme 는 1개로 줄어든다

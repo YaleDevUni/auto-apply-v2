@@ -288,8 +288,17 @@ flowchart LR
   (`domain/resume_blocks.group_facts_for_resume` → `FactBlock`), LLM은 그 블록 안에서 불릿
   문장만 쓴다(`ai/schemas.py`의 `BlockBullets`, 프롬프트가 block_id를 그대로 인용하도록 강제) —
   Recipe/AutomationRecipe와 같은 "AI는 생성만, 판정·조합은 코드" 철학의 연장이다. 개인 프로젝트가
-  여러 개일 수 있어 `select_relevant_blocks`로 job 관련도 상위 N개만 추리고(경력은 전부 유지),
-  `ground_check`는 `career[].blocks[].bullets`/`projects[].bullets`/`ai_usage`까지 재귀적으로
+  여러 개일 수 있어 `select_relevant_blocks`로 job 관련도 상위 N개만 추리고, 경력도 회사(entity)
+  마다 따로 상위 N개로 줄인다(회사 자체를 솎아내진 않는다 — 그 회사 안 세부 블록 개수만 줄인다).
+  처음엔 "경력은 전부 겪은 이력이라 다 보여주는 게 정상"이라 경력을 무제한으로 뒀었는데, 한 회사
+  안에서 fact를 세분화한 `block`이 많아지면(실측 — 한 회사에 세부 이니셔티브 5개) 그 회사만
+  압도적으로 길어지는 문제가 나왔다. REVISE(수정요청)로 "최대 4개로 줄여줘" 피드백이 왔을 때
+  이게 가이드 patch(자연어, `resume_guide.md`)로는 원천적으로 안 고쳐진다는 것도 같이 확인했다 —
+  몇 개 블록이 나오는지는 LLM이 아니라 `select_relevant_blocks`가 결정하기 때문이다. 그래서 상한
+  값 자체를 `Settings`(`RESUME_MAX_PROJECT_BLOCKS`/`RESUME_MAX_CAREER_BLOCKS_PER_ENTITY`, 기본
+  3/4)로 빼서 사람이 `.env`로 조정하게 했다 — 자연어로는 못 바꾸는 숫자 레버라 안전장치 계열
+  (`MAX_REVISIONS` 등)과 같은 자리에 둔다. `ground_check`는 `career[].blocks[].bullets`/
+  `projects[].bullets`/`ai_usage`까지 재귀적으로
   검사하도록 확장했다. 이름·연락처·학력 상세·스킬 태그·언어처럼 **서술이 필요 없는 정형 정보**는
   Fact(LLM 근거)가 아니라 별도 `ProfileSource` port(`config/profile.yaml`, `FactSource`와 동일
   패턴)에서 와서 LLM을 거치지 않고 템플릿에 그대로 꽂힌다. `adapters/resume/_assemble.py`가 이

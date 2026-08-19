@@ -38,6 +38,19 @@ FACT_BLOCK = Fact(
     block_label="결제 API 개발",
     block_period="2023.01 - 2023.06",
 )
+FACT_BLOCK_DEVOPS = Fact(
+    id="exp-block-2",
+    user_id="u1",
+    kind="experience",
+    content="Acme 에서 배포 파이프라인을 구축했다.",
+    keywords=["Docker", "CI/CD"],
+    entity="acme",
+    entity_label="Acme(백엔드 인턴)",
+    entity_period="2023.01 - 2023.12",
+    block="devops",
+    block_label="배포 자동화",
+    block_period="2023.07 - 2023.12",
+)
 PROFILE = Profile(user_id="u1", name="테스터")
 VALID_PAYLOAD = {
     "summary": "FastAPI 경험을 살린 백엔드 엔지니어입니다",
@@ -97,6 +110,40 @@ async def test_generate_passes_guide_and_feedback_into_the_prompt():
     )
     assert "항상 존댓말로 쓴다" in llm.last_prompt
     assert "자기소개를 더 짧게" in llm.last_prompt
+
+
+async def test_generate_caps_career_blocks_per_entity():
+    """회귀 테스트: 가이드 patch(자연어)로는 블록 개수를 못 줄인다 — 이 상한이 유일한 레버다
+
+    (domain/resume_blocks.select_relevant_blocks, [[resume-block-count-cap]]). 회사 하나(acme)
+    에 블록이 2개인데 상한을 1로 주면, LLM 이 둘 다에 대해 불릿을 써서 돌려줘도 관련도가 더
+    높은 블록(FastAPI, job 설명과 겹침) 하나만 최종 이력서에 남아야 한다.
+    """
+    facts = StaticFactSource([FACT_BLOCK, FACT_BLOCK_DEVOPS])
+    payload = {
+        "summary": "FastAPI 경험을 살린 백엔드 엔지니어입니다",
+        "highlights": [],
+        "blocks": [
+            {
+                "block_id": "acme:payment-api",
+                "bullets": [{"text": "결제 API 개발", "fact_ids": []}],
+            },
+            {"block_id": "acme:devops", "bullets": [{"text": "배포 자동화", "fact_ids": []}]},
+        ],
+    }
+    gen = SimpleResumeGenerator(
+        StubLLM(payloads=[payload]),
+        UuidIdGen(),
+        facts,
+        _profile_source(),
+        StaticGuideSource(),
+        max_career_blocks_per_entity=1,
+    )
+    draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
+    career = draft.content["career"]
+    assert len(career) == 1  # 회사(entity) 자체는 그대로 1개
+    blocks = career[0]["blocks"]
+    assert [b["title"] for b in blocks] == ["결제 API 개발"]  # job 설명과 겹치는 블록만 남는다
 
 
 async def test_generate_assembles_block_bullets_into_career_section():

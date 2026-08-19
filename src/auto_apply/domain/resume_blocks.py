@@ -103,26 +103,52 @@ def group_facts_for_resume(facts: list[Fact]) -> list[FactBlock]:
 
 
 def select_relevant_blocks(
-    blocks: list[FactBlock], job_text: str, *, max_projects: int = 3
+    blocks: list[FactBlock],
+    job_text: str,
+    *,
+    max_projects: int = 3,
+    max_career_blocks_per_entity: int = 4,
 ) -> list[FactBlock]:
-    """경력 블록은 전부 포함하고, 개인 프로젝트 블록만 job 관련도로 걸러 상위
-    `max_projects`개로 줄인다.
+    """개인 프로젝트는 전체에서, 경력은 회사(entity)마다 따로 job 관련도 상위 N개로 줄인다.
 
-    경력은 실제로 겪은 이력이라 전부 보여주는 게 정상이지만, 개인 프로젝트는 여러 개일 수
-    있어 지원 공고와 무관한 것까지 다 넣으면 이력서가 산으로 간다 — `select_relevant_facts`와
-    같은 겹침 점수로 우선순위를 매긴다.
+    처음엔 "경력은 실제로 겪은 이력이라 전부 보여주는 게 정상"이라 경력을 무제한으로 뒀었다
+    (git blame 참고). 그런데 한 회사 안에서 fact 를 세분화한 `block` 이 많아지면(예: 한 회사
+    경력에 세부 이니셔티브 5개) 그 회사만 다른 회사보다 압도적으로 길어지는 문제가 실측으로
+    나왔다 — REVISE(수정요청)로 "최대 4개로 줄여줘"라는 피드백이 왔는데, 그건 가이드
+    patch(자연어, `resume_guide.md`)로는 원천적으로 못 고친다: 몇 개 블록이 나오는지는 LLM이
+    아니라 이 함수가 결정하기 때문이다(§CLAUDE.md "AI는 생성만, 판정·조합은 코드"). 그래서
+    개인 프로젝트와 같은 방식(겹침 점수 랭킹 + 상한)을 경력에도 "회사당" 단위로 적용한다 —
+    회사 자체를 솎아내진 않는다(어떤 회사에서 일했는지는 여전히 전부 보여준다), 그 회사 안의
+    세부 블록 개수만 줄인다. 두 상한 모두 자연어로는 못 바꾸는 숫자값이라 호출자
+    (`adapters/resume/simple.py`)가 `config.py`/`.env` 값을 그대로 넘긴다.
     """
     haystack = job_text.casefold()
 
     def _score(b: FactBlock) -> int:
         return sum(1 for kw in b.tech_stack if kw and kw.casefold() in haystack)
 
+    def _top_n(candidates: list[FactBlock], n: int) -> list[FactBlock]:
+        ranked = sorted(candidates, key=_score, reverse=True)
+        return ranked[:n] if ranked and _score(ranked[0]) > 0 else candidates[:n]
+
     career = [b for b in blocks if b.kind == "career"]
     projects = [b for b in blocks if b.kind == "project"]
-    ranked = sorted(projects, key=_score, reverse=True)
-    selected_ids = (
-        {b.id for b in ranked[:max_projects]}
-        if ranked and _score(ranked[0]) > 0
-        else {b.id for b in projects[:max_projects]}
-    )
-    return career + [b for b in projects if b.id in selected_ids]
+
+    career_by_entity: dict[str, list[FactBlock]] = {}
+    for b in career:
+        career_by_entity.setdefault(b.entity, []).append(b)
+    kept_career_ids = {
+        b.id
+        for entity_blocks in career_by_entity.values()
+        for b in _top_n(entity_blocks, max_career_blocks_per_entity)
+    }
+    selected_project_ids = {b.id for b in _top_n(projects, max_projects)}
+
+    # 원래 순서(blocks 인자 순서)를 유지한다 — entity/점수로 재정렬하면 이력서 상 회사 등장
+    # 순서가 흔들린다.
+    return [
+        b
+        for b in blocks
+        if (b.kind == "career" and b.id in kept_career_ids)
+        or (b.kind == "project" and b.id in selected_project_ids)
+    ]

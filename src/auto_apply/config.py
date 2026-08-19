@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     # 가이드 patch 제안 자체에 대한 💬 코멘트 재시도 한도
     max_guide_revisions: int = Field(default=5, ge=1)
 
+    # 이력서 블록 개수 상한 (domain/resume_blocks.select_relevant_blocks) — 자연어 가이드
+    # patch 로는 못 바꾸는 숫자값이라 여기 둔다. 사람이 config/facts.yaml 을 고치지 않고도
+    # "회사 하나에 세부 항목이 너무 많다" 같은 피드백을 반영할 수 있는 유일한 통로다.
+    resume_max_project_blocks: int = Field(default=3, ge=1)
+    resume_max_career_blocks_per_entity: int = Field(default=4, ge=1)
+
     @property
     def allowed_chat_ids(self) -> frozenset[int]:
         raw = (c.strip() for c in self.telegram_allowed_chat_ids.split(","))

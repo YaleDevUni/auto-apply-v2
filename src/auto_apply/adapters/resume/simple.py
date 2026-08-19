@@ -34,6 +34,8 @@ class SimpleResumeGenerator:
         guide: GuideSource,
         *,
         max_reprompts: int = 2,
+        max_project_blocks: int = 3,
+        max_career_blocks_per_entity: int = 4,
     ) -> None:
         self._llm = llm
         self._idgen = idgen
@@ -41,6 +43,8 @@ class SimpleResumeGenerator:
         self._profile = profile
         self._guide = guide
         self._max_reprompts = max_reprompts
+        self._max_project_blocks = max_project_blocks
+        self._max_career_blocks_per_entity = max_career_blocks_per_entity
 
     async def generate(self, req: GenerateResumeRequest) -> ResumeDraft:
         facts = await self._facts.list_for_user(req.user_id)
@@ -49,7 +53,12 @@ class SimpleResumeGenerator:
         job_text = f"{req.job.title}\n{req.job.description}"
 
         relevant = select_relevant_facts(facts, job_text)
-        blocks = select_relevant_blocks(group_facts_for_resume(facts), job_text)
+        blocks = select_relevant_blocks(
+            group_facts_for_resume(facts),
+            job_text,
+            max_projects=self._max_project_blocks,
+            max_career_blocks_per_entity=self._max_career_blocks_per_entity,
+        )
 
         content = await self._structured_with_reprompt(
             build_resume_prompt(req.job, relevant, blocks, guide=guide, feedback=req.feedback)
