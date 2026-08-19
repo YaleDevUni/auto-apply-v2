@@ -263,6 +263,42 @@ async def test_revise_cancel_leaves_original_decision_buttons_usable(client):
     assert result.state is ApplicationState.COMPLETED
 
 
+async def test_revise_feedback_prompt_cancel_leaves_original_decision_buttons_usable(client):
+    """ForceReply 로 자유 텍스트를 입력하는 단계까지 간 뒤에도 취소하면 signal 없이 멈추고,
+
+    원래 nonce 로 그대로 승인할 수 있다 — `send_feedback_prompt`가 뒤이어 보내는 취소
+    버튼이 scope 선택 화면의 `vc`와 같은 콜백을 재사용하기 때문이다.
+    """
+    ac, env, h = client
+    handle, nonce = await _awaiting_approval_with_nonce(env, h)
+
+    v_resp = await ac.post(
+        "/telegram/webhook", json=_revise_start_body(APP_ID, nonce, ALLOWED_CHAT_ID)
+    )
+    assert v_resp.status_code == 200
+
+    vs_resp = await ac.post(
+        "/telegram/webhook", json=_scope_choice_body(APP_ID, "specific", nonce, ALLOWED_CHAT_ID)
+    )
+    assert vs_resp.status_code == 200
+
+    vc_resp = await ac.post(
+        "/telegram/webhook", json=_callback_body("vc", APP_ID, nonce, ALLOWED_CHAT_ID)
+    )
+    assert vc_resp.status_code == 200
+    assert vc_resp.json()["handled"] is True
+
+    view = await handle.query(ApplicationWorkflow.state)
+    assert view.state is ApplicationState.AWAITING_APPROVAL
+
+    resp = await ac.post(
+        "/telegram/webhook", json=_callback_body("a", APP_ID, nonce, ALLOWED_CHAT_ID)
+    )
+    assert resp.status_code == 200
+    result = await handle.result()
+    assert result.state is ApplicationState.COMPLETED
+
+
 async def test_revise_reply_without_matching_tag_is_ignored(client):
     """태그가 안 붙은 일반 답장(REVISE 프롬프트가 아닌 메시지에 대한 답)은 조용히 무시된다."""
     ac, env, h = client

@@ -119,6 +119,20 @@ async def test_send_guide_feedback_prompt_uses_force_reply_and_encodes_context()
     assert "[guiderevise:app_1:nonce_1]" in sent["text"]
 
 
+async def test_send_guide_feedback_prompt_also_sends_cancel_button() -> None:
+    """ForceReply 는 인라인 버튼과 한 메시지에 못 실리므로 취소 버튼은 뒤이은 메시지다."""
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+
+    await notifier.send_guide_feedback_prompt("app_1", "nonce_1")
+
+    cancel_msg = bot.sent[1]
+    markup = cancel_msg["reply_markup"]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    (cancel_btn,) = markup.inline_keyboard[0]
+    assert cancel_btn.callback_data == "gc:app_1:nonce_1"
+
+
 async def test_send_scope_picker_encodes_specific_general_and_cancel_options() -> None:
     bot = FakeBot()
     notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
@@ -142,6 +156,24 @@ async def test_send_feedback_prompt_uses_force_reply_and_encodes_context() -> No
     sent = bot.sent[0]
     assert isinstance(sent["reply_markup"], ForceReply)
     assert "[revise:app_1:nonce_1:general]" in sent["text"]
+
+
+async def test_send_feedback_prompt_also_sends_cancel_button() -> None:
+    """ForceReply 는 인라인 버튼과 한 메시지에 못 실리므로 취소 버튼은 뒤이은 메시지다.
+
+    콜백은 scope 선택 화면의 취소(`vc`)와 같은 액션을 재사용한다 — 원래 승인/거절/수정요청
+    버튼의 nonce 가 이 단계에서도 아직 안 쓰였으므로 처리가 완전히 같다.
+    """
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+
+    await notifier.send_feedback_prompt("app_1", "nonce_1", RevisionScope.SPECIFIC)
+
+    cancel_msg = bot.sent[1]
+    markup = cancel_msg["reply_markup"]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    (cancel_btn,) = markup.inline_keyboard[0]
+    assert cancel_btn.callback_data == "vc:app_1:nonce_1"
 
 
 async def test_answer_callback_query_clears_client_loading_spinner() -> None:
