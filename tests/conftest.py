@@ -77,10 +77,31 @@ class _FakeBot:
 
     def __init__(self) -> None:
         self.sent: list[dict[str, object]] = []
+        self.documents: list[dict[str, object]] = []
         self.answered: list[str] = []
 
     async def send_message(self, chat_id: int, text: str, *, reply_markup: object = None) -> object:
         self.sent.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
+        return object()
+
+    async def send_document(
+        self,
+        chat_id: int,
+        document: bytes,
+        *,
+        filename: str,
+        caption: str = "",
+        reply_markup: object = None,
+    ) -> object:
+        self.documents.append(
+            {
+                "chat_id": chat_id,
+                "document": document,
+                "filename": filename,
+                "caption": caption,
+                "reply_markup": reply_markup,
+            }
+        )
         return object()
 
     async def answer_callback_query(

@@ -8,6 +8,7 @@ tests/api/test_telegram_webhook_api.py 참고. 여기서는 Telegram 고유 표�
 
 from auto_apply.adapters.clock.system import UuidIdGen
 from auto_apply.adapters.notifier.telegram import TelegramNotifier
+from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.contracts.dto import DecisionRequest, NotifyEvent
 from auto_apply.domain.enums import RevisionScope
 from telegram import ForceReply, InlineKeyboardMarkup
@@ -16,10 +17,31 @@ from telegram import ForceReply, InlineKeyboardMarkup
 class FakeBot:
     def __init__(self) -> None:
         self.sent: list[dict[str, object]] = []
+        self.documents: list[dict[str, object]] = []
         self.answered: list[str] = []
 
     async def send_message(self, chat_id: int, text: str, *, reply_markup: object = None) -> object:
         self.sent.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
+        return object()
+
+    async def send_document(
+        self,
+        chat_id: int,
+        document: bytes,
+        *,
+        filename: str,
+        caption: str = "",
+        reply_markup: object = None,
+    ) -> object:
+        self.documents.append(
+            {
+                "chat_id": chat_id,
+                "document": document,
+                "filename": filename,
+                "caption": caption,
+                "reply_markup": reply_markup,
+            }
+        )
         return object()
 
     async def answer_callback_query(
@@ -165,8 +187,51 @@ async def test_request_decision_passes_through_markdown_special_chars() -> None:
 
     await notifier.request_decision(req)
 
-    assert bot.sent[0]["text"] == (
-        "Fixture Inc. / 백엔드_엔지니어* 지원 승인\n"
-        "_짝이_안_맞는_밑줄_\n\n"
-        "resumes/res_293033665fef4ddd.json"
+    assert bot.sent[0]["text"] == ("Fixture Inc. / 백엔드_엔지니어* 지원 승인\n_짝이_안_맞는_밑줄_")
+
+
+async def test_request_decision_attaches_resume_pdf_when_store_has_it() -> None:
+    """PDF 를 텍스트(blob key)로 던지는 대신 실제 바이트를 문서로 첨부한다 — 승인 전에
+
+    이력서 내용을 볼 수 있어야 한다는 요구.
+    """
+    store = InMemoryBlobStore()
+    await store.put("resumes/res_1.pdf", b"%PDF-fake-bytes")
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot, store=store)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="Wanted / 백엔드 엔지니어 지원 승인",
+        summary="https://wanted.co.kr/jobs/1",
+        artifact_url="resumes/res_1.pdf",
     )
+
+    await notifier.request_decision(req)
+
+    assert bot.sent == []
+    doc = bot.documents[0]
+    assert doc["document"] == b"%PDF-fake-bytes"
+    assert doc["filename"] == "resume_app_1.pdf"
+    # 캡션에 공고 링크(summary)가 그대로 실려서 승인 전에 원본 공고를 다시 볼 수 있다.
+    assert doc["caption"] == "Wanted / 백엔드 엔지니어 지원 승인\nhttps://wanted.co.kr/jobs/1"
+    assert isinstance(doc["reply_markup"], InlineKeyboardMarkup)
+
+
+async def test_request_decision_falls_back_to_text_when_blob_missing() -> None:
+    """조회 실패는 첨부만 포기한다 — 승인 흐름 자체를 막으면 안 된다."""
+    store = InMemoryBlobStore()  # 아무것도 put 하지 않음 → get 이 BlobNotFound
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot, store=store)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="Wanted / 백엔드 엔지니어 지원 승인",
+        summary="https://wanted.co.kr/jobs/1",
+        artifact_url="resumes/missing.pdf",
+    )
+
+    await notifier.request_decision(req)
+
+    assert bot.documents == []
+    assert bot.sent[0]["text"] == "Wanted / 백엔드 엔지니어 지원 승인\nhttps://wanted.co.kr/jobs/1"

@@ -107,7 +107,7 @@ def _build_llm(cfg: Settings) -> LLMClient:
             )
 
 
-def _build_notifier(cfg: Settings, idgen: IdGen) -> Notifier:
+def _build_notifier(cfg: Settings, idgen: IdGen, store: BlobStore) -> Notifier:
     match cfg.notifier:
         case "console":
             return ConsoleNotifier(idgen)
@@ -116,7 +116,9 @@ def _build_notifier(cfg: Settings, idgen: IdGen) -> Notifier:
                 raise ValueError("NOTIFIER=telegram 이면 TELEGRAM_BOT_TOKEN 이 필요하다")
             if not cfg.allowed_chat_ids:
                 raise ValueError("NOTIFIER=telegram 이면 TELEGRAM_ALLOWED_CHAT_IDS 가 필요하다")
-            return TelegramNotifier(cfg.telegram_bot_token, cfg.allowed_chat_ids, idgen)
+            return TelegramNotifier(
+                cfg.telegram_bot_token, cfg.allowed_chat_ids, idgen, store=store
+            )
 
 
 def _build_uow(cfg: Settings) -> Callable[[], UnitOfWork]:
@@ -221,7 +223,7 @@ def build_container(cfg: Settings) -> Container:
         idgen=idgen,
         store=store,
         llm=llm,
-        notifier=_build_notifier(cfg, idgen),
+        notifier=_build_notifier(cfg, idgen, store),
         uow=_build_uow(cfg),
         registry=StaticPlatformRegistry([FixturePlatformAdapter()]),
         recipes=_build_recipes(cfg),

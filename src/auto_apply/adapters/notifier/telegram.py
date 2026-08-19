@@ -8,6 +8,12 @@ nonce 를 여기서 기억하지 않는다 — `ApplicationWorkflow` 가 발급�
 signal 로 직접 검증한다(ports/notifier.py 참고). 이 어댑터는 nonce 를 만들어 버튼에
 실어 보내기만 한다.
 
+`store`(BlobStore)를 선택 주입받는 이유 — `DecisionRequest.artifact_url`은 실제로는 PDF 의
+블롭 키다(S3 미구현이라 지금은 presigned URL 이 아니라 로컬 파일 키). 사람이 승인 버튼을
+누르기 전에 이력서 내용을 실제로 볼 수 있어야 한다는 요구라 텍스트로 키 문자열만 던지는 대신
+그 키로 바이트를 읽어 Telegram 문서 첨부로 보낸다. 조회 실패(`BlobNotFound` 등)나 store 가
+없으면 조용히 텍스트 전용 메시지로 폴백한다 — 첨부가 승인 자체를 막아선 안 된다.
+
 REVISE(수정요청) 흐름의 scope 선택/자유 텍스트 피드백 요청(`send_scope_picker`/
 `send_feedback_prompt`/`send_guide_feedback_prompt`)은 Notifier port 에 없다 — nonce 발급을
 동반하는 `request_decision`과 달리 이 셋은 그냥 안내 메시지라 port 표면을 넓힐 필요가 없다.
@@ -21,7 +27,9 @@ import structlog
 
 from auto_apply.contracts.dto import DecisionRequest, DecisionTicket, NotifyEvent
 from auto_apply.domain.enums import RevisionScope
+from auto_apply.domain.errors import AutoApplyError
 from auto_apply.ports.clock import IdGen
+from auto_apply.ports.storage import BlobStore
 from telegram import Bot, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
 
 log = structlog.get_logger(__name__)
@@ -33,6 +41,16 @@ class _SendsMessages(Protocol):
         chat_id: int,
         text: str,
         *,
+        reply_markup: InlineKeyboardMarkup | ForceReply | None = None,
+    ) -> object: ...
+
+    async def send_document(
+        self,
+        chat_id: int,
+        document: bytes,
+        *,
+        filename: str,
+        caption: str = "",
         reply_markup: InlineKeyboardMarkup | ForceReply | None = None,
     ) -> object: ...
 
@@ -49,10 +67,12 @@ class TelegramNotifier:
         idgen: IdGen,
         *,
         bot: _SendsMessages | None = None,
+        store: BlobStore | None = None,
     ) -> None:
         self._bot: _SendsMessages = bot if bot is not None else Bot(token=token)
         self._chat_ids = chat_ids
         self._idgen = idgen
+        self._store = store
 
     async def request_decision(self, req: DecisionRequest) -> DecisionTicket:
         ticket = DecisionTicket(
@@ -66,17 +86,42 @@ class TelegramNotifier:
         # 평문으로 보낸다 — title/summary/artifact_url 은 스크래핑된 공고 데이터라 마크다운
         # 특수문자(_ * ` 등)를 언제든 포함할 수 있다. parse_mode 를 쓰면 그런 문자가 섞일 때마다
         # "can't find end of the entity" 로 전송 자체가 실패한다 (라이브 스모크테스트로 확인).
+        # summary 에는 공고 링크(job.url)가 이미 실려 온다(workflows/application.py 참고) —
+        # 승인 여부를 판단하려면 원본 공고를 다시 확인할 수 있어야 해서다.
         text = f"{req.title}\n{req.summary}"
-        if req.artifact_url:
-            text += f"\n\n{req.artifact_url}"
+        pdf_bytes = await self._fetch_pdf(req.artifact_url)
         for chat_id in self._chat_ids:
-            await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+            if pdf_bytes is not None:
+                await self._bot.send_document(
+                    chat_id=chat_id,
+                    document=pdf_bytes,
+                    filename=f"resume_{req.application_id}.pdf",
+                    caption=text,
+                    reply_markup=keyboard,
+                )
+            else:
+                await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
         log.info(
             "telegram.decision_requested",
             application_id=req.application_id,
             guide_patch=req.guide_patch,
+            attached_pdf=pdf_bytes is not None,
         )
         return ticket
+
+    async def _fetch_pdf(self, blob_key: str | None) -> bytes | None:
+        """승인 버튼을 누르기 전에 이력서 내용을 실제로 볼 수 있어야 한다는 요구.
+
+        조회 실패는 첨부만 포기하고 텍스트 메시지는 그대로 나가야 한다 — 승인 흐름 자체를
+        막아서는 안 된다.
+        """
+        if not blob_key or self._store is None:
+            return None
+        try:
+            return await self._store.get(blob_key)
+        except AutoApplyError:
+            log.warning("telegram.pdf_attach_failed", blob_key=blob_key)
+            return None
 
     async def notify(self, event: NotifyEvent) -> None:
         text = f"[{event.kind}]"
