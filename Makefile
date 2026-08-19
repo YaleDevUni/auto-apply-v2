@@ -7,6 +7,7 @@ help: ## 사용 가능한 명령
 setup: ## 의존성 설치 + .env 생성
 	uv sync
 	@test -f .env || (cp .env.example .env && echo "→ .env 생성됨")
+	@test -f config/facts.yaml || (cp config/facts.example.yaml config/facts.yaml && echo "→ config/facts.yaml 생성됨 (실제 이력으로 채울 것)")
 
 up: ## 인프라 기동 (postgres/temporal/temporal-ui/minio)
 	docker compose up -d

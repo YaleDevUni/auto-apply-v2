@@ -480,7 +480,9 @@ auto-apply-v2/
 ├── alembic/
 ├── config/
 │   ├── matching.yaml             하드컷/트랙/스코어링 규칙 — 사용자의 직무 취향 데이터 (§11.2b)
-│   └── facts.yaml                이력서 생성의 유일한 사실 원천 — 사람이 직접 채운다 (§2.3, §4)
+│   └── facts.yaml                이력서 생성의 유일한 사실 원천 — 사람이 직접 채운다 (§2.3, §4).
+│                                  개인정보라 gitignore 대상. facts.example.yaml(형식만, git 추적)을
+│                                  복사해서 만든다 — .env.example과 같은 패턴
 ├── src/auto_apply/
 │   ├── api/                      FastAPI (routers, deps, schemas)
 │   ├── telegram/                 bot handlers, keyboards, nonce

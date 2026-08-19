@@ -21,6 +21,9 @@ htmlcov/
 *.pem
 storage_state*.json
 
+# 실제 이력 데이터 (개인정보) — config/facts.example.yaml 이 대신 형식만 공유한다
+config/facts.yaml
+
 # Local data (LocalBlobStore, sqlite, snapshots)
 var/
 data/

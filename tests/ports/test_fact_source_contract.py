@@ -68,8 +68,12 @@ async def test_static_source_returns_empty_by_default():
     assert await StaticFactSource().list_for_user("u1") == []
 
 
-async def test_repo_facts_yaml_is_valid():
-    """실제 config/facts.yaml(placeholder 템플릿)이 스키마를 통과하는지 확인한다."""
-    facts = await YamlFactSource(REPO_ROOT / "config" / "facts.yaml").list_for_user("default")
+async def test_repo_facts_example_yaml_is_valid():
+    """config/facts.example.yaml(placeholder 템플릿, git 추적)이 스키마를 통과하는지 확인한다.
+
+    실제 config/facts.yaml은 개인정보라 gitignore 대상이라 여기서 검증할 수 없다.
+    """
+    path = REPO_ROOT / "config" / "facts.example.yaml"
+    facts = await YamlFactSource(path).list_for_user("default")
     assert len(facts) >= 1
     assert all(f.user_id == "default" for f in facts)
