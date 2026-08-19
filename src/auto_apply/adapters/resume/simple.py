@@ -49,7 +49,7 @@ class SimpleResumeGenerator:
     async def generate(self, req: GenerateResumeRequest) -> ResumeDraft:
         facts = await self._facts.list_for_user(req.user_id)
         profile = await self._profile.get(req.user_id)
-        guide = await self._guide.get()
+        guide = await self._guide.get(req.job.platform)
         job_text = f"{req.job.title}\n{req.job.description}"
 
         relevant = select_relevant_facts(facts, job_text)

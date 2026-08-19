@@ -117,11 +117,16 @@ class ProposeGuidePatchRequest(_Frozen):
 
 
 class GuidePatchProposal(_Frozen):
-    """LLM 출력. 전문이 아니라 치환 쌍만 — apply_guide_patch 가 정확히 1번 매치될 때만 반영한다."""
+    """LLM 출력 + platform. 전문이 아니라 치환 쌍만 — apply_guide_patch 가 정확히 1번 매치될 때만
+
+    반영한다. `platform`은 어느 `resume_guide.{platform}.md`에 적용할지를 propose 에서 apply 까지
+    activity 경계를 넘어 들고 가는 값이다(활동 인자는 하나뿐이라 여기 실어야 한다).
+    """
 
     old: str
     new: str
     rationale: str = ""
+    platform: str = ""
 
 
 # ── Execution ────────────────────────────────────────────────────────────

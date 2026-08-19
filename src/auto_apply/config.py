@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     matching_config_path: Path = Path("./config/matching.yaml")
     facts_path: Path = Path("./config/facts.yaml")
     profile_path: Path = Path("./config/profile.yaml")
-    resume_guide_path: Path = Path("./config/resume_guide.md")
+    resume_guide_dir: Path = Path("./config")  # resume_guide.{platform}.md 를 이 안에서 찾는다
 
     # 공고 수집 Schedule (§11.2b) — `cli.py collect-schedule`이 이 값으로 등록/갱신한다.
     job_collection_cron: str = "0 9 * * *"

@@ -248,9 +248,10 @@ class ApplicationWorkflow:
 - 승인 대기는 무한이 아니라 72시간. 무한 대기 워크플로우가 쌓이면 그게 또 운영 부채다.
 - **REVISE(M3 연장)**: 위 의사코드의 2갈래(approve/reject)는 실제로는 3갈래다.
   `DecisionKind.REVISE`가 오면 `RevisionScope.SPECIFIC`(이번 재생성 1회에만, 영속 저장 안 함)
-  /`GENERAL`(`config/resume_guide.md`에 영속 — 단 사람이 diff를 한 번 더 승인해야 반영)로
-  갈라서 이력서를 재생성하고 `awaiting_approval`로 되돌아간다. `MAX_REVISIONS`(3)를 넘으면
-  `needs_human`. 자세한 구현은 CLAUDE.md "M3 연장 — REVISE" 항목과 `workflows/_revision.py`.
+  /`GENERAL`(`config/resume_guide.{platform}.md`에 영속 — 단 사람이 diff를 한 번 더 승인해야
+  반영)로 갈라서 이력서를 재생성하고 `awaiting_approval`로 되돌아간다. 가이드는 `JobRef.platform`
+  별로 파일이 갈린다(§2.3, `GuideSource`) — 지금은 원티드만 실제로 쓴다. `MAX_REVISIONS`(3)를
+  넘으면 `needs_human`. 자세한 구현은 CLAUDE.md "M3 연장 — REVISE" 항목과 `workflows/_revision.py`.
 
 ### 2.3 ResumeWorkflow (AI child)
 
@@ -293,7 +294,7 @@ flowchart LR
   처음엔 "경력은 전부 겪은 이력이라 다 보여주는 게 정상"이라 경력을 무제한으로 뒀었는데, 한 회사
   안에서 fact를 세분화한 `block`이 많아지면(실측 — 한 회사에 세부 이니셔티브 5개) 그 회사만
   압도적으로 길어지는 문제가 나왔다. REVISE(수정요청)로 "최대 4개로 줄여줘" 피드백이 왔을 때
-  이게 가이드 patch(자연어, `resume_guide.md`)로는 원천적으로 안 고쳐진다는 것도 같이 확인했다 —
+  이게 가이드 patch(자연어, `resume_guide.{platform}.md`)로는 원천적으로 안 고쳐진다는 것도 같이 확인했다 —
   몇 개 블록이 나오는지는 LLM이 아니라 `select_relevant_blocks`가 결정하기 때문이다. 그래서 상한
   값 자체를 `Settings`(`RESUME_MAX_PROJECT_BLOCKS`/`RESUME_MAX_CAREER_BLOCKS_PER_ENTITY`, 기본
   3/4)로 빼서 사람이 `.env`로 조정하게 했다 — 자연어로는 못 바꾸는 숫자 레버라 안전장치 계열

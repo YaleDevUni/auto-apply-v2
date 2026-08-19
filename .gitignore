@@ -25,6 +25,10 @@ storage_state*.json
 config/facts.yaml
 config/profile.yaml
 
+# 플랫폼별 이력서 가이드 (사람이 쓴 커스텀 프롬프트) — config/resume_guide.example.md 가 형식만 공유한다
+config/resume_guide.*.md
+!config/resume_guide.example.md
+
 # Local data (LocalBlobStore, sqlite, snapshots)
 var/
 data/

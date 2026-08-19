@@ -198,7 +198,7 @@ def _build_guide(cfg: Settings) -> GuideSource:
         case "static":
             return StaticGuideSource()
         case "file":
-            return FileGuideSource(cfg.resume_guide_path)
+            return FileGuideSource(cfg.resume_guide_dir)
 
 
 def _build_pdf(cfg: Settings, store: BlobStore) -> PdfRenderer:
