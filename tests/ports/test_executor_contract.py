@@ -29,6 +29,7 @@ from auto_apply.ports.executor import RecipeExecutor
 pytestmark = pytest.mark.integration
 
 _PROFILE = {"email": "a@b.com"}
+_TEMPLATED_PROFILE = {"target_label": "Node"}
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,31 @@ def _write_html(path: Path, body: str) -> str:
     return path.as_uri()
 
 
+def _templated_click_recipe(*, goto: str) -> AutomationRecipe:
+    """CLICK 의 selector 안 '{value}' 가 profile 값으로 치환되는지 (§3)."""
+    return AutomationRecipe(
+        platform="fixture",
+        version=1,
+        status="active",
+        form_hash="h-contract-2",
+        actions=[
+            Action(type=ActionType.GOTO, value_literal=goto),
+            Action(
+                type=ActionType.CLICK,
+                selector='button:has-text("{value}")',
+                value_ref="profile.target_label",
+                timeout_ms=300,
+            ),
+            Action(
+                type=ActionType.ASSERT_VISIBLE,
+                selector='#clicked:has-text("node")',
+                timeout_ms=300,
+            ),
+        ],
+        success_signals=["지원이 완료되었습니다"],
+    )
+
+
 def _replay_scenarios() -> dict[str, Scenario]:
     clock = SystemClock()
     recipe = _recipe(goto="https://fixture.local/jobs/1")  # replay 는 실제로 열지 않는다
@@ -71,6 +97,11 @@ def _replay_scenarios() -> dict[str, Scenario]:
         "captcha": Scenario(ReplayExecutor(clock, captcha=True), recipe, ctx),
         "unauthenticated": Scenario(
             ReplayExecutor(clock, authed_platforms=frozenset()), recipe, ctx
+        ),
+        "templated_click": Scenario(
+            ReplayExecutor(clock),
+            _templated_click_recipe(goto="https://fixture.local/jobs/1"),
+            ExecutionContext(application_id="app_1", attempt=1, profile=_TEMPLATED_PROFILE),
         ),
     }
 
@@ -86,6 +117,14 @@ def _playwright_scenarios(tmp_path: Path) -> dict[str, Scenario]:
     )
     form_url = _write_html(tmp_path / "form.html", form_html)
     captcha_url = _write_html(tmp_path / "captcha.html", '<div class="g-recaptcha"></div>')
+    templated_html = (
+        '<button id="btn-python" onclick="'
+        "document.getElementById('clicked').textContent='python'\">Python</button>"
+        '<button id="btn-node" onclick="'
+        "document.getElementById('clicked').textContent='node'\">Node</button>"
+        '<div id="clicked"></div>'
+    )
+    templated_url = _write_html(tmp_path / "templated.html", templated_html)
 
     auth_dir = tmp_path / "auth"
     auth_dir.mkdir()
@@ -103,6 +142,11 @@ def _playwright_scenarios(tmp_path: Path) -> dict[str, Scenario]:
         ),
         "captcha": Scenario(executor(auth_dir), _recipe(goto=captcha_url), ctx),
         "unauthenticated": Scenario(executor(empty_auth_dir), _recipe(goto=form_url), ctx),
+        "templated_click": Scenario(
+            executor(auth_dir),
+            _templated_click_recipe(goto=templated_url),
+            ExecutionContext(application_id="app_1", attempt=1, profile=_TEMPLATED_PROFILE),
+        ),
     }
 
 
@@ -147,3 +191,14 @@ async def test_unauthenticated_raises(scenarios: dict[str, Scenario]) -> None:
     s = scenarios["unauthenticated"]
     with pytest.raises(AuthRequired):
         await s.executor.run(s.recipe, s.ctx, ExecutionMode.LIVE)
+
+
+async def test_templated_click_resolves_selector_from_profile(
+    scenarios: dict[str, Scenario],
+) -> None:
+    """CLICK 의 selector 에 심어둔 '{value}' 가 profile 값으로 치환된 뒤 실행된다 — 지원 건마다
+    달라지는 텍스트(방금 올린 이력서 파일명, 카테고리별 포트폴리오 파일명 등)로 매칭 대상을
+    좁히는 용도(§3)."""
+    s = scenarios["templated_click"]
+    result = await s.executor.run(s.recipe, s.ctx, ExecutionMode.LIVE)
+    assert result.outcome is AttemptOutcome.SUCCEEDED

@@ -57,3 +57,23 @@ def test_timeout_upper_bound_prevents_runaway():
 def test_recipe_without_submit_is_valid_dry_run_shape():
     r = _recipe([Action(type=ActionType.GOTO, value_literal="https://wanted.co.kr/x")])
     assert r.has_submit is False
+
+
+def test_selector_placeholder_requires_a_value_source():
+    with pytest.raises(ValidationError, match="value_ref"):
+        Action(type=ActionType.CLICK, selector='text="{value}"')
+
+
+def test_selector_placeholder_allowed_for_click():
+    Action(type=ActionType.CLICK, selector='text="{value}"', value_literal="포트폴리오")
+
+
+def test_selector_placeholder_rejected_for_fill():
+    """FILL 은 value_ref/value_literal 을 이미 '채울 값' 으로 쓴다 — selector 치환과 겹치면
+    안 되므로 CLICK/WAIT_FOR/ASSERT_VISIBLE 로만 제한한다."""
+    with pytest.raises(ValidationError, match=r"\{value\}"):
+        Action(
+            type=ActionType.FILL,
+            selector='input:below(:text("{value}"))',
+            value_ref="profile.email",
+        )

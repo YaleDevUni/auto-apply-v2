@@ -402,6 +402,16 @@ class AutomationRecipe(BaseModel):
 - `SUBMIT` 액션은 마지막에 1회만. 새 Recipe가 submit 대상 셀렉터를 바꾸면 무조건 human review.
 - `goto` 도메인은 플랫폼 allowlist 내부만.
 - 액션 수·타임아웃 상한 (무한 루프/폭주 방지).
+- `CLICK`/`WAIT_FOR`/`ASSERT_VISIBLE`의 `selector`는 `'{value}'`를 담을 수 있고, 실행 시점에
+  `value_ref`/`value_literal`로 치환된다(`domain/recipe_selector.resolve_selector`, 두
+  executor 구현이 공유). 지원 건마다 달라지는 텍스트(방금 업로드한 이력서 파일명, 카테고리별
+  포트폴리오 파일명 등)로 매칭 대상을 좁혀야 하는데 selector 자체는 Recipe 작성 시점에
+  고정돼야 해서 생긴 장치다. `FILL`/`SELECT`/`UPLOAD`는 이미 같은 필드를 "채울 값"으로
+  쓰고 있어서 제외했다 — wanted 지원 폼을 실제로 붙여보며(§2.4 이전 단계, Recipe 최초
+  작성) 발견했다: 업로드 직후 새로 생긴 리스트 항목이나 카테고리별 포트폴리오는 위치가
+  들쭉날쭉해서 고정 selector로 못 짚는다. `UPLOAD` 액션은 Playwright에 임시파일 경로 대신
+  `{name, mimeType, buffer}`를 직접 넘긴다 — blob key의 마지막 경로 요소를 그대로 파일명으로
+  써서, 플랫폼이 화면에 보여주는 이름과 맞춘다(예전엔 랜덤 임시파일명이 그대로 노출됐다).
 
 **세션/로그인**: 비밀번호를 시스템이 타이핑하지 않는다. 사용자가 최초 1회 수동 로그인한
 Playwright `storage_state`를 암호화 저장하고 만료 시 재요청한다. CAPTCHA를 만나면

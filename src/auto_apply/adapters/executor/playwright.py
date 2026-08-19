@@ -8,7 +8,7 @@ ReplayExecutor 와 완전히 같은 계약을 지킨다 — 그래서 contract t
   - dry_run 은 submit 직전까지만 실행한다 (§2.4)
 """
 
-import tempfile
+import mimetypes
 from datetime import UTC
 from pathlib import Path
 
@@ -20,6 +20,7 @@ from auto_apply.contracts.dto import ExecutionContext, ExecutionResult
 from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.domain.enums import AttemptOutcome, ExecutionMode
 from auto_apply.domain.errors import AuthRequired, CaptchaEncountered, RecipeExecutionError
+from auto_apply.domain.recipe_selector import resolve_selector
 from auto_apply.ports.clock import Clock
 from auto_apply.ports.storage import BlobStore
 
@@ -125,7 +126,9 @@ class PlaywrightExecutor:
     async def _dispatch(
         self, index: int, action: Action, ctx: ExecutionContext, page: Page
     ) -> str | None:
-        locator: Locator | None = page.locator(action.selector) if action.selector else None
+        locator: Locator | None = (
+            page.locator(resolve_selector(action, ctx.profile)) if action.selector else None
+        )
 
         match action.type:
             case ActionType.GOTO:
@@ -143,11 +146,16 @@ class PlaywrightExecutor:
                 )
             case ActionType.UPLOAD:
                 assert locator is not None
-                data = await self._resolve_upload(action, ctx)
-                with tempfile.NamedTemporaryFile(suffix=".upload") as tmp:
-                    tmp.write(data)
-                    tmp.flush()
-                    await locator.set_input_files(tmp.name, timeout=action.timeout_ms)
+                filename, data = await self._resolve_upload(action, ctx)
+                mime_type, _ = mimetypes.guess_type(filename)
+                await locator.set_input_files(
+                    {
+                        "name": filename,
+                        "mimeType": mime_type or "application/octet-stream",
+                        "buffer": data,
+                    },
+                    timeout=action.timeout_ms,
+                )
             case ActionType.WAIT_FOR:
                 assert locator is not None
                 await locator.wait_for(timeout=action.timeout_ms)
@@ -170,12 +178,18 @@ class PlaywrightExecutor:
             raise ValueError(f"프로필에 값이 없다: {action.value_ref}")
         return ctx.profile[key]
 
-    async def _resolve_upload(self, action: Action, ctx: ExecutionContext) -> bytes:
+    async def _resolve_upload(self, action: Action, ctx: ExecutionContext) -> tuple[str, bytes]:
         assert action.value_ref is not None
         key = action.value_ref.removeprefix("upload.")
         if key not in ctx.upload_keys:
             raise ValueError(f"업로드 파일이 없다: {action.value_ref}")
-        return await self._store.get(ctx.upload_keys[key])
+        blob_key = ctx.upload_keys[key]
+        data = await self._store.get(blob_key)
+        # blob key 의 마지막 경로 요소를 그대로 업로드 파일명으로 쓴다 — 플랫폼이 화면에
+        # 그 이름을 그대로 보여주므로(실측, wanted), selector 로 "방금 올린 파일" 을 다시
+        # 찾을 때 이 이름이 매칭 기준이 된다. 원래 tempfile 로 랜덤/확장자 불일치 이름을
+        # 넘기던 버그를 고친 것 — Playwright 는 path 대신 buffer+name 을 직접 받을 수 있다.
+        return Path(blob_key).name, data
 
     async def _check_captcha(
         self, page: Page, recipe: AutomationRecipe, ctx: ExecutionContext

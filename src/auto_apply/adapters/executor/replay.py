@@ -10,6 +10,7 @@ from auto_apply.contracts.dto import ExecutionContext, ExecutionResult
 from auto_apply.contracts.recipe import ActionType, AutomationRecipe
 from auto_apply.domain.enums import AttemptOutcome, ExecutionMode
 from auto_apply.domain.errors import AuthRequired, CaptchaEncountered, RecipeExecutionError
+from auto_apply.domain.recipe_selector import resolve_selector
 from auto_apply.ports.clock import Clock
 
 
@@ -40,12 +41,25 @@ class ReplayExecutor:
 
         artifacts: list[str] = []
         for i, action in enumerate(recipe.actions):
-            if action.selector and action.selector in self._fail_selectors:
-                raise RecipeExecutionError(
-                    f"selector 를 찾을 수 없다: {action.selector}",
-                    snapshot_key=f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/replay.html",
-                    form_hash=recipe.form_hash,
-                )
+            if action.selector:
+                try:
+                    selector = resolve_selector(action, ctx.profile)
+                except ValueError as e:
+                    raise RecipeExecutionError(
+                        str(e),
+                        snapshot_key=(
+                            f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/replay.html"
+                        ),
+                        form_hash=recipe.form_hash,
+                    ) from e
+                if selector in self._fail_selectors:
+                    raise RecipeExecutionError(
+                        f"selector 를 찾을 수 없다: {selector}",
+                        snapshot_key=(
+                            f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/replay.html"
+                        ),
+                        form_hash=recipe.form_hash,
+                    )
             if action.type is ActionType.FILL and action.value_ref:
                 key = action.value_ref.removeprefix("profile.")
                 if key not in ctx.profile:
