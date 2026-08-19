@@ -165,6 +165,11 @@ class TelegramNotifier:
         이 메시지에 답장(reply)하면 Telegram 이 `reply_to_message`로 원문을 그대로 되돌려주므로,
         webhook/리스너 프로세스가 별도 상태를 들고 있지 않아도(§6과 같은 이유) 텍스트만 보고
         어느 요청에 대한 답인지 복원할 수 있다.
+
+        ForceReply 와 인라인 버튼은 한 메시지의 `reply_markup`에 동시에 못 실린다(Bot API 제약) —
+        그래서 취소 버튼은 별도 메시지로 뒤이어 보낸다. 콜백은 scope 선택 화면의 취소(`vc`)와
+        같은 액션을 재사용한다 — 이 단계에서도 원래 승인/거절/수정요청 버튼의 nonce 는 아직
+        소비되지 않았으므로 처리(안내만 보내고 원래 버튼으로 계속 진행 가능)가 완전히 같다.
         """
         label = "이번 지원에만" if scope is RevisionScope.SPECIFIC else "앞으로 모든 이력서에"
         text = (
@@ -172,8 +177,15 @@ class TelegramNotifier:
             f"[revise:{application_id}:{nonce}:{scope.value}]"
         )
         markup = ForceReply(selective=True)
+        cancel_keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("취소", callback_data=f"vc:{application_id}:{nonce}")]]
+        )
+        cancel_text = "취소하려면 아래 버튼을 누르세요."
         for chat_id in self._chat_ids:
             await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
+            await self._bot.send_message(
+                chat_id=chat_id, text=cancel_text, reply_markup=cancel_keyboard
+            )
 
     async def answer_callback_query(self, callback_query_id: str) -> None:
         """버튼을 눌렀을 때 뜨는 "불러오는 중" 스피너를 즉시 꺼준다.
@@ -188,15 +200,23 @@ class TelegramNotifier:
         """가이드 patch 💬 코멘트 버튼을 누른 뒤 — 자유 텍스트 코멘트를 ForceReply 로 받는다.
 
         `send_feedback_prompt`와 같은 이유로 상태를 안 들고(태그를 메시지 본문에 실어 보내고
-        답장에서 복원) 프로세스 경계를 넘나든다.
+        답장에서 복원) 프로세스 경계를 넘나든다. 취소 버튼도 같은 이유로 별도 메시지다 — 다만
+        원래 버튼 안내 문구가 REVISE 와 다르므로(반영/무시/코멘트) 액션은 `gc`로 따로 둔다.
         """
         text = (
             "💬 이 가이드 patch 제안에 대한 코멘트를 입력해 이 메시지에 답장(reply)하세요.\n"
             f"[guiderevise:{application_id}:{nonce}]"
         )
         markup = ForceReply(selective=True)
+        cancel_keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("취소", callback_data=f"gc:{application_id}:{nonce}")]]
+        )
+        cancel_text = "취소하려면 아래 버튼을 누르세요."
         for chat_id in self._chat_ids:
             await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
+            await self._bot.send_message(
+                chat_id=chat_id, text=cancel_text, reply_markup=cancel_keyboard
+            )
 
 
 def _keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:

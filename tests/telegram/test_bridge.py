@@ -27,6 +27,10 @@ def test_parse_accepts_revise_cancel_action():
     assert _parse("vc:app_1:nonce_1") == ("vc", "app_1", "nonce_1")
 
 
+def test_parse_accepts_guide_patch_cancel_action():
+    assert _parse("gc:app_1:nonce_1") == ("gc", "app_1", "nonce_1")
+
+
 def test_parse_rejects_unknown_action():
     with pytest.raises(MalformedCallback):
         _parse("x:app_1:nonce_1")
