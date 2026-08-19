@@ -133,7 +133,12 @@ class TelegramNotifier:
             await self._bot.send_message(chat_id=chat_id, text=text)
 
     async def send_scope_picker(self, application_id: str, nonce: str) -> None:
-        """REVISE 버튼을 누른 뒤 — 이번 지원에만 반영할지, 앞으로 모든 이력서에 반영할지 고른다."""
+        """REVISE 버튼을 누른 뒤 — 이번 지원에만 반영할지, 앞으로 모든 이력서에 반영할지 고른다.
+
+        취소는 별도 signal 이 필요 없다 — 원래 승인/거절/수정요청 버튼이 실린 메시지의 nonce 는
+        이 단계에서 아직 소비되지 않았으므로(수정요청 시작(`v`)도 signal 이 아니다) 취소는
+        그냥 "여기서 멈춘다"는 안내만 보내면 된다(telegram/bridge.py 참고).
+        """
         keyboard = InlineKeyboardMarkup(
             [
                 [
@@ -143,6 +148,7 @@ class TelegramNotifier:
                     InlineKeyboardButton(
                         "항상", callback_data=f"vs:{application_id}:general:{nonce}"
                     ),
+                    InlineKeyboardButton("취소", callback_data=f"vc:{application_id}:{nonce}"),
                 ]
             ]
         )

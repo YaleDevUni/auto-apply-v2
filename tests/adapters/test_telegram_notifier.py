@@ -119,7 +119,7 @@ async def test_send_guide_feedback_prompt_uses_force_reply_and_encodes_context()
     assert "[guiderevise:app_1:nonce_1]" in sent["text"]
 
 
-async def test_send_scope_picker_encodes_specific_and_general_options() -> None:
+async def test_send_scope_picker_encodes_specific_general_and_cancel_options() -> None:
     bot = FakeBot()
     notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
 
@@ -127,9 +127,10 @@ async def test_send_scope_picker_encodes_specific_and_general_options() -> None:
 
     markup = bot.sent[0]["reply_markup"]
     assert isinstance(markup, InlineKeyboardMarkup)
-    specific, general = markup.inline_keyboard[0]
+    specific, general, cancel = markup.inline_keyboard[0]
     assert specific.callback_data == "vs:app_1:specific:nonce_1"
     assert general.callback_data == "vs:app_1:general:nonce_1"
+    assert cancel.callback_data == "vc:app_1:nonce_1"
 
 
 async def test_send_feedback_prompt_uses_force_reply_and_encodes_context() -> None:

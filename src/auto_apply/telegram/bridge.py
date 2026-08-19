@@ -18,6 +18,7 @@ JSON 스키마 그대로)만 쓴다. scope 선택/ForceReply 프롬프트를 보
 콜백 데이터 형식(모두 nonce 를 마지막에 둔다 — 값 안에 콜론이 있어도 안전하게 split 되도록):
 - `"{a|r|v}:{application_id}:{nonce}"` — 승인/거절/수정요청 시작 (TelegramNotifier._keyboard)
 - `"vs:{application_id}:{specific|general}:{nonce}"` — 수정요청 범위 선택
+- `"vc:{application_id}:{nonce}"` — 수정요청 취소 (scope 선택 화면에서 되돌아간다, signal 없음)
 - `"{ga|gr|gv}:{application_id}:{nonce}"` — 가이드 patch 승인/거절/코멘트 시작
 
 REVISE 자유 텍스트 피드백은 콜백이 아니라 `message`(ForceReply 답장)로 온다 —
@@ -63,7 +64,7 @@ class CallbackOutcome:
 
 
 def _parse(
-    data: str, valid: frozenset[str] = frozenset({*_ACTIONS, "v", "gv"})
+    data: str, valid: frozenset[str] = frozenset({*_ACTIONS, "v", "gv", "vc"})
 ) -> tuple[str, str, str]:
     parts = data.split(":", 2)
     if len(parts) != 3 or parts[0] not in valid:
@@ -118,7 +119,9 @@ async def handle_callback_query(
     signal 은 항상 보낸다 — 오래된/재전달된 콜백이면 워크플로우의 nonce 검증이 조용히
     무시한다(§6). 그래서 여기 반환값 `handled` 는 "signal 을 보냈다"는 뜻이지 "워크플로우가
     그걸 받아들였다"는 뜻은 아니다 — 그건 signal 이 fire-and-forget 이라 이 프로세스가
-    알 방법이 없다. `v`/`vs`는 signal 이 아니라 다음 안내 메시지를 보낼 뿐이다.
+    알 방법이 없다. `v`/`vs`는 signal 이 아니라 다음 안내 메시지를 보낼 뿐이다. `vc`(취소)는
+    그마저도 없다 — 원래 승인/거절/수정요청 버튼의 nonce 가 아직 안 쓰인 채로 남아있으니
+    사용자에게 취소됐다고만 알려주면 된다.
 
     무엇보다 먼저 `answerCallbackQuery`를 호출한다 — 안 그러면 버튼을 눌렀을 때 뜨는 "불러오는
     중" 스피너가 이후 어떤 처리를 하든 안 꺼진다(라이브 스모크테스트로 실측, 허용 안 된
@@ -143,6 +146,15 @@ async def handle_callback_query(
         return CallbackOutcome(handled=True)
     if action == "gv":
         await _telegram(c).send_guide_feedback_prompt(application_id, nonce)
+        return CallbackOutcome(handled=True)
+    if action == "vc":
+        await c.notifier.notify(
+            NotifyEvent(
+                kind="DECISION_RECORDED",
+                application_id=application_id,
+                message="수정요청을 취소했습니다. 기존 승인/거절/수정요청 버튼을 사용하세요.",
+            )
+        )
         return CallbackOutcome(handled=True)
 
     wf_id = f"application-{application_id}"
