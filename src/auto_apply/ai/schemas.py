@@ -36,12 +36,23 @@ class ResumeContentSchema(_Frozen):
     ai_usage: list[ResumeHighlight] = Field(default_factory=list)
 
 
-class GuidePatchSchema(_Frozen):
-    """이력서 가이드 치환 제안. 전문을 다시 쓰게 하지 않는다(domain/guide_patch.py 참고) —
+class GuidePatchItem(_Frozen):
+    """치환 쌍 하나. `old`는 가이드 본문에서 정확히 그대로 인용해야 한다
 
-    `old`는 가이드 본문에서 정확히 그대로 인용해야 한다(활동 계층이 문자열 일치로 검증한다).
+    (활동 계층이 문자열 일치로 검증한다).
     """
 
     old: str
     new: str
     rationale: str = ""
+
+
+class GuidePatchSchema(_Frozen):
+    """이력서 가이드 치환 제안 목록. 전문을 다시 쓰게 하지 않는다(domain/guide_patch.py 참고) —
+
+    사용자 피드백 한 번에 서로 다른 지시가 여러 개 섞여 있을 수 있어 `patches`를 리스트로
+    받는다 — 스키마가 항목 하나만 표현하면 다지시 피드백 중 일부가 조용히 누락된다
+    (메모리 resume-revise-feedback-design 라이브 테스트로 실측).
+    """
+
+    patches: list[GuidePatchItem] = Field(min_length=1)
