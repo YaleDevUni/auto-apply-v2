@@ -129,6 +129,16 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "ai 는 벤더 SDK 를 모른다 (프롬프트/스키마만, 오케스트레이션 프레임워크에 안 묶인다)"
+type = "forbidden"
+source_modules = ["auto_apply.ai"]
+forbidden_modules = [
+    "auto_apply.adapters", "auto_apply.ports", "auto_apply.activities",
+    "auto_apply.workflows", "auto_apply.api", "auto_apply.bootstrap",
+    "sqlalchemy", "anthropic", "playwright", "boto3", "telegram", "fastapi",
+]
+
+[[tool.importlinter.contracts]]
 name = "workflow 는 contracts/domain 만 본다"
 type = "forbidden"
 source_modules = ["auto_apply.workflows"]

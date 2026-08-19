@@ -35,7 +35,7 @@ class ResumeWorkflow:
             )
             verdict = await workflow.execute_activity(
                 review_resume,
-                ReviewRequest(draft=draft, job=req.job),
+                ReviewRequest(draft=draft, job=req.job, user_id=req.user_id),
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=_AI_RETRY,
             )

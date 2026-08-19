@@ -1,0 +1,28 @@
+# config/facts.yaml — 이력서 생성의 유일한 사실 원천 (ARCHITECTURE.md §4, §2.3).
+#
+# 여기 없는 경력·수치·프로젝트는 LLM 이 지어낼 수 없다 — review 게이트가 모든 서술에 fact_id
+# 근거를 요구하고, 근거 없거나 존재하지 않는 fact_id 를 인용하면 실패시킨다(domain/resume_matching.py
+# 의 ground_check). matching.yaml 과 같은 이유로 코드가 아니라 데이터다 — 이력이 바뀌면 코드를
+# 고치지 않고 이 파일만 고친다.
+#
+# 아래는 형식 예시(placeholder)다. 실제 값으로 교체할 것.
+#   - id: 이 파일 안에서만 유일하면 된다.
+#   - user_id: StartApplication.user_id 와 같은 값이어야 매칭된다.
+#   - kind: 자유 텍스트 태그. "experience" | "project" | "skill" | "education" 등 편한 대로.
+#   - content: 이력서 문장에 그대로 인용될 수 있는 원문 서술.
+#   - keywords: job 설명과 겹침을 판정하는 명시적 신호(matching.yaml 의 TrackRule.keywords 와 동일 철학).
+#   - source: 이 사실의 근거(예: "2024 이력서", "포트폴리오 v3"). 검증 추적용.
+
+- id: exp-example-1
+  user_id: default
+  kind: experience
+  content: "예시: 3년간 FastAPI 기반 결제 API를 설계·운영했다."
+  keywords: [FastAPI, 결제, API, 백엔드]
+  source: "예시 — 실제 값으로 교체"
+
+- id: skill-example-1
+  user_id: default
+  kind: skill
+  content: "예시: Python, PostgreSQL, Docker에 능숙하다."
+  keywords: [Python, PostgreSQL, Docker]
+  source: "예시 — 실제 값으로 교체"

@@ -9,11 +9,14 @@ from dataclasses import dataclass
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
 from auto_apply.adapters.executor.playwright import PlaywrightExecutor
 from auto_apply.adapters.executor.replay import ReplayExecutor
+from auto_apply.adapters.facts.static import StaticFactSource
+from auto_apply.adapters.facts.yaml_file import YamlFactSource
 from auto_apply.adapters.job_source._http import ThrottledClient
 from auto_apply.adapters.job_source.fixture import FixtureJobSource
 from auto_apply.adapters.job_source.jasoseol import JasoseolJobSource
 from auto_apply.adapters.job_source.saramin import SaraminJobSource
 from auto_apply.adapters.job_source.wanted import WantedJobSource
+from auto_apply.adapters.llm.anthropic import AnthropicLLM
 from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.adapters.matching_config.static import StaticMatchingConfigSource
 from auto_apply.adapters.matching_config.yaml_file import YamlMatchingConfigSource
@@ -35,6 +38,7 @@ from auto_apply.contracts.dto import PersistState
 from auto_apply.contracts.job import JobRecord
 from auto_apply.ports.clock import Clock, IdGen
 from auto_apply.ports.executor import RecipeExecutor
+from auto_apply.ports.facts import FactSource
 from auto_apply.ports.job_source import JobSource
 from auto_apply.ports.llm import LLMClient
 from auto_apply.ports.matching_config import MatchingConfigSource
@@ -64,6 +68,7 @@ class Container:
     pdf: PdfRenderer
     job_sources: Sequence[JobSource]
     matching_config: MatchingConfigSource
+    facts: FactSource
 
 
 def _build_store(cfg: Settings) -> BlobStore:
@@ -81,7 +86,9 @@ def _build_llm(cfg: Settings) -> LLMClient:
         case "stub":
             return StubLLM(responses=["stub 요약: 공고 요건에 맞춘 경력 정리"] * 10)
         case "anthropic":
-            raise NotImplementedError("AnthropicLLM 은 M3 에서 추가한다")
+            if not cfg.anthropic_api_key:
+                raise ValueError("LLM_PROVIDER=anthropic 이면 ANTHROPIC_API_KEY 가 필요하다")
+            return AnthropicLLM(cfg.anthropic_api_key, model=cfg.anthropic_model)
 
 
 def _build_notifier(cfg: Settings, idgen: IdGen) -> Notifier:
@@ -152,11 +159,20 @@ def _build_matching_config(cfg: Settings) -> MatchingConfigSource:
             return YamlMatchingConfigSource(cfg.matching_config_path)
 
 
+def _build_facts(cfg: Settings) -> FactSource:
+    match cfg.facts_source:
+        case "static":
+            return StaticFactSource()
+        case "yaml":
+            return YamlFactSource(cfg.facts_path)
+
+
 def build_container(cfg: Settings) -> Container:
     idgen = UuidIdGen()
     clock = SystemClock()
     store = _build_store(cfg)
     llm = _build_llm(cfg)
+    facts = _build_facts(cfg)
     return Container(
         settings=cfg,
         clock=clock,
@@ -168,9 +184,10 @@ def build_container(cfg: Settings) -> Container:
         registry=StaticPlatformRegistry([FixturePlatformAdapter()]),
         recipes=_build_recipes(cfg),
         executor=_build_executor(cfg, clock, store),
-        generator=SimpleResumeGenerator(llm, idgen),
-        reviewer=SimpleResumeReviewer(),
+        generator=SimpleResumeGenerator(llm, idgen, facts),
+        reviewer=SimpleResumeReviewer(facts),
         pdf=StubPdfRenderer(store),
         job_sources=_build_job_sources(cfg, store),
         matching_config=_build_matching_config(cfg),
+        facts=facts,
     )

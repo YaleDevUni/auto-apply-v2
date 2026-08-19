@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     playwright_headless: bool = True
     job_source: Literal["fixture", "live"] = "fixture"
     matching_config: Literal["static", "yaml"] = "yaml"
+    facts_source: Literal["static", "yaml"] = "yaml"
 
     # 인프라
     database_url: str = "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply"
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
     temporal_namespace: str = "default"
     data_dir: Path = Path("./var")
     matching_config_path: Path = Path("./config/matching.yaml")
+    facts_path: Path = Path("./config/facts.yaml")
 
     # 공고 수집 Schedule (§11.2b) — `cli.py collect-schedule`이 이 값으로 등록/갱신한다.
     job_collection_cron: str = "0 9 * * *"
@@ -41,6 +43,7 @@ class Settings(BaseSettings):
 
     # 외부 서비스
     anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-5"
     telegram_bot_token: str = ""
     telegram_allowed_chat_ids: str = ""
 

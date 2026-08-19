@@ -11,6 +11,7 @@ from auto_apply.activities.browser import BrowserActivities
 from auto_apply.activities.resume import ResumeActivities
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
 from auto_apply.adapters.executor.replay import ReplayExecutor
+from auto_apply.adapters.facts.static import StaticFactSource
 from auto_apply.adapters.job_source.fixture import FixtureJobSource
 from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.adapters.matching_config.static import StaticMatchingConfigSource
@@ -31,10 +32,31 @@ from auto_apply.contracts.dto import (
     NotifyEvent,
     PersistState,
 )
+from auto_apply.contracts.fact import Fact
 from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.ports.notifier import Notifier
 
 JOB_URL = "https://fixture.local/jobs/1"
+
+# ResumeWorkflow 는 MAX_REVIEW_ROUNDS(3)까지 재시도할 수 있다 — 넉넉히 반복해서 등록해둔다.
+_RESUME_PAYLOADS = [
+    {
+        "summary": "공고 요건에 맞춘 경력 요약입니다",
+        "highlights": [{"text": "결제 API 개발 경험", "fact_ids": ["exp-fixture-1"]}],
+    }
+] * 20
+
+
+def _sample_facts(user_id: str = "u1") -> list[Fact]:
+    return [
+        Fact(
+            id="exp-fixture-1",
+            user_id=user_id,
+            kind="experience",
+            content="테스트용 경력 사실",
+            keywords=["백엔드"],
+        )
+    ]
 
 
 @dataclass
@@ -115,9 +137,10 @@ class Harness:
             recipes=recipes,
             uow=lambda: InMemoryUnitOfWork(rows, attempt_rows=attempt_rows),
         )
+        facts = StaticFactSource(_sample_facts())
         resume = ResumeActivities(
-            SimpleResumeGenerator(StubLLM(responses=["요건에 맞춘 경력 요약"] * 20), idgen),
-            SimpleResumeReviewer(),
+            SimpleResumeGenerator(StubLLM(payloads=list(_RESUME_PAYLOADS)), idgen, facts),
+            SimpleResumeReviewer(facts),
             StubPdfRenderer(store),
         )
         browser = BrowserActivities(ReplayExecutor(clock, fail_selectors=self.fail_selectors))
@@ -132,7 +155,8 @@ class Harness:
         idgen = UuidIdGen()
         clock = SystemClock()
         store = InMemoryBlobStore()
-        llm = StubLLM(responses=["요건에 맞춘 경력 요약"] * 20)
+        llm = StubLLM(payloads=list(_RESUME_PAYLOADS))
+        facts = StaticFactSource(_sample_facts())
         rows = self.rows
         attempt_rows = self.attempt_rows
         return Container(
@@ -147,11 +171,12 @@ class Harness:
             registry=StaticPlatformRegistry([FixturePlatformAdapter(eligible=self.eligible)]),
             recipes=InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)}),
             executor=ReplayExecutor(clock, fail_selectors=self.fail_selectors),
-            generator=SimpleResumeGenerator(llm, idgen),
-            reviewer=SimpleResumeReviewer(),
+            generator=SimpleResumeGenerator(llm, idgen, facts),
+            reviewer=SimpleResumeReviewer(facts),
             pdf=StubPdfRenderer(store),
             job_sources=[FixtureJobSource()],
             matching_config=StaticMatchingConfigSource(),
+            facts=facts,
         )
 
     def states(self, application_id: str) -> list[str]:

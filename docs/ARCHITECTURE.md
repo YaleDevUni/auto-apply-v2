@@ -260,12 +260,20 @@ flowchart LR
     F -->|FAIL, n=3| H[needs_human]
 ```
 
-- 이 그래프 **내부**가 LangGraph의 영역이다. 재시도 루프·상태는 Temporal이 아니라 그래프가 들고 있어도 되지만,
-  **경계는 activity 단위**로 잡는다: `run_resume_graph(input) -> ResumeDraft`.
-- 왜 그래프를 activity 하나에 넣는가: LangGraph 실행 중간 상태는 Temporal 이벤트 히스토리에 넣을 만한 가치가 없다
+- 이 그래프 **내부**가 오케스트레이션 프레임워크(LangGraph 또는 PydanticAI, §9.2)의 영역이 될 수 있다.
+  재시도 루프·상태는 Temporal이 아니라 그래프가 들고 있어도 되지만, **경계는 activity 단위**로 잡는다:
+  `run_resume_graph(input) -> ResumeDraft`.
+- 왜 그래프를 activity 하나에 넣는가: 그래프 실행 중간 상태는 Temporal 이벤트 히스토리에 넣을 만한 가치가 없다
   (LLM 호출은 비결정적, 재생 불가). 대신 **각 노드의 프롬프트/출력을 S3에 덤프**해서 디버깅한다.
 - 반대로 "생성 → 검토 → 재생성" **큰 루프는 Temporal에 노출**한다. 3회 시도가 UI에 보여야 디버깅이 된다.
-- 사실(fact) 기반 생성: `Fact` 테이블에 없는 경력/수치는 생성 금지. review 노드의 첫 체크가 "hallucinated claim 탐지".
+- 사실(fact) 기반 생성 (M3, 구현 완료): `retrieve_facts`(`FactSource` port, `config/facts.yaml`가 원본) →
+  `select_relevant_facts`(`domain/resume_matching.py`, keyword 겹침으로 match_skills/select_projects를
+  한 랭킹 단계로 합침) → LLM 구조화 생성(`ai/schemas.py`의 `ResumeContentSchema`, 스키마 위반 시 §5대로
+  내부 2회 재프롬프트) → review 노드의 첫 체크는 `ground_check`(같은 파일) — highlight마다 근거 `fact_id`가
+  있는지, 그 id가 실제 `Fact` 목록에 존재하는지를 본다. 근거 없는 서술과 지어낸 fact_id 인용 둘 다
+  hallucination으로 잡는다. Recipe의 `value_ref`(참조만, 리터럴 금지, §3)와 같은 철학 — 이력서의 모든
+  서술도 리터럴이 아니라 fact_id 참조여야 한다.
+- 이 파이프라인은 여전히 분기·병렬 없는 선형 체인이다 — §9.2 도입 기준을 못 채워 plain 함수로 남아있다.
 
 ### 2.4 AutomationRepairWorkflow
 
@@ -471,7 +479,8 @@ auto-apply-v2/
 ├── docker-compose.yml            postgres · temporal · temporal-ui · minio · api · workers
 ├── alembic/
 ├── config/
-│   └── matching.yaml             하드컷/트랙/스코어링 규칙 — 사용자의 직무 취향 데이터 (§11.2b)
+│   ├── matching.yaml             하드컷/트랙/스코어링 규칙 — 사용자의 직무 취향 데이터 (§11.2b)
+│   └── facts.yaml                이력서 생성의 유일한 사실 원천 — 사람이 직접 채운다 (§2.3, §4)
 ├── src/auto_apply/
 │   ├── api/                      FastAPI (routers, deps, schemas)
 │   ├── telegram/                 bot handlers, keyboards, nonce
@@ -489,6 +498,7 @@ auto-apply-v2/
 │   │   ├── recipe.py             AutomationRecipe (workflow payload 로 오간다)
 │   │   ├── job.py                JobPosting · ScreeningVerdict · ApplicabilityVerdict (§11.2b)
 │   │   ├── matching_config.py    TrackRule · HardcutRule · MatchingConfig (§11.2b)
+│   │   ├── fact.py               Fact (§2.3, §4)
 │   │   └── activity_defs.py      activity 인터페이스 stub (@activity.defn)
 │   ├── ports/                    ★ Protocol 정의. 구현을 import 하지 않는다
 │   │   ├── llm.py                LLMClient
@@ -499,10 +509,11 @@ auto-apply-v2/
 │   │   ├── platform.py           PlatformAdapter (URL 단건 조회 — §11.2b 와 구분)
 │   │   ├── job_source.py         JobSource (플랫폼 대량 수집 — §11.2b)
 │   │   ├── matching_config.py    MatchingConfigSource (§11.2b)
+│   │   ├── facts.py              FactSource (§2.3)
 │   │   ├── resume.py             ResumeGenerator / ResumeReviewer
 │   │   └── clock.py              Clock, IdGen (테스트 결정성)
 │   ├── adapters/                 ★ port별 구현체. 서로를 모른다
-│   │   ├── llm/anthropic.py · llm/recorded.py
+│   │   ├── llm/anthropic.py · llm/stub.py
 │   │   ├── storage/s3.py · storage/local.py
 │   │   ├── notifier/telegram.py · notifier/console.py
 │   │   ├── db/                   SQLAlchemy models · repositories · uow
@@ -510,18 +521,19 @@ auto-apply-v2/
 │   │   ├── platform/wanted.py · linkedin.py · company.py · registry.py
 │   │   ├── job_source/wanted.py · saramin.py · jasoseol.py · fixture.py (§11.2b)
 │   │   ├── matching_config/yaml_file.py · static.py (§11.2b)
-│   │   └── resume/simple.py · resume/langgraph.py
-│   ├── ai/
-│   │   ├── graphs/               LangGraph: resume_graph, repair_graph (M3+)
-│   │   ├── prompts/
-│   │   └── schemas.py            Pydantic: LLM 출력 스키마
+│   │   ├── facts/yaml_file.py · static.py (§2.3)
+│   │   └── resume/simple.py     (오케스트레이션 프레임워크 구현은 §9.2 결정 뒤로 보류)
+│   ├── ai/                       ★ 프레임워크 무의존: 순수 Pydantic + 문자열 함수 (§9.2)
+│   │   ├── schemas.py            ResumeContentSchema 등 — LLM 구조화 출력 스키마
+│   │   └── prompts.py            프롬프트 조립 (LLM 호출 자체는 adapters/ 쪽에서)
 │   ├── automation/
 │   │   ├── policy.py             Recipe 정책 검증 (스키마 검증과 별도, §3)
 │   │   └── snapshot.py           DOM snapshot + form_hash
 │   ├── domain/                   순수 도메인: enums · errors · state machine · policy
 │   │   ├── job_identity.py       정규화 · canonical_key (§11.2b)
 │   │   ├── job_screening.py      축1 적합도: 하드컷 · 트랙 · 스코어링 (§11.2b)
-│   │   └── job_applicability.py  축2 지원가능성: blocker · requires (§11.2b)
+│   │   ├── job_applicability.py  축2 지원가능성: blocker · requires (§11.2b)
+│   │   └── resume_matching.py    select_relevant_facts · ground_check (§2.3)
 │   ├── bootstrap.py              ★ composition root: 설정 → 구현체 조립
 │   ├── config.py                 pydantic-settings
 │   ├── schedule.py               JobCollectionWorkflow Temporal Schedule 등록/삭제 (§11.2b)
@@ -544,11 +556,20 @@ Temporal을 쓰는 순간 이미 `docker-compose`를 띄운다. 컨테이너가 
 질의, (c) 나중 마이그레이션 — 세 가지를 나중에 갚아야 한다.
 단, **Repository 계층은 그대로 둔다** (테스트에서 SQLite in-memory를 쓸 수 있고 결합도가 낮아진다).
 
-### 9.2 LangGraph: 지금 필요한가 → **M3까지 보류**
-"생성 → 검토 → 재생성" 루프만이라면 Temporal이 이미 루프·상태·재시도를 준다. LangGraph를 먼저 넣으면
+### 9.2 오케스트레이션 프레임워크(LangGraph 등): 지금 필요한가 → **M3에도 여전히 보류**
+"생성 → 검토 → 재생성" 루프만이라면 Temporal이 이미 루프·상태·재시도를 준다. 먼저 넣으면
 **두 개의 오케스트레이터를 동시에 디버깅**하게 되는데, 그게 정확히 V1의 실패 모드다.
-경계(`run_resume_graph(input) -> ResumeDraft`)만 지금 확정해 두면, 그래프가 실제로 분기·병렬·조건부
-재작성으로 복잡해지는 시점(M3)에 내부 구현만 갈아끼울 수 있다.
+경계(`run_resume_graph(input) -> ResumeDraft`, 실제로는 `ports/resume.py`의 `ResumeGenerator`/
+`ResumeReviewer`)만 확정해 두면, 그래프가 실제로 분기·병렬·조건부 재작성으로 복잡해지는 시점에
+내부 구현만 갈아끼울 수 있다.
+
+M3에서 Fact 기반 생성(retrieve_facts → select_relevant_facts → generate → ground_check)을
+실제로 구현하면서 이 판단을 재확인했다: 파이프라인이 여전히 분기·병렬 없는 선형 체인이라 도입
+기준을 못 채운다. 그래서 plain 함수(`adapters/resume/simple.py`)로 남겨뒀다. 후보도 LangGraph로
+못박지 않는다 — 소규모 프로젝트에는 PydanticAI 쪽이 더 맞을 수 있어 그것도 함께 검토 중이다.
+`ai/schemas.py`(순수 Pydantic)와 `ai/prompts.py`(순수 문자열 함수)를 어느 프레임워크의 타입에도
+묶지 않은 이유가 이것 — 나중에 `LangGraphResumeGenerator`든 `PydanticAIResumeGenerator`든 같은
+스키마를 그대로 재사용하며 포트 뒤에서 교체할 수 있다.
 
 ### 9.3 Recipe 자동 승격 → **금지 (supervised 1회 필수)**
 대화의 흐름은 "Sandbox PASS → 저장"이었다. 그런데 dry-run은 submit을 하지 않으므로
@@ -597,7 +618,7 @@ Grafana 스택 전체를 초기에 세우지 않는다. 대신 **Temporal UI를 
 
 | Port | M0 구현 | 대역/2번째 구현 | 교체 가치 | 비고 |
 |---|---|---|---|---|
-| `LLMClient` | Anthropic SDK | `RecordedLLM` (녹화 재생) | **높음** | 모델 교체·비용 실험·테스트 결정성 |
+| `LLMClient` | `AnthropicLLM`(M3) | `StubLLM`(고정 응답 재생) | **높음** | 모델 교체·비용 실험·테스트 결정성 |
 | `BlobStore` | MinIO(S3) | `LocalBlobStore` | **높음** | 로컬 개발에서 컨테이너 하나 덜 띄움 |
 | `Notifier` | Telegram | `ConsoleNotifier` | **높음** | 승인 흐름 테스트가 봇 없이 가능 |
 | `*Repository` + `UnitOfWork` | SQLAlchemy/Postgres | `InMemoryRepo` | 중간 | 실제 목적은 DB 교체보다 **테스트 속도** |
@@ -605,7 +626,8 @@ Grafana 스택 전체를 초기에 세우지 않는다. 대신 **Temporal UI를 
 | `PlatformAdapter` | wanted | linkedin, company | **높음** | 확장 지점. registry로 등록 |
 | `JobSource` | wanted/saramin/jasoseol | `FixtureJobSource` | **높음** | 공고 대량 수집. §11.2b |
 | `MatchingConfigSource` | `YamlMatchingConfigSource` | `StaticMatchingConfigSource` | 중간 | 하드컷/트랙 규칙. §11.2b |
-| `ResumeGenerator` / `ResumeReviewer` | plain 함수 | LangGraph(M3) | **높음** | §9.2 보류 결정을 가능하게 하는 seam |
+| `FactSource` | `YamlFactSource` | `StaticFactSource` | 중간 | 이력서 생성의 유일한 사실 원천(§2.3). `MatchingConfigSource`와 동일 패턴 |
+| `ResumeGenerator` / `ResumeReviewer` | plain 함수(`SimpleResume*`) | — (§9.2 보류, 아직 2번째 구현 없음) | **높음** | LangGraph/PydanticAI 등, 프레임워크는 미정 — §9.2 보류 결정을 가능하게 하는 seam |
 | `Clock` / `IdGen` | 시스템 | 고정값 | 중간 | 테스트 결정성 |
 | `PdfRenderer` | WeasyPrint | `StubRenderer` | 낮음 | 교체 가능성보다 격리 목적 |
 

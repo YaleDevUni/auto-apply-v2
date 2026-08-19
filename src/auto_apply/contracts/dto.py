@@ -33,6 +33,7 @@ class JobRef(_Frozen):
     url: str
     title: str
     company: str
+    description: str = ""  # fact 매칭용(§2.3). 비어 있으면 전체 fact 로 fallback.
 
 
 class Eligibility(_Frozen):
@@ -172,6 +173,7 @@ class RescheduleSignal(_Frozen):
 class ReviewRequest(_Frozen):
     draft: ResumeDraft
     job: JobRef
+    user_id: str  # reviewer 가 자기 fact 로 grounding 검증하는 데 필요(§2.3 ground_check)
 
 
 class VerifyInput(_Frozen):

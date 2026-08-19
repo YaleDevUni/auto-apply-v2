@@ -56,4 +56,7 @@ NON_RETRYABLE: tuple[str, ...] = (
     AuthRequired.__name__,
     PolicyViolation.__name__,
     EligibilityRejected.__name__,
+    # generator 가 이미 내부에서 2회 재프롬프트했다(§5) — activity 레벨 재시도는
+    # 같은 실패를 반복할 뿐이라 여기서 non-retryable 로 끊는다.
+    LLMSchemaViolation.__name__,
 )

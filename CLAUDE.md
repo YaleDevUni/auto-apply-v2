@@ -140,9 +140,26 @@ test에 `postgres` 파라미터를 추가했고(`@pytest.mark.integration`, `mak
 `alembic/versions/`의 초기 마이그레이션은 실제 DB에 대고 autogenerate + upgrade/downgrade
 왕복까지 검증했다. 기본값은 여전히 `REPOSITORY=file`이다 — 바꾸는 결정은 사용자 몫으로 남긴다.
 
-아직 **없는** 것: Anthropic 어댑터, S3 어댑터, LangGraph(M3에서 판단),
-`AutomationRepairWorkflow`(M4), `/recipes/{platform}` 계열 엔드포인트(승격은 지금은 손으로
-recipe JSON의 `status`를 고쳐서 한다).
+**M3 진행 중** — `SimpleResumeGenerator`/`SimpleResumeReviewer`가 자리만 잡아둔 상태였던 걸
+Fact 기반으로 채웠다. `Fact`(§4)는 `FactSource` port(`config/facts.yaml`이 원본, `MatchingConfigSource`와
+동일 패턴 — 캐시 없이 매번 새로 읽음) + `YamlFactSource`/`StaticFactSource` 두 대역. 생성 흐름은
+`retrieve_facts` → `select_relevant_facts`(`domain/resume_matching.py`, keyword 겹침 랭킹 —
+match_skills/select_projects를 한 단계로 합침, 0건 매칭이면 필터링 없이 전체 반환) → LLM 구조화
+생성(`ai/schemas.py`의 `ResumeContentSchema`) → `ground_check`(같은 파일, review 게이트의 첫
+체크) — highlight마다 근거 `fact_id`가 있는지, 그 id가 실제 Fact에 존재하는지를 본다. 스키마
+위반 시 §5대로 generator 내부에서 최대 2회 재프롬프트하고, 그래도 실패하면
+`LLMSchemaViolation`을 `NON_RETRYABLE`에 태워 activity 레벨 재시도를 끊는다(같은 실패가
+반복될 뿐이라). `AnthropicLLM`(`adapters/llm/anthropic.py`, tool-use로 구조화 출력 강제)을
+`LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY`로 켠다 — 기본값은 여전히 `stub`.
+`ports/resume.py`의 오케스트레이션 프레임워크 판단(§9.2)은 M3에서도 **보류를 재확인**했다 —
+파이프라인이 여전히 분기·병렬 없는 선형 체인이라 도입 기준을 못 채운다. LangGraph로 못박지도
+않았다 — 소규모 프로젝트엔 PydanticAI가 더 맞을 수 있어 그쪽도 검토 중이라, `ai/`를 어느
+프레임워크 타입에도 묶지 않고(순수 Pydantic + 문자열 함수) 나중에 어느 쪽으로든 같은 포트
+뒤에서 갈아끼울 수 있게만 열어뒀다. `ResumeGenerator`/`ResumeReviewer`는 아직 구현이
+`SimpleResume*` 하나뿐이라 §11.1의 "구현 2개" 원칙을 완전히 채우지는 못한 상태다.
+
+아직 **없는** 것: S3 어댑터, `AutomationRepairWorkflow`(M4), `/recipes/{platform}` 계열
+엔드포인트(승격은 지금은 손으로 recipe JSON의 `status`를 고쳐서 한다).
 
 **공고 수집·매칭** (M1과 별도 트랙) — `JobSource`(wanted/saramin/jasoseol) + 순수 domain
 매칭(`job_screening`/`job_applicability`) + `JobCollectionWorkflow` + Temporal Schedule(cron)
