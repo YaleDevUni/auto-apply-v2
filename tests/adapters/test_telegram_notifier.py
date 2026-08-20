@@ -213,6 +213,69 @@ async def test_repair_promotion_decision_has_only_approve_and_hold_buttons() -> 
     assert hold_btn.callback_data == f"pr:fixture-h-fixture-1:{ticket.nonce}"
 
 
+async def test_checkpoint_decision_has_no_mode_badge() -> None:
+    """체크포인트 승인도 실행 모드와 무관해 배지를 안 붙인다 — 이미 SUPERVISED 도중임이 자명하다."""
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="app_1 — 00:submit 체크포인트 승인",
+        summary="attempt 1: 다음 단계로 진행하려면 승인하세요.",
+        checkpoint=True,
+    )
+
+    await notifier.request_decision(req)
+
+    assert bot.sent[0]["text"] == (
+        "app_1 — 00:submit 체크포인트 승인\nattempt 1: 다음 단계로 진행하려면 승인하세요."
+    )
+
+
+async def test_checkpoint_decision_has_only_continue_and_stop_buttons() -> None:
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="app_1 — 00:submit 체크포인트 승인",
+        summary="attempt 1",
+        checkpoint=True,
+    )
+
+    ticket = await notifier.request_decision(req)
+
+    markup = bot.sent[0]["reply_markup"]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    buttons = markup.inline_keyboard[0]
+    assert len(buttons) == 2
+    continue_btn, stop_btn = buttons
+    assert continue_btn.callback_data == f"ca:app_1:{ticket.nonce}"
+    assert stop_btn.callback_data == f"cr:app_1:{ticket.nonce}"
+
+
+async def test_checkpoint_decision_attaches_screenshot_with_checkpoint_filename() -> None:
+    store = InMemoryBlobStore()
+    await store.put("checkpoints/app_1/1/00.png", b"fake-png-bytes")
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot, store=store)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="체크포인트 승인",
+        summary="attempt 1",
+        artifact_url="checkpoints/app_1/1/00.png",
+        checkpoint=True,
+    )
+
+    await notifier.request_decision(req)
+
+    assert bot.sent == []
+    doc = bot.documents[0]
+    assert doc["document"] == b"fake-png-bytes"
+    assert doc["filename"] == "checkpoint_app_1.png"
+
+
 async def test_send_guide_feedback_prompt_uses_force_reply_and_encodes_context() -> None:
     bot = FakeBot()
     notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)

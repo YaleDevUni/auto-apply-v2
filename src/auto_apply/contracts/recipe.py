@@ -47,6 +47,10 @@ class Action(BaseModel):
     value_literal: str | None = None
     timeout_ms: int = Field(default=5_000, ge=100, le=60_000)
     optional: bool = False
+    # 페이지 경계(§ supervised-checkpoint-design) — SUPERVISED 모드에서 이 액션 실행 전에
+    # 스크린샷을 찍어 사람 승인을 기다린다. SUBMIT 은 이 플래그 없이도 항상 체크포인트가
+    # 걸린다(CLAUDE.md 절대규칙 4) — recipe 가 깜빡 세우지 않아도 최종 제출은 항상 막힌다.
+    checkpoint: bool = False
 
     @model_validator(mode="after")
     def selector_required_for_dom_actions(self) -> Self:

@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     pdf_renderer: Literal["stub", "weasyprint"] = "weasyprint"
     web_agent: Literal["replay", "aside_cli"] = "replay"
     credential_source: Literal["static", "json"] = "static"
+    # SUPERVISED 페이지 경계 체크포인트 승인/거절을 어디 남길지 (§ supervised-checkpoint-design).
+    # nonce 발급 프로세스(worker activity)와 승인 프로세스(webhook/리스너)가 갈라져서
+    # in-process 상태로는 공유가 안 된다.
+    checkpoint_store: Literal["file", "memory"] = "file"
 
     # 인프라
     database_url: str = "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply"
@@ -92,6 +96,11 @@ class Settings(BaseSettings):
     # "회사 하나에 세부 항목이 너무 많다" 같은 피드백을 반영할 수 있는 유일한 통로다.
     resume_max_project_blocks: int = Field(default=3, ge=1)
     resume_max_career_blocks_per_entity: int = Field(default=4, ge=1)
+
+    # SUPERVISED 체크포인트 대기 한도 — "사람이 실시간으로 지켜보고 있다"는 전제라 짧게 잡는다
+    # (§ supervised-checkpoint-design). 넘기거나 거절되면 CheckpointDeclined → needs_human.
+    checkpoint_timeout_minutes: int = Field(default=30, ge=1)
+    checkpoint_poll_seconds: int = Field(default=5, ge=1)
 
     @property
     def allowed_chat_ids(self) -> frozenset[int]:

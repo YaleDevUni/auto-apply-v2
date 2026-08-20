@@ -30,6 +30,13 @@ class AuthRequired(TerminalError):
     """storage_state 만료. 사용자에게 재로그인을 요청한다."""
 
 
+class CheckpointDeclined(TerminalError):
+    """SUPERVISED 체크포인트에서 사람이 거절했거나 응답 시간(§ supervised-checkpoint-design)을
+
+    넘겼다. 거절/타임아웃 둘 다 이 예외 하나로 표현한다 — 사유는 메시지 문자열로만 구분한다.
+    """
+
+
 class PolicyViolation(TerminalError):
     """rate limit / allowlist / submit 경로 정책 위반 (§3)."""
 
@@ -128,6 +135,7 @@ NON_RETRYABLE: tuple[str, ...] = (
     RecipeExecutionError.__name__,
     CaptchaEncountered.__name__,
     AuthRequired.__name__,
+    CheckpointDeclined.__name__,
     PolicyViolation.__name__,
     EligibilityRejected.__name__,
     # generator 가 이미 내부에서 2회 재프롬프트했다(§5) — activity 레벨 재시도는

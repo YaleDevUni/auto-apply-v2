@@ -82,6 +82,8 @@ class TelegramNotifier:
             keyboard = _guide_patch_keyboard(req, ticket.nonce)
         elif req.repair_promotion:
             keyboard = _repair_keyboard(req, ticket.nonce)
+        elif req.checkpoint:
+            keyboard = _checkpoint_keyboard(req, ticket.nonce)
         else:
             keyboard = _keyboard(req, ticket.nonce)
         # 평문으로 보낸다 — title/summary/artifact_url 은 스크래핑된 공고 데이터라 마크다운
@@ -90,13 +92,18 @@ class TelegramNotifier:
         # summary 에는 공고 링크(job.url)가 이미 실려 온다(workflows/application.py 참고) —
         # 승인 여부를 판단하려면 원본 공고를 다시 확인할 수 있어야 해서다.
         text = f"{_mode_badge(req)}{req.title}\n{req.summary}"
-        pdf_bytes = await self._fetch_pdf(req.artifact_url)
+        filename = (
+            f"checkpoint_{req.application_id}.png"
+            if req.checkpoint
+            else f"resume_{req.application_id}.pdf"
+        )
+        attachment = await self._fetch_attachment(req.artifact_url)
         for chat_id in self._chat_ids:
-            if pdf_bytes is not None:
+            if attachment is not None:
                 await self._bot.send_document(
                     chat_id=chat_id,
-                    document=pdf_bytes,
-                    filename=f"resume_{req.application_id}.pdf",
+                    document=attachment,
+                    filename=filename,
                     caption=text,
                     reply_markup=keyboard,
                 )
@@ -106,12 +113,13 @@ class TelegramNotifier:
             "telegram.decision_requested",
             application_id=req.application_id,
             guide_patch=req.guide_patch,
-            attached_pdf=pdf_bytes is not None,
+            checkpoint=req.checkpoint,
+            attached=attachment is not None,
         )
         return ticket
 
-    async def _fetch_pdf(self, blob_key: str | None) -> bytes | None:
-        """승인 버튼을 누르기 전에 이력서 내용을 실제로 볼 수 있어야 한다는 요구.
+    async def _fetch_attachment(self, blob_key: str | None) -> bytes | None:
+        """승인 버튼을 누르기 전에 실물(이력서 PDF/체크포인트 스크린샷)을 볼 수 있어야 한다는 요구.
 
         조회 실패는 첨부만 포기하고 텍스트 메시지는 그대로 나가야 한다 — 승인 흐름 자체를
         막아서는 안 된다.
@@ -121,7 +129,7 @@ class TelegramNotifier:
         try:
             return await self._store.get(blob_key)
         except AutoApplyError:
-            log.warning("telegram.pdf_attach_failed", blob_key=blob_key)
+            log.warning("telegram.attachment_fetch_failed", blob_key=blob_key)
             return None
 
     async def notify(self, event: NotifyEvent) -> None:
@@ -223,11 +231,13 @@ class TelegramNotifier:
 def _mode_badge(req: DecisionRequest) -> str:
     """실제 제출 여부를 헷갈리지 않도록 메시지 맨 앞에 붙이는 배지 (dry-run-indicator-backlog).
 
-    가이드 patch 승인(`guide_patch=True`)은 실행과 무관해 배지를 안 붙인다. `req.mode`가
-    None 인 건 워크플로우가 승인 요청 시점에 recipe 조회에 실패해 못 정했다는 뜻이라(
-    `workflows/application.py` `_peek_mode`) "확인 불가"로 명시해 사람이 안심하지 않게 한다.
+    가이드 patch 승인(`guide_patch=True`)은 실행과 무관해 배지를 안 붙인다. 체크포인트
+    승인도 마찬가지다 — 이미 SUPERVISED 실행 도중이라는 게 스크린샷/문구로 자명하다.
+    `req.mode`가 None 인 건 워크플로우가 승인 요청 시점에 recipe 조회에 실패해 못 정했다는
+    뜻이라(`workflows/application.py` `_peek_mode`) "확인 불가"로 명시해 사람이 안심하지
+    않게 한다.
     """
-    if req.guide_patch or req.repair_promotion:
+    if req.guide_patch or req.repair_promotion or req.checkpoint:
         return ""
     labels = {
         ExecutionMode.DRY_RUN: "🧪 DRY RUN — 실제 제출 안 함",
@@ -262,6 +272,22 @@ def _repair_keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("✅ 승격", callback_data=f"pa:{req.application_id}:{nonce}"),
                 InlineKeyboardButton("❌ 보류", callback_data=f"pr:{req.application_id}:{nonce}"),
+            ]
+        ]
+    )
+
+
+def _checkpoint_keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:
+    """페이지 경계 체크포인트도 중첩 승인이다 — REVISE/코멘트 없이 승인하거나 거절한다.
+
+    거절은 곧 그 실행 전체를 중단시킨다(`CheckpointDeclined`) — 되돌릴 수 없는 submit 앞의
+    마지막 관문이라 재시도 UI 를 따로 두지 않는다.
+    """
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ 계속", callback_data=f"ca:{req.application_id}:{nonce}"),
+                InlineKeyboardButton("❌ 중단", callback_data=f"cr:{req.application_id}:{nonce}"),
             ]
         ]
     )

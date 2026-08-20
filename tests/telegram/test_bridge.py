@@ -37,6 +37,12 @@ def test_parse_accepts_repair_promotion_actions():
     assert _parse("pr:fixture-h1:nonce_1") == ("pr", "fixture-h1", "nonce_1")
 
 
+def test_parse_accepts_checkpoint_actions():
+    """ca/cr(SUPERVISED 체크포인트 승인/거절, § supervised-checkpoint-design)."""
+    assert _parse("ca:app_1:nonce_1") == ("ca", "app_1", "nonce_1")
+    assert _parse("cr:app_1:nonce_1") == ("cr", "app_1", "nonce_1")
+
+
 def test_parse_rejects_unknown_action():
     with pytest.raises(MalformedCallback):
         _parse("x:app_1:nonce_1")

@@ -22,6 +22,10 @@ JSON 스키마 그대로)만 쓴다. scope 선택/ForceReply 프롬프트를 보
   signal 없음 — 원래 승인/거절/수정요청 버튼의 nonce 가 아직 안 쓰였으므로 안내만 보낸다)
 - `"{ga|gr|gv}:{application_id}:{nonce}"` — 가이드 patch 승인/거절/코멘트 시작
 - `"gc:{application_id}:{nonce}"` — 가이드 patch 코멘트 취소 (`vc`와 같은 이유, 안내 문구만 다르다)
+- `"{ca|cr}:{application_id}:{nonce}"` — SUPERVISED 페이지 경계 체크포인트 승인/거절
+  (§ supervised-checkpoint-design). 워크플로우가 아니라 activity(`CheckpointWaiter`)가
+  기다리는 대상이라 signal 경로를 안 탄다 — `c.checkpoint_store.record_decision`을 직접
+  호출한다(nonce 검증과 같은 이유로 이 어댑터/서버 메모리에 상태를 못 둔다).
 - `"{pa|pr}:{platform}-{form_hash}:{nonce}"` — recipe 승격 승인/보류 (§2.4). 다른 액션과 달리
   `application_id` 자리가 실제 지원 건이 아니라 `AutomationRepairWorkflow`의 정체성
   (`platform`/`form_hash`)을 담는다 — `wf_id = f"repair-{platform}-{form_hash}"`를 그대로
@@ -82,7 +86,7 @@ class CallbackOutcome:
 
 
 def _parse(
-    data: str, valid: frozenset[str] = frozenset({*_ACTIONS, "v", "gv", "vc", "gc"})
+    data: str, valid: frozenset[str] = frozenset({*_ACTIONS, "v", "gv", "vc", "gc", "ca", "cr"})
 ) -> tuple[str, str, str]:
     parts = data.split(":", 2)
     if len(parts) != 3 or parts[0] not in valid:
@@ -180,6 +184,20 @@ async def handle_callback_query(
                 kind="DECISION_RECORDED",
                 application_id=application_id,
                 message="코멘트를 취소했습니다. 기존 반영/무시/코멘트 버튼을 사용하세요.",
+            )
+        )
+        return CallbackOutcome(handled=True)
+    if action in ("ca", "cr"):
+        # 체크포인트는 워크플로우가 아니라 activity(CheckpointWaiter)가 기다린다 — signal 이
+        # 아니라 CheckpointStore 에 직접 기록한다(§ supervised-checkpoint-design).
+        await c.checkpoint_store.record_decision(nonce, approved=action == "ca")
+        await c.notifier.notify(
+            NotifyEvent(
+                kind="DECISION_RECORDED",
+                application_id=application_id,
+                message="체크포인트를 승인했습니다."
+                if action == "ca"
+                else "체크포인트를 거절했습니다.",
             )
         )
         return CallbackOutcome(handled=True)

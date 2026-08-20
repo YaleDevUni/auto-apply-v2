@@ -348,11 +348,11 @@ flowchart TB
 - 승격(node I→J)은 `AutomationRepairWorkflow` 자기 자신이 Telegram 승인을 받아 그 자리에서
   끝낸다 — "candidate의 첫 실전 실행이 supervised mode로 돌다가 성공하면 자동 승격"이라는
   이전 초안의 대안 경로는 채택하지 않았다: `ExecutionMode.SUPERVISED`가 실제 실행 중 사람이
-  submit 직전 스크린샷을 보고 멈춰 세우는 메커니즘이 아직 실행기(PlaywrightExecutor)에 없고
-  (지금은 `SUPERVISED`가 `LIVE`와 동일하게 그냥 진행된다 — 별도 갭), 있다 해도 승격 여부가
+  submit 직전 스크린샷을 보고 멈춰 세우는 메커니즘(§2.4c)이 이제는 있지만, 승격 여부가
   임의의 미래 지원 건 실행 결과에 걸리는 건 `RepairResult`를 동기적으로 기다리는
-  `ApplicationWorkflow` 쪽 흐름과 안 맞는다. 대신 샌드박스 dry-run 결과(actions 개수/
-  success_signals)를 요약해 그 자리에서 승인받는다.
+  `ApplicationWorkflow` 쪽 흐름과 여전히 안 맞는다 — 이 결정은 체크포인트 메커니즘의 유무와
+  무관하다. 대신 샌드박스 dry-run 결과(actions 개수/success_signals)를 요약해 그 자리에서
+  승인받는다.
 
 **진행 상황 — M4 phase 1(버전관리 write path + 정책 검증) + phase 2(이 다이어그램 B~J 전
 구간, `ApplicationWorkflow` 연동) 구현 완료.** phase 1(`RecipeSource` write path,
@@ -465,6 +465,76 @@ flowchart TB
 **아직 안 된 것(다음 phase)**: `ApplicationWorkflow`/`_execution.py` 배선(channel 분기,
 스크린샷 승인 슬롯 추가/재사용)과 자소서 답변 생성 파이프라인. 지금은 port·adapter·contract
 test까지만 있고, 실제 지원 흐름에 연결되지 않았다.
+
+---
+
+### 2.4c SUPERVISED 페이지 경계 체크포인트 — `CheckpointWaiter`
+
+`ExecutionMode.SUPERVISED`가 이름만 있고 실제로는 `LIVE`와 동일하게 그냥 제출까지 진행되던
+갭(§2.4의 이전 버전, §9.3에서 "supervised 1회 필수"라고 정책만 정해두고 실행기 구현은
+비워뒀던 부분)을 메웠다. 사용자가 원한 UX는 "스텝별 알림인데 구조는 폼 채우기 완료 후
+스샷 인증 — 인적사항 완료 → 스샷 승인받고 → 자기소개서 페이지 → 반복"이다. 즉 각 페이지
+경계마다 스크린샷 승인을 받되, 그 사이엔 브라우저 세션이 계속 살아있어야 한다.
+
+```mermaid
+flowchart TB
+    A[recipe.actions 순회] --> B{checkpoint 플래그<br/>또는 SUBMIT?}
+    B -->|아니오| A
+    B -->|예, SUPERVISED| C[스크린샷 → blob store]
+    C --> D[Telegram: 체크포인트 승인 요청]
+    D --> E[CheckpointStore 폴링<br/>heartbeat 하며 대기]
+    E -->|승인| A
+    E -->|거절/타임아웃| F[CheckpointDeclined → needs_human]
+```
+
+검토했다가 기각한 대안 두 가지:
+- **브라우저 세션을 승인 대기 내내 유지하는 디태치드 프로세스 + CDP 재연결** — §2.4b의
+  `WebAgentExecutor`(Aside)와 같은 급의 인프라 투자인데, 그 설계는 이미 최후순위로 동결됐다
+  (메모리 ats-web-agent-executor-design) — 여기서 먼저 지을 이유가 없다.
+- **DRY_RUN 패스로 끝까지 채워 스크린샷 승인 → 승인되면 완전히 새 세션으로 LIVE 재실행** —
+  새 인프라는 필요 없지만 매 체크포인트마다 전체를 처음부터 다시 채우는 건 낭비/취약(뒤로
+  못 가는 폼도 있다) — "페이지마다 승인받고 이어서 진행"이라는 요구와 안 맞는다.
+
+**채택한 설계**: 단일 `execute_application` activity 호출 안에서 브라우저를 계속 띄운 채,
+페이지 경계(체크포인트)마다 `activity.heartbeat()`로 워커에 생존신호를 보내며 짧게(기본
+30분, `CHECKPOINT_TIMEOUT_MINUTES`) 승인을 폴링 대기한다 — "사람이 실시간으로 지켜보고
+있다"는 전제 위에 서 있다. 위 두 대안의 무거운 인프라/재실행 낭비 없이 절충한다.
+
+- `Action.checkpoint: bool`(`contracts/recipe.py`) — recipe가 페이지 경계를 명시적으로
+  표시한다. `SUBMIT`은 이 플래그를 안 세워도 SUPERVISED에서 **항상** 체크포인트가 걸린다
+  (CLAUDE.md 절대규칙 4 "최종 submit은 승인 뒤에만"을 recipe 작성 실수와 무관하게 강제).
+- `CheckpointStore` port(`ports/checkpoint_store.py`, `record_decision`/`get_decision`) —
+  nonce 발급 프로세스(worker, activity 안에서 대기)와 승인 프로세스(webhook/리스너)가
+  갈라진다는 점은 §6의 nonce와 같지만, 여기서 기다리는 건 워크플로우가 아니라 **activity
+  자신**이라 Temporal signal로 못 받는다 — 그래서 프로세스 경계를 넘는 별도 공유 저장소가
+  필요하다. `FileCheckpointStore`(파일 하나 = 결정 하나, 다른 파일 어댑터와 같은 원자적
+  쓰기 패턴) + `InMemoryCheckpointStore`(테스트 대역) 2 구현, contract test 포함.
+- `CheckpointWaiter`(`adapters/executor/_checkpoint.py`, port 아님 — `Notifier`/
+  `CheckpointStore`/`BlobStore`/`IdGen`을 조합하는 클래스) — 스크린샷을 blob store에 올리고
+  `notifier.request_decision(DecisionRequest(checkpoint=True, ...))`으로 승인을 요청한 뒤
+  `store.get_decision(nonce)`를 폴링한다. 타임아웃을 넘기거나 거절되면
+  `CheckpointDeclined`(`domain/errors.py`, `NON_RETRYABLE`) 하나로 두 경우를 표현한다(사유는
+  메시지 문자열로만 구분).
+- `RecipeExecutor.run()`에 `heartbeat: Callable[[str], None] | None = None` 키워드 인자를
+  추가했다 — activity(`activities/browser.py`)가 `temporalio.activity.heartbeat`를 plain
+  callable로 넘겨줘서, adapters 레이어가 temporalio를 직접 import하지 않아도 되게 한다
+  (§11 레이어 규칙, temporalio는 contracts에서만 허용). `heartbeat_timeout=30초`가 이미
+  `execute_application` activity 호출에 걸려 있어(`workflows/_execution.py`) 체크포인트
+  대기 중 heartbeat를 안 하면 30초 뒤 타임아웃/재시도가 난다 — 그래서 필수다. 체크포인트를
+  안 쓰는 구현(`ReplayExecutor`/`AgentBrowserExecutor`)은 시그니처만 맞추고 무시한다.
+  `ExecutionMode.DRY_RUN`(샌드박스, repair의 `MAX_SANDBOX_ATTEMPTS` 루프 포함)은 조건에
+  `mode is SUPERVISED`가 이미 있어 체크포인트 로직과 자동으로 무관하다.
+- Telegram 쪽은 `DecisionRequest.checkpoint`(중첩 승인, 승인/거절 2버튼만 — guide_patch/
+  repair_promotion과 같은 자리) → 콜백 prefix `ca`/`cr`. 이 콜백은 워크플로우가 아니라
+  activity가 기다리는 대상이라 signal 경로를 안 탄다 — `telegram/bridge.py`가
+  `c.checkpoint_store.record_decision(nonce, approved=...)`를 직접 호출한다(§6 nonce와
+  같은 이유로 이 프로세스가 워크플로우 상태를 대신 검증할 수 없다).
+
+구현·유닛/통합 테스트(`tests/ports/test_checkpoint_store_contract.py`,
+`tests/adapters/test_checkpoint_waiter.py`, `tests/adapters/test_playwright_checkpoint.py`,
+`tests/telegram/test_bridge_checkpoint.py`)·`make check` 통과 완료. `EXECUTOR=agent_browser`는
+아직 체크포인트를 안 지원한다(Playwright만 우선 구현) — SUPERVISED로 그 실행기를 쓰면
+오늘은 체크포인트 없이 그냥 진행된다.
 
 ---
 
@@ -605,7 +675,8 @@ s3://auto-apply/
 ├── portfolios/{user_id}/{file_id}
 ├── dom-snapshots/{platform}/{form_hash}/{ts}.html.gz
 ├── ai-traces/{workflow_id}/{node}/{seq}.json      # LangGraph 노드 입출력
-└── application-artifacts/{application_id}/{attempt}/{step}.png
+├── application-artifacts/{application_id}/{attempt}/{step}.png
+└── checkpoints/{application_id}/{attempt}/{id}.png  # SUPERVISED 체크포인트 스크린샷 (§2.4c)
 ```
 
 ---
@@ -666,6 +737,10 @@ DAILY_DIGEST                    /recipes wanted
   이 배지는 승인 요청 시점의 스냅샷이라 그 뒤 recipe 상태가 바뀌면(드묾) 실제 실행 때와
   달라질 수 있다는 한계는 남는다. 가이드 patch 2차 승인(`guide_patch=True`)은 실행과 무관해
   배지를 안 붙인다.
+- **체크포인트 승인(§2.4c)**: SUPERVISED 실행 중 페이지 경계마다 스크린샷 + "✅ 계속/❌ 중단"
+  2버튼(`ca`/`cr`)을 보낸다. 다른 콜백과 달리 워크플로우 signal이 아니라
+  `checkpoint_store.record_decision`을 직접 호출한다 — 기다리는 게 워크플로우가 아니라
+  activity 자신이기 때문이다.
 
 ---
 
@@ -804,6 +879,8 @@ M3에서 Fact 기반 생성(retrieve_facts → select_relevant_facts → generat
 ### 9.3 Recipe 자동 승격 → **금지 (supervised 1회 필수)**
 대화의 흐름은 "Sandbox PASS → 저장"이었다. 그런데 dry-run은 submit을 하지 않으므로
 **submit 경로의 정확성을 증명하지 못한다.** 그래서 `candidate` 첫 실행은 사람 확인이 붙는 supervised 모드.
+"사람 확인이 붙는다"는 정책은 §2.4c에서 `CheckpointWaiter`(페이지 경계마다 스크린샷 승인,
+SUBMIT은 항상 강제)로 실제 구현됐다.
 
 ### 9.4 관측성 → 처음부터 최소한만
 Grafana 스택 전체를 초기에 세우지 않는다. 대신 **Temporal UI를 1차 운영 콘솔로 쓰고**,
@@ -862,6 +939,7 @@ Grafana 스택 전체를 초기에 세우지 않는다. 대신 **Temporal UI를 
 | `Clock` / `IdGen` | 시스템 | 고정값 | 중간 | 테스트 결정성 |
 | `PdfRenderer` | `WeasyPrintPdfRenderer`(구현 완료, §2.3) | `StubPdfRenderer`(JSON 덤프) | 낮음 | 교체 가능성보다 격리 목적. weasyprint 렌더 테스트는 시스템 라이브러리 필요해 integration |
 | `AttachmentManager` | `WantedAttachmentManager` | `FixtureAttachmentManager` | 낮음 | `PlatformAdapter`와 별개 축(§11.2e) — 계정에 쌓인 첨부파일 관리. `resume_cleanup.py` 전용 |
+| `CheckpointStore` | `FileCheckpointStore` | `InMemoryCheckpointStore` | 중간 | SUPERVISED 페이지 경계 체크포인트 승인/거절(§2.4c) — nonce처럼 프로세스 경계를 넘지만, 워크플로우가 아니라 activity가 기다린다는 점이 다르다 |
 
 ```python
 # ports/llm.py — 구현을 전혀 모른다

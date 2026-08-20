@@ -5,12 +5,16 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 
 from auto_apply.adapters.attachments.registry import StaticAttachmentRegistry
 from auto_apply.adapters.attachments.wanted import WantedAttachmentManager
+from auto_apply.adapters.checkpoint.file import FileCheckpointStore
+from auto_apply.adapters.checkpoint.memory import InMemoryCheckpointStore
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
 from auto_apply.adapters.credentials.json_queue import JsonQueueCredentialSource
 from auto_apply.adapters.credentials.static import StaticCredentialSource
+from auto_apply.adapters.executor._checkpoint import CheckpointWaiter
 from auto_apply.adapters.executor.agent_browser import AgentBrowserExecutor
 from auto_apply.adapters.executor.playwright import PlaywrightExecutor
 from auto_apply.adapters.executor.replay import ReplayExecutor
@@ -53,6 +57,7 @@ from auto_apply.config import Settings
 from auto_apply.contracts.dto import PersistState
 from auto_apply.contracts.job import JobRecord
 from auto_apply.ports.attachments import AttachmentRegistry
+from auto_apply.ports.checkpoint_store import CheckpointStore
 from auto_apply.ports.clock import Clock, IdGen
 from auto_apply.ports.credentials import CredentialSource
 from auto_apply.ports.executor import RecipeExecutor
@@ -97,6 +102,7 @@ class Container:
     credentials: CredentialSource
     web_agent: WebAgentExecutor
     attachments: AttachmentRegistry
+    checkpoint_store: CheckpointStore
 
 
 def _build_store(cfg: Settings) -> BlobStore:
@@ -152,16 +158,40 @@ def _build_uow(cfg: Settings) -> Callable[[], UnitOfWork]:
             return sqlalchemy_uow_factory(cfg.database_url)
 
 
-def _build_executor(cfg: Settings, clock: Clock, store: BlobStore) -> RecipeExecutor:
+def _build_checkpoint_store(cfg: Settings) -> CheckpointStore:
+    match cfg.checkpoint_store:
+        case "memory":
+            return InMemoryCheckpointStore()
+        case "file":
+            return FileCheckpointStore(cfg.data_dir)
+
+
+def _build_executor(
+    cfg: Settings,
+    clock: Clock,
+    store: BlobStore,
+    notifier: Notifier,
+    checkpoint_store: CheckpointStore,
+    idgen: IdGen,
+) -> RecipeExecutor:
     match cfg.executor:
         case "replay":
             return ReplayExecutor(clock)
         case "playwright":
+            checkpoint = CheckpointWaiter(
+                notifier,
+                checkpoint_store,
+                store,
+                idgen,
+                timeout=timedelta(minutes=cfg.checkpoint_timeout_minutes),
+                poll_interval=timedelta(seconds=cfg.checkpoint_poll_seconds),
+            )
             return PlaywrightExecutor(
                 clock,
                 store,
                 auth_dir=cfg.data_dir / "auth",
                 headless=cfg.playwright_headless,
+                checkpoint=checkpoint,
             )
         case "agent_browser":
             return AgentBrowserExecutor(
@@ -297,17 +327,19 @@ def build_container(cfg: Settings) -> Container:
     portfolio = _build_portfolio(cfg)
     guide = _build_guide(cfg)
     credentials = _build_credentials(cfg)
+    notifier = _build_notifier(cfg, idgen, store)
+    checkpoint_store = _build_checkpoint_store(cfg)
     return Container(
         settings=cfg,
         clock=clock,
         idgen=idgen,
         store=store,
         llm=llm,
-        notifier=_build_notifier(cfg, idgen, store),
+        notifier=notifier,
         uow=_build_uow(cfg),
         registry=_build_registry(cfg),
         recipes=_build_recipes(cfg),
-        executor=_build_executor(cfg, clock, store),
+        executor=_build_executor(cfg, clock, store, notifier, checkpoint_store, idgen),
         generator=SimpleResumeGenerator(
             llm,
             idgen,
@@ -329,4 +361,5 @@ def build_container(cfg: Settings) -> Container:
         credentials=credentials,
         web_agent=_build_web_agent(cfg, clock, store, credentials),
         attachments=_build_attachments(cfg),
+        checkpoint_store=checkpoint_store,
     )

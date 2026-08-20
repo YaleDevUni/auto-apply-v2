@@ -78,6 +78,10 @@ class DecisionRequest(_Frozen):
     # `wf_id = f"repair-{application_id}"`로 그대로 워크플로우 id 를 복원할 수 있다
     # (telegram/bridge.py).
     repair_promotion: bool = False
+    # True 면 SUPERVISED 실행 중 페이지 경계 체크포인트 승인 요청이다
+    # (§ supervised-checkpoint-design) — guide_patch/repair_promotion 처럼 승인/거절 2버튼만.
+    # `artifact_url`엔 체크포인트 스크린샷의 blob 키가 실린다.
+    checkpoint: bool = False
 
 
 class DecisionTicket(_Frozen):

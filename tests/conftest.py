@@ -13,6 +13,7 @@ from auto_apply.activities.repair import RepairActivities
 from auto_apply.activities.resume import ResumeActivities
 from auto_apply.adapters.attachments.fixture import FixtureAttachmentManager
 from auto_apply.adapters.attachments.registry import StaticAttachmentRegistry
+from auto_apply.adapters.checkpoint.memory import InMemoryCheckpointStore
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
 from auto_apply.adapters.credentials.static import StaticCredentialSource
 from auto_apply.adapters.executor.replay import ReplayExecutor
@@ -215,6 +216,10 @@ class Harness:
     # 내고, repair 는 그대로 실패해서(포기) 기존 "M4 까지는 사람에게 넘긴다" 테스트가
     # 그대로 성립한다.
     repair_diff_payloads: list[dict[str, object]] = field(default_factory=list)
+    # activities() 의 executor 는 ReplayExecutor 라 이 store 를 안 쓴다 — telegram/bridge.py
+    # 의 ca/cr(§ supervised-checkpoint-design) 콜백을 container() 로 테스트할 때만 관찰용으로
+    # 공유한다.
+    checkpoint_store: InMemoryCheckpointStore = field(default_factory=InMemoryCheckpointStore)
 
     def _shared_notifier(self, *, telegram: bool = False) -> _NonceSpy:
         """첫 호출이 종류를 정한다(이후는 메모이즈) — REVISE 텔레그램 흐름 테스트는
@@ -320,6 +325,7 @@ class Harness:
             credentials=StaticCredentialSource(),
             web_agent=ReplayWebAgentExecutor(clock),
             attachments=StaticAttachmentRegistry([FixtureAttachmentManager()]),
+            checkpoint_store=self.checkpoint_store,
         )
 
     def states(self, application_id: str) -> list[str]:

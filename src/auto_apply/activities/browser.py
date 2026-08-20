@@ -14,6 +14,7 @@ from auto_apply.contracts.dto import ExecuteInput, ExecutionResult
 from auto_apply.domain.errors import (
     AuthRequired,
     CaptchaEncountered,
+    CheckpointDeclined,
     RecipeExecutionError,
 )
 from auto_apply.ports.executor import RecipeExecutor
@@ -26,7 +27,9 @@ class BrowserActivities:
     @activity.defn(name="execute_application")
     async def execute_application(self, inp: ExecuteInput) -> ExecutionResult:
         try:
-            return await self._executor.run(inp.recipe, inp.ctx, inp.mode)
+            return await self._executor.run(
+                inp.recipe, inp.ctx, inp.mode, heartbeat=activity.heartbeat
+            )
         except RecipeExecutionError as e:
             # details 로 snapshot_key / form_hash 를 넘겨 RepairWorkflow(M4) 가 쓸 수 있게 한다
             raise ApplicationError(
@@ -36,7 +39,7 @@ class BrowserActivities:
                 type=type(e).__name__,
                 non_retryable=True,
             ) from e
-        except (CaptchaEncountered, AuthRequired) as e:
+        except (CaptchaEncountered, AuthRequired, CheckpointDeclined) as e:
             raise ApplicationError(str(e), type=type(e).__name__, non_retryable=True) from e
 
     def all(self) -> list[Callable[..., Any]]:

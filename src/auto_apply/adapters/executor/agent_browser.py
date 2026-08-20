@@ -41,6 +41,7 @@ import contextlib
 import json
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import UTC
 from pathlib import Path
 
@@ -84,8 +85,16 @@ class AgentBrowserExecutor:
         self._headless = headless
 
     async def run(
-        self, recipe: AutomationRecipe, ctx: ExecutionContext, mode: ExecutionMode
+        self,
+        recipe: AutomationRecipe,
+        ctx: ExecutionContext,
+        mode: ExecutionMode,
+        *,
+        heartbeat: Callable[[str], None] | None = None,
     ) -> ExecutionResult:
+        # 체크포인트를 아직 안 지원한다 — Playwright 실행기(§ supervised-checkpoint-design)만
+        # 우선 구현했다. agent_browser 로 SUPERVISED 를 쓰면 오늘은 그냥 체크포인트 없이 돈다.
+        del heartbeat
         state_path = self._auth_dir / f"{recipe.platform}.json"
         if not state_path.is_file():
             raise AuthRequired(

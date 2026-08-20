@@ -4,6 +4,7 @@ RecipeExecutor port 의 두 번째 구현이며, Playwright 어댑터(M2)의 테
 mode 에 따른 '제출 여부' 결정 로직이 executor 계약의 핵심이므로 여기서도 그대로 지킨다.
 """
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from auto_apply.contracts.dto import ExecutionContext, ExecutionResult
@@ -32,8 +33,15 @@ class ReplayExecutor:
         self._authed_platforms = authed_platforms
 
     async def run(
-        self, recipe: AutomationRecipe, ctx: ExecutionContext, mode: ExecutionMode
+        self,
+        recipe: AutomationRecipe,
+        ctx: ExecutionContext,
+        mode: ExecutionMode,
+        *,
+        heartbeat: Callable[[str], None] | None = None,
     ) -> ExecutionResult:
+        # 체크포인트를 안 쓴다 — replay 는 진짜 브라우저가 없어 사람이 볼 스크린샷이 없다.
+        del heartbeat
         if self._authed_platforms is not None and recipe.platform not in self._authed_platforms:
             raise AuthRequired(f"{recipe.platform} 로그인 상태가 없다")
         if self._captcha:

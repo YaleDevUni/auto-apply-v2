@@ -277,8 +277,10 @@ try/except 픽스(=알고 있는 실패 지점을 워크플로우 안에서 잡�
 (`MAX_SANDBOX_ATTEMPTS=2`), 샌드박스 dry-run은 새 실행 모드 없이 기존
 `ExecutionMode.DRY_RUN`을 그대로 쓴다. 승격은 "supervised 실행이 성공하면 자동 승격"이
 아니라 repair 워크플로우 자신이 그 자리에서 Telegram 승인을 받아 끝낸다 — `SUPERVISED`
-모드가 실행 중 사람을 멈춰 세우는 메커니즘이 실행기에 아직 없어서다(별도 갭으로 남김).
-child workflow dedupe(`repair-{platform}-{form_hash}`)는 phase 1에서 "전례 없는 패턴"으로
+모드가 실행 중 사람을 멈춰 세우는 메커니즘(아래 SUPERVISED 체크포인트 항목에서 이후 구현)이
+이 시점엔 아직 실행기에 없었고, 있어도 승격 여부가 임의의 미래 지원 건 실행 결과에 걸리는
+건 `RepairResult`를 동기적으로 기다리는 `ApplicationWorkflow` 흐름과 안 맞는다는 판단은
+그대로다. child workflow dedupe(`repair-{platform}-{form_hash}`)는 phase 1에서 "전례 없는 패턴"으로
 미해결로 남겼던 지점인데, "이미 도는 수선에 붙어서 기다리기"는 채택하지 않고
 `WorkflowAlreadyStartedError`를 잡아 그 지원 건만 포기시키는 쪽으로 결정했다(Temporal
 워크플로우 코드 안에서 child가 아닌 임의 워크플로우의 완료를 기다릴 표준 API가 없어서 —
@@ -288,3 +290,22 @@ child workflow dedupe(`repair-{platform}-{form_hash}`)는 phase 1에서 "전례 
 타고, `application_id` 필드에 `f"{platform}-{form_hash}"`를 담아 `telegram/bridge.py`가
 `pa`/`pr` 콜백에서 `repair-{...}` workflow id를 복원한다. 구현·유닛/워크플로우/e2e
 테스트·`make check` 통과 완료. 자세한 설계와 결정 근거는 ARCHITECTURE.md §2.4.
+
+**SUPERVISED 페이지 경계 체크포인트** (§2.4c) — `ExecutionMode.SUPERVISED`가 이름만 있고
+실제로는 `LIVE`와 동일하게 그냥 제출까지 진행되던 갭을 메웠다. "인적사항 완료 → 스샷 승인
+→ 자기소개서 페이지 → 반복" UX를 위해, 단일 `execute_application` activity 호출 안에서
+브라우저를 계속 띄운 채 페이지 경계마다 `activity.heartbeat()`로 생존신호를 보내며 짧게
+(기본 30분) 승인을 폴링 대기하는 방향(디태치드 세션-영속 인프라도, 매번 처음부터 재실행도
+아닌 절충)으로 확정해 구현했다. `Action.checkpoint`(신규, recipe가 페이지 경계를 표시) +
+`SUBMIT`은 이 플래그 없이도 SUPERVISED에서 항상 강제 체크포인트(CLAUDE.md 절대규칙 4) +
+`CheckpointStore` port(`FileCheckpointStore`/`InMemoryCheckpointStore`, nonce 발급
+프로세스(worker activity)와 승인 프로세스(webhook/리스너)가 갈라져 프로세스 메모리로 공유가
+안 된다는 점은 기존 nonce와 같지만 여기서 기다리는 건 워크플로우가 아니라 activity 자신이라
+signal을 못 쓴다) + `CheckpointWaiter`(port 아님, Notifier/CheckpointStore/BlobStore/IdGen
+조합 클래스, `adapters/executor/_checkpoint.py`) + `RecipeExecutor.run()`에 `heartbeat`
+키워드 인자 추가(activity가 `temporalio.activity.heartbeat`를 plain callable로 넘겨 adapters
+레이어가 temporalio를 안 봐도 되게) + `PlaywrightExecutor` 배선(`EXECUTOR=agent_browser`는
+아직 미지원) + `CheckpointDeclined`(거절/타임아웃 둘 다 이 하나로, `NON_RETRYABLE`) + 텔레그램
+`ca`/`cr` 콜백(워크플로우 signal이 아니라 `checkpoint_store.record_decision` 직접 호출)까지
+구현·유닛/통합 테스트·`make check`(+ 실제 Postgres/Temporal/Playwright integration까지)
+통과 완료. 자세한 설계는 ARCHITECTURE.md §2.4c.

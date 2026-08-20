@@ -9,6 +9,7 @@ ReplayExecutor 와 완전히 같은 계약을 지킨다 — 그래서 contract t
 """
 
 import mimetypes
+from collections.abc import Callable
 from datetime import UTC
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Locator, Page, async_playwright
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
+from auto_apply.adapters.executor._checkpoint import CheckpointWaiter
 from auto_apply.contracts.dto import ExecutionContext, ExecutionResult
 from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.domain.enums import AttemptOutcome, ExecutionMode
@@ -46,14 +48,21 @@ class PlaywrightExecutor:
         *,
         auth_dir: Path,
         headless: bool = True,
+        checkpoint: CheckpointWaiter | None = None,
     ) -> None:
         self._clock = clock
         self._store = store
         self._auth_dir = auth_dir
         self._headless = headless
+        self._checkpoint = checkpoint
 
     async def run(
-        self, recipe: AutomationRecipe, ctx: ExecutionContext, mode: ExecutionMode
+        self,
+        recipe: AutomationRecipe,
+        ctx: ExecutionContext,
+        mode: ExecutionMode,
+        *,
+        heartbeat: Callable[[str], None] | None = None,
     ) -> ExecutionResult:
         state_path = self._auth_dir / f"{recipe.platform}.json"
         if not state_path.is_file():
@@ -68,14 +77,19 @@ class PlaywrightExecutor:
                 context = await browser.new_context(storage_state=str(state_path))
                 page = await context.new_page()
                 try:
-                    return await self._run_actions(recipe, ctx, mode, page)
+                    return await self._run_actions(recipe, ctx, mode, page, heartbeat)
                 finally:
                     await context.close()
             finally:
                 await browser.close()
 
     async def _run_actions(
-        self, recipe: AutomationRecipe, ctx: ExecutionContext, mode: ExecutionMode, page: Page
+        self,
+        recipe: AutomationRecipe,
+        ctx: ExecutionContext,
+        mode: ExecutionMode,
+        page: Page,
+        heartbeat: Callable[[str], None] | None,
     ) -> ExecutionResult:
         artifacts: list[str] = []
         for i, action in enumerate(recipe.actions):
@@ -88,6 +102,23 @@ class PlaywrightExecutor:
                         detail="dry_run: submit 을 실행하지 않았다",
                     )
                 await self._check_captcha(page, recipe, ctx)
+
+            # SUBMIT 은 recipe 가 checkpoint 를 안 세워도 항상 막는다(CLAUDE.md 절대규칙 4).
+            # DRY_RUN(샌드박스 포함)은 위에서 이미 return 했으므로 여기 닿지 않는다 — 자동으로
+            # 안전하다.
+            if (
+                mode is ExecutionMode.SUPERVISED
+                and self._checkpoint is not None
+                and (action.checkpoint or action.type is ActionType.SUBMIT)
+            ):
+                screenshot = await page.screenshot()
+                await self._checkpoint.wait(
+                    application_id=ctx.application_id,
+                    attempt=ctx.attempt,
+                    label=f"{i:02d}:{action.type}",
+                    screenshot=screenshot,
+                    heartbeat=heartbeat,
+                )
 
             key = await self._run_one(i, action, ctx, recipe, page)
             if key:
