@@ -40,6 +40,19 @@ def test_missing_profile_key_raises():
         resolve_selector(action, {})
 
 
+def test_empty_resolved_value_raises():
+    """빈 값을 그대로 꽂으면 :has-text("") 처럼 의도와 다른 selector 가 만들어진다 — 값이 없는
+
+    경우와 구분해서 막는다. 이 selector 를 쓰는 액션은 optional=True 로 짜서 건너뛰게 한다."""
+    action = Action(
+        type=ActionType.CLICK,
+        selector='li:has-text("{value}") input[type="checkbox"]',
+        value_ref="profile.portfolio_filename",
+    )
+    with pytest.raises(ValueError, match="비어"):
+        resolve_selector(action, {"portfolio_filename": ""})
+
+
 def test_value_containing_quote_is_escaped():
     action = Action(
         type=ActionType.CLICK,

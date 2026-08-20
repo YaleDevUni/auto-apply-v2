@@ -85,6 +85,29 @@ def _templated_click_recipe(*, goto: str) -> AutomationRecipe:
     )
 
 
+def _optional_missing_value_recipe(*, goto: str) -> AutomationRecipe:
+    """optional=True 인 액션은 selector 치환에 쓸 값이 없어도(§3, resolve_selector) 스텝만
+
+    건너뛰고 전체 실행은 성공해야 한다 — 예: 포트폴리오 카테고리가 판정되지 않은 경우."""
+    return AutomationRecipe(
+        platform="fixture",
+        version=1,
+        status="active",
+        form_hash="h-contract-3",
+        actions=[
+            Action(type=ActionType.GOTO, value_literal=goto),
+            Action(
+                type=ActionType.CLICK,
+                selector='li:has-text("{value}") input[type="checkbox"]',
+                value_ref="profile.portfolio_filename",  # ctx.profile 에 없다
+                timeout_ms=300,
+                optional=True,
+            ),
+        ],
+        success_signals=["지원이 완료되었습니다"],
+    )
+
+
 def _replay_scenarios() -> dict[str, Scenario]:
     clock = SystemClock()
     recipe = _recipe(goto="https://fixture.local/jobs/1")  # replay 는 실제로 열지 않는다
@@ -102,6 +125,11 @@ def _replay_scenarios() -> dict[str, Scenario]:
             ReplayExecutor(clock),
             _templated_click_recipe(goto="https://fixture.local/jobs/1"),
             ExecutionContext(application_id="app_1", attempt=1, profile=_TEMPLATED_PROFILE),
+        ),
+        "optional_missing_value": Scenario(
+            ReplayExecutor(clock),
+            _optional_missing_value_recipe(goto="https://fixture.local/jobs/1"),
+            ExecutionContext(application_id="app_1", attempt=1, profile={}),
         ),
     }
 
@@ -146,6 +174,11 @@ def _playwright_scenarios(tmp_path: Path) -> dict[str, Scenario]:
             executor(auth_dir),
             _templated_click_recipe(goto=templated_url),
             ExecutionContext(application_id="app_1", attempt=1, profile=_TEMPLATED_PROFILE),
+        ),
+        "optional_missing_value": Scenario(
+            executor(auth_dir),
+            _optional_missing_value_recipe(goto=form_url),
+            ExecutionContext(application_id="app_1", attempt=1, profile={}),
         ),
     }
 
@@ -200,5 +233,13 @@ async def test_templated_click_resolves_selector_from_profile(
     달라지는 텍스트(방금 올린 이력서 파일명, 카테고리별 포트폴리오 파일명 등)로 매칭 대상을
     좁히는 용도(§3)."""
     s = scenarios["templated_click"]
+    result = await s.executor.run(s.recipe, s.ctx, ExecutionMode.LIVE)
+    assert result.outcome is AttemptOutcome.SUCCEEDED
+
+
+async def test_optional_action_skipped_when_selector_value_missing(
+    scenarios: dict[str, Scenario],
+) -> None:
+    s = scenarios["optional_missing_value"]
     result = await s.executor.run(s.recipe, s.ctx, ExecutionMode.LIVE)
     assert result.outcome is AttemptOutcome.SUCCEEDED

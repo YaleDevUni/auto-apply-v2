@@ -8,6 +8,7 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -56,6 +57,7 @@ async def run_execution(
     recipe: AutomationRecipe,
     attempt_no: int,
     resume_pdf_key: str,
+    resume_content: dict[str, object],
     persist: Callable[[ApplicationState], Awaitable[None]],
 ) -> ExecutionOutcome:
     """load_active_recipe 이후 ~ 최종 상태 결정까지. 매 시도를 `application_attempts`에
@@ -77,7 +79,18 @@ async def run_execution(
                 ctx=ExecutionContext(
                     application_id=cmd.application_id,
                     attempt=attempt_no,
-                    profile={"email": "user@example.com", "name": "지원자"},
+                    profile={
+                        "job_url": cmd.job_url,
+                        "name": str(resume_content.get("name", "")),
+                        "email": str(resume_content.get("email", "")),
+                        "phone": str(resume_content.get("phone", "")),
+                        # 플랫폼 화면에 그대로 노출되는 이름이라 selector 매칭 기준이 된다
+                        # (실행기가 blob key 의 마지막 경로 요소를 업로드 파일명으로 쓴다).
+                        "resume_filename": Path(resume_pdf_key).name,
+                        # 비어 있을 수 있다(카테고리 판정이 안 됐거나 매칭되는 파일이 없음) —
+                        # 이 값을 쓰는 Recipe 액션은 optional=True 로 짜서 없으면 건너뛴다.
+                        "portfolio_filename": str(resume_content.get("portfolio_filename", "")),
+                    },
                     upload_keys={"resume": resume_pdf_key},
                 ),
                 mode=mode,

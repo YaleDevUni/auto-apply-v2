@@ -22,6 +22,7 @@ from auto_apply.adapters.notifier.telegram import TelegramNotifier
 from auto_apply.adapters.pdf.stub import StubPdfRenderer
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
 from auto_apply.adapters.platform.registry import StaticPlatformRegistry
+from auto_apply.adapters.portfolio.static import StaticPortfolioSource
 from auto_apply.adapters.profile.static import StaticProfileSource
 from auto_apply.adapters.recipe.memory import InMemoryRecipeSource
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
@@ -67,6 +68,10 @@ def _sample_facts(user_id: str = "u1") -> list[Fact]:
 
 def _sample_profile(user_id: str = "u1") -> StaticProfileSource:
     return StaticProfileSource([Profile(user_id=user_id, name="테스트 사용자")])
+
+
+def _sample_portfolio() -> StaticPortfolioSource:
+    return StaticPortfolioSource()  # 빈 매핑 — 카테고리 판정은 이 테스트 스위트의 관심사가 아니다
 
 
 class _FakeBot:
@@ -241,7 +246,12 @@ class Harness:
         # 같은 payload 큐를 순서대로 소비해서 스키마가 안 맞는 값을 뽑아갈 수 있다.
         resume = ResumeActivities(
             SimpleResumeGenerator(
-                StubLLM(payloads=list(_RESUME_PAYLOADS)), idgen, facts, _sample_profile(), guide
+                StubLLM(payloads=list(_RESUME_PAYLOADS)),
+                idgen,
+                facts,
+                _sample_profile(),
+                _sample_portfolio(),
+                guide,
             ),
             SimpleResumeReviewer(facts),
             StubPdfRenderer(store),
@@ -262,6 +272,7 @@ class Harness:
         llm = StubLLM(payloads=list(_RESUME_PAYLOADS))
         facts = StaticFactSource(_sample_facts())
         profile = _sample_profile()
+        portfolio = _sample_portfolio()
         guide = self._shared_guide()
         rows = self.rows
         attempt_rows = self.attempt_rows
@@ -279,13 +290,14 @@ class Harness:
             registry=StaticPlatformRegistry([FixturePlatformAdapter(eligible=self.eligible)]),
             recipes=InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)}),
             executor=ReplayExecutor(clock, fail_selectors=self.fail_selectors),
-            generator=SimpleResumeGenerator(llm, idgen, facts, profile, guide),
+            generator=SimpleResumeGenerator(llm, idgen, facts, profile, portfolio, guide),
             reviewer=SimpleResumeReviewer(facts),
             pdf=StubPdfRenderer(store),
             job_sources=[FixtureJobSource()],
             matching_config=StaticMatchingConfigSource(),
             facts=facts,
             profile=profile,
+            portfolio=portfolio,
             guide=guide,
         )
 

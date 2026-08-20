@@ -113,7 +113,11 @@ class PlaywrightExecutor:
     ) -> str | None:
         try:
             return await self._dispatch(index, action, ctx, page)
-        except (PlaywrightTimeoutError, PlaywrightError) as e:
+        except (PlaywrightTimeoutError, PlaywrightError, ValueError) as e:
+            # ValueError = value_ref/selector 치환에 쓸 값이 없거나 비어 있다(resolve_selector,
+            # _resolve_value, _resolve_upload). Playwright 오류와 같은 급으로 취급한다 — optional
+            # 이면 이 스텝만 건너뛴다(예: 카테고리 판정이 안 돼 포트폴리오 selector 에 꽂을 값이
+            # 없는 경우).
             if action.optional:
                 return None
             snapshot_key = await self._snapshot(page, recipe, ctx, index)

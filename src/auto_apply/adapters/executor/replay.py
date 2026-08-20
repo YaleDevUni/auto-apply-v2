@@ -39,33 +39,37 @@ class ReplayExecutor:
         if self._captcha:
             raise CaptchaEncountered(f"{recipe.platform} 에서 CAPTCHA 감지")
 
+        snapshot_key = f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/replay.html"
+
         artifacts: list[str] = []
         for i, action in enumerate(recipe.actions):
             if action.selector:
                 try:
                     selector = resolve_selector(action, ctx.profile)
                 except ValueError as e:
+                    # PlaywrightExecutor 와 같은 계약: optional 이면 이 스텝만 건너뛴다(예: 카테고리
+                    # 판정이 안 돼 포트폴리오 selector 에 꽂을 값이 없는 경우).
+                    if action.optional:
+                        continue
                     raise RecipeExecutionError(
-                        str(e),
-                        snapshot_key=(
-                            f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/replay.html"
-                        ),
-                        form_hash=recipe.form_hash,
+                        str(e), snapshot_key=snapshot_key, form_hash=recipe.form_hash
                     ) from e
                 if selector in self._fail_selectors:
+                    if action.optional:
+                        continue
                     raise RecipeExecutionError(
                         f"selector 를 찾을 수 없다: {selector}",
-                        snapshot_key=(
-                            f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/replay.html"
-                        ),
+                        snapshot_key=snapshot_key,
                         form_hash=recipe.form_hash,
                     )
             if action.type is ActionType.FILL and action.value_ref:
                 key = action.value_ref.removeprefix("profile.")
                 if key not in ctx.profile:
+                    if action.optional:
+                        continue
                     raise RecipeExecutionError(
                         f"프로필에 값이 없다: {action.value_ref}",
-                        snapshot_key=f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/replay.html",
+                        snapshot_key=snapshot_key,
                         form_hash=recipe.form_hash,
                     )
             if action.type is ActionType.SUBMIT and mode is ExecutionMode.DRY_RUN:
