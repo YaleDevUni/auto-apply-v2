@@ -10,6 +10,8 @@ from auto_apply.activities.application import ApplicationActivities
 from auto_apply.activities.browser import BrowserActivities
 from auto_apply.activities.guide import GuideActivities
 from auto_apply.activities.resume import ResumeActivities
+from auto_apply.adapters.attachments.fixture import FixtureAttachmentManager
+from auto_apply.adapters.attachments.registry import StaticAttachmentRegistry
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
 from auto_apply.adapters.credentials.static import StaticCredentialSource
 from auto_apply.adapters.executor.replay import ReplayExecutor
@@ -307,6 +309,7 @@ class Harness:
             guide=guide,
             credentials=StaticCredentialSource(),
             web_agent=ReplayWebAgentExecutor(clock),
+            attachments=StaticAttachmentRegistry([FixtureAttachmentManager()]),
         )
 
     def states(self, application_id: str) -> list[str]:
