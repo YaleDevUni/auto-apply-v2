@@ -480,6 +480,27 @@ class AutomationRecipe(BaseModel):
 Playwright `storage_state`를 암호화 저장하고 만료 시 재요청한다. CAPTCHA를 만나면
 `CaptchaEncountered`(non-retryable)로 즉시 중단하고 사람에게 넘긴다 — 우회 시도는 하지 않는다.
 
+**실행 엔진 2번째 선택지 — `AgentBrowserExecutor`(`EXECUTOR=agent_browser`).** Playwright를
+대체하지 않는다 — 같은 `RecipeExecutor` 계약을 지키는 대역이 하나 더 생긴 것뿐이고,
+`test_executor_contract.py`가 `replay`/`playwright`/`agent_browser` 셋에 동일하게 돈다.
+존재 이유는 CDP accessibility tree 해석 차이다: `recipe-builder`가 라이브 디버깅에 쓰는
+agent-browser CLI 와 프로덕션 실행기(Playwright)가 같은 selector 를 다르게 해석하는 사례를
+wanted 지원 폼에서 실측했다(2026-08-20, 예: 파일유형 라디오 버튼 — agent-browser 는
+`role=radio[name="이력서"]`류 접근성 매칭이 바로 됐는데 Playwright 의 자체 accessible-name
+계산은 못 찾아서 `value="RESUME"` 속성 selector 로 우회해야 했다). 디버깅 엔진과 실행 엔진을
+agent-browser 로 통일하면 이 번역 계층 버그가 원천적으로 없어진다.
+
+agent-browser 는 브라우저 네이티브 `document.querySelector`로 raw CSS 를 해석해서, Playwright
+가 CSS 위에 얹은 확장 문법(`:has-text()`, `:text-is()`, `text=`/`role=[name=]` 같은 엔진
+프리픽스)을 그대로 못 읽는다 — `AgentBrowserExecutor`는 `domain/agent_browser_selector.py`로
+이 셋을 분류해서 plain CSS는 그대로, 엔진-프리픽스는 agent-browser의 `find` 서브커맨드로,
+`:has-text()`/`:text-is()`는 JS `eval`로 직접 찾아 실행한다(어댑터 docstring에 지원 범위
+전체가 있다). `SELECT`/`UPLOAD`는 plain CSS만 허용 — `<input type=file>` 값은 JS로 못 채운다.
+새 recipe를 이 엔진 대상으로 짤 때 어떤 selector 문법을 쓸지(엔진마다 다르게 고를지, 아니면
+`EXECUTOR` 값을 보고 recipe-builder가 그 문법에 맞출지)는 아직 정하지 않았다 — 지금은 두
+엔진이 이미 있는 `var/recipes/*.json` 문법(Playwright 확장 포함)을 최대한 그대로 실행할 수
+있게만 만들어뒀다.
+
 ---
 
 ## 4. 데이터 모델
@@ -654,7 +675,7 @@ auto-apply-v2/
 │   │   ├── storage/s3.py · storage/local.py
 │   │   ├── notifier/telegram.py · notifier/console.py
 │   │   ├── db/                   SQLAlchemy models · repositories · uow
-│   │   ├── executor/playwright.py · executor/replay.py
+│   │   ├── executor/playwright.py · executor/agent_browser.py · executor/replay.py
 │   │   ├── platform/wanted.py · linkedin.py · company.py · registry.py
 │   │   ├── job_source/wanted.py · saramin.py · jasoseol.py · fixture.py (§11.2b)
 │   │   ├── matching_config/yaml_file.py · static.py (§11.2b)
@@ -762,7 +783,7 @@ Grafana 스택 전체를 초기에 세우지 않는다. 대신 **Temporal UI를 
 | `BlobStore` | MinIO(S3) | `LocalBlobStore` | **높음** | 로컬 개발에서 컨테이너 하나 덜 띄움 |
 | `Notifier` | Telegram | `ConsoleNotifier` | **높음** | 승인 흐름 테스트가 봇 없이 가능 |
 | `*Repository` + `UnitOfWork` | SQLAlchemy/Postgres | `InMemoryRepo` | 중간 | 실제 목적은 DB 교체보다 **테스트 속도** |
-| `RecipeExecutor` | Playwright | `ReplayExecutor` (고정 HTML) | **높음** | dry_run/supervised/live는 이 port의 모드 |
+| `RecipeExecutor` | Playwright | `ReplayExecutor`(고정 HTML) · `AgentBrowserExecutor`(agent-browser CLI, §3) | **높음** | dry_run/supervised/live는 이 port의 모드. `EXECUTOR=playwright`\|`agent_browser`\|`replay` |
 | `PlatformAdapter` | wanted | linkedin, company | **높음** | 확장 지점. registry로 등록 |
 | `JobSource` | wanted/saramin/jasoseol | `FixtureJobSource` | **높음** | 공고 대량 수집. §11.2b |
 | `MatchingConfigSource` | `YamlMatchingConfigSource` | `StaticMatchingConfigSource` | 중간 | 하드컷/트랙 규칙. §11.2b |

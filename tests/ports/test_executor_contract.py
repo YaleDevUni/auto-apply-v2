@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from auto_apply.adapters.clock.system import SystemClock
+from auto_apply.adapters.executor.agent_browser import AgentBrowserExecutor
 from auto_apply.adapters.executor.playwright import PlaywrightExecutor
 from auto_apply.adapters.executor.replay import ReplayExecutor
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
@@ -183,11 +184,62 @@ def _playwright_scenarios(tmp_path: Path) -> dict[str, Scenario]:
     }
 
 
-@pytest.fixture(params=["replay", "playwright"])
+def _agent_browser_scenarios(tmp_path: Path) -> dict[str, Scenario]:
+    clock = SystemClock()
+    store = InMemoryBlobStore()
+    ctx = ExecutionContext(application_id="app_1", attempt=1, profile=_PROFILE)
+
+    form_html = (
+        '<form id="form"><input id="email"/>'
+        '<button id="submit" type="button">보내기</button></form>'
+    )
+    form_url = _write_html(tmp_path / "ab-form.html", form_html)
+    captcha_url = _write_html(tmp_path / "ab-captcha.html", '<div class="g-recaptcha"></div>')
+    templated_html = (
+        '<button id="btn-python" onclick="'
+        "document.getElementById('clicked').textContent='python'\">Python</button>"
+        '<button id="btn-node" onclick="'
+        "document.getElementById('clicked').textContent='node'\">Node</button>"
+        '<div id="clicked"></div>'
+    )
+    templated_url = _write_html(tmp_path / "ab-templated.html", templated_html)
+
+    auth_dir = tmp_path / "ab-auth"
+    auth_dir.mkdir()
+    (auth_dir / "fixture.json").write_text('{"cookies": [], "origins": []}')
+    empty_auth_dir = tmp_path / "ab-no-auth"
+    empty_auth_dir.mkdir()
+
+    def executor(auth_dir: Path) -> AgentBrowserExecutor:
+        return AgentBrowserExecutor(clock, store, auth_dir=auth_dir, headless=True)
+
+    return {
+        "ok": Scenario(executor(auth_dir), _recipe(goto=form_url), ctx),
+        "missing_selector": Scenario(
+            executor(auth_dir), _recipe(goto=form_url, submit_selector="#does-not-exist"), ctx
+        ),
+        "captcha": Scenario(executor(auth_dir), _recipe(goto=captcha_url), ctx),
+        "unauthenticated": Scenario(executor(empty_auth_dir), _recipe(goto=form_url), ctx),
+        "templated_click": Scenario(
+            executor(auth_dir),
+            _templated_click_recipe(goto=templated_url),
+            ExecutionContext(application_id="app_1", attempt=1, profile=_TEMPLATED_PROFILE),
+        ),
+        "optional_missing_value": Scenario(
+            executor(auth_dir),
+            _optional_missing_value_recipe(goto=form_url),
+            ExecutionContext(application_id="app_1", attempt=1, profile={}),
+        ),
+    }
+
+
+@pytest.fixture(params=["replay", "playwright", "agent_browser"])
 def scenarios(request: pytest.FixtureRequest, tmp_path: Path) -> dict[str, Scenario]:
     if request.param == "replay":
         return _replay_scenarios()
-    return _playwright_scenarios(tmp_path)
+    if request.param == "playwright":
+        return _playwright_scenarios(tmp_path)
+    return _agent_browser_scenarios(tmp_path)
 
 
 async def test_dry_run_stops_before_submit(scenarios: dict[str, Scenario]) -> None:

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
 from auto_apply.adapters.credentials.json_queue import JsonQueueCredentialSource
 from auto_apply.adapters.credentials.static import StaticCredentialSource
+from auto_apply.adapters.executor.agent_browser import AgentBrowserExecutor
 from auto_apply.adapters.executor.playwright import PlaywrightExecutor
 from auto_apply.adapters.executor.replay import ReplayExecutor
 from auto_apply.adapters.facts.static import StaticFactSource
@@ -156,6 +157,14 @@ def _build_executor(cfg: Settings, clock: Clock, store: BlobStore) -> RecipeExec
                 clock,
                 store,
                 auth_dir=cfg.data_dir / "auth",
+                headless=cfg.playwright_headless,
+            )
+        case "agent_browser":
+            return AgentBrowserExecutor(
+                clock,
+                store,
+                auth_dir=cfg.data_dir / "auth",
+                binary=cfg.agent_browser_binary,
                 headless=cfg.playwright_headless,
             )
 

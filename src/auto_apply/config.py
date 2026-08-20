@@ -17,9 +17,13 @@ class Settings(BaseSettings):
     storage: Literal["local", "memory", "s3"] = "local"
     notifier: Literal["console", "telegram"] = "console"
     resume_engine: Literal["simple", "langgraph"] = "simple"
-    executor: Literal["replay", "playwright"] = "replay"
+    executor: Literal["replay", "playwright", "agent_browser"] = "replay"
     repository: Literal["memory", "file", "postgres"] = "file"
     playwright_headless: bool = True
+    # EXECUTOR=agent_browser 일 때만 — 이 머신에 `npm i -g agent-browser && agent-browser install`
+    # 이 돼 있어야 한다. headless 는 playwright_headless 를 그대로 공유한다(같은 의미의 설정을
+    # executor 별로 중복시키지 않는다).
+    agent_browser_binary: str = "agent-browser"
     job_source: Literal["fixture", "live"] = "fixture"
     matching_config: Literal["static", "yaml"] = "yaml"
     facts_source: Literal["static", "yaml"] = "yaml"
