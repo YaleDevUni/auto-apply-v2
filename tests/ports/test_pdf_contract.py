@@ -27,7 +27,9 @@ async def test_weasyprint_renderer_writes_a_real_pdf():
 
     store = InMemoryBlobStore()
     result = await WeasyPrintPdfRenderer(store).render(DRAFT)
-    assert result.blob_key == "resumes/r1.pdf"
+    # 채용담당자가 파일 목록에서 이력서/포트폴리오를 구별할 수 있게 사람이 읽을 수 있는
+    # 이름으로 짓는다 (domain.resume_cleanup.build_resume_filename).
+    assert result.blob_key == "resumes/테스터_이력서_r1.pdf"
     blob = await store.get(result.blob_key)
     assert blob.startswith(b"%PDF")
     assert result.bytes_written == len(blob)

@@ -1049,9 +1049,17 @@ workflow 코드 안에서 잡아 `NEEDS_HUMAN`으로 정상 종료시키는 것�
 
 ### 11.2e 플랫폼 첨부파일 정리 — `AttachmentManager` / `resume_cleanup.py`
 
-Recipe는 지원마다 `resumes/{resume_id}.pdf`(`resume_id = UuidIdGen.new_id("res")` →
-`res_<16-hex>.pdf`)로 이력서를 **새로** 렌더링해 업로드한다 — 과거에 올린 파일을 재사용하는
-경로가 없다. 그 결과 지원(dry_run 포함) 1회 = 플랫폼 계정에 영구히 남는 고아 파일 1개다.
+Recipe는 지원마다 `resumes/{filename}.pdf`로 이력서를 **새로** 렌더링해 업로드한다 — 과거에
+올린 파일을 재사용하는 경로가 없다. 그 결과 지원(dry_run 포함) 1회 = 플랫폼 계정에 영구히
+남는 고아 파일 1개다.
+
+파일명은 `domain/resume_cleanup.build_resume_filename(name, resume_id)`가 짓는다 —
+`{이름}_이력서_{resume_id의 16-hex}.pdf`(예: `박예일_이력서_2942bf8c75c249e7.pdf`).
+원래 `res_<16-hex>.pdf`처럼 내부 ID를 그대로 노출하는 이름이었는데, 채용담당자가 원티드
+업로드 목록에서 파일명만 보고 이력서인지 포트폴리오인지 구별할 수 없다는 문제(실사용
+피드백, 2026-08-20)로 사람이 읽을 수 있는 접두부(`{이름}_이력서_`)를 붙이고 뒤에 해시
+접미사를 남겼다 — 이 해시가 `_GENERATED_RESUME` 정규식이 "자동 생성물"만 골라 지우는
+근거라, 이름을 짓는 함수와 정규식은 같은 파일에 두고 같이만 바꾼다.
 실측(2026-08-20, agent-browser 라이브 탐색으로 wanted `/cv/list` 확인): 이 축적이 실제
 문제였고(wanted-resume-list-cleanup-backlog), wanted는 `DELETE
 /api/chaos/resumes/v1/{key}` 삭제 API를 제공하며 **쿠키 인증만으로** 동작한다(Authorization
@@ -1062,8 +1070,8 @@ storage_state(`var/auth/wanted.json`)를 httpx 로 그대로 재사용하면 되
 `PlatformAdapter`(공고 조회/지원 실행, §11.2)와는 다른 축이라 새 port
 `AttachmentManager`(`list_attachments`/`delete_attachment`, `StaticAttachmentRegistry`로
 등록 — `PlatformRegistry`와 같은 allowlist 패턴)를 만들었다. 판정은 순수 함수
-`domain/resume_cleanup.select_deletable`이 한다 — `res_<16-hex>.pdf` 패턴(또는 알려진
-테스트 산출물 `recipe-test-dummy.pdf`)에 맞는 `application/pdf` 만 대상이다. 포트폴리오
+`domain/resume_cleanup.select_deletable`이 한다 — `{이름}_이력서_<16-hex>.pdf` 패턴(또는
+알려진 테스트 산출물 `recipe-test-dummy.pdf`)에 맞는 `application/pdf` 만 대상이다. 포트폴리오
 파일(`config/portfolio_map.yaml`, 고정 파일명으로 여러 지원에 재선택됨)과 사람이 직접 올린
 이력서, `content_type == "wanted/resume"`(이 프로젝트가 만들지 않는 원티드 자체 이력서
 빌더 문서)는 이름이 패턴에 안 맞아 자동으로 보존된다.
