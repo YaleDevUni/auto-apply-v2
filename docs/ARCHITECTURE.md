@@ -805,6 +805,7 @@ Grafana 스택 전체를 초기에 세우지 않는다. 대신 **Temporal UI를 
 | `ResumeGenerator` / `ResumeReviewer` | plain 함수(`SimpleResume*`) | — (§9.2 보류, 아직 2번째 구현 없음) | **높음** | LangGraph/PydanticAI 등, 프레임워크는 미정 — §9.2 보류 결정을 가능하게 하는 seam |
 | `Clock` / `IdGen` | 시스템 | 고정값 | 중간 | 테스트 결정성 |
 | `PdfRenderer` | `WeasyPrintPdfRenderer`(구현 완료, §2.3) | `StubPdfRenderer`(JSON 덤프) | 낮음 | 교체 가능성보다 격리 목적. weasyprint 렌더 테스트는 시스템 라이브러리 필요해 integration |
+| `AttachmentManager` | `WantedAttachmentManager` | `FixtureAttachmentManager` | 낮음 | `PlatformAdapter`와 별개 축(§11.2e) — 계정에 쌓인 첨부파일 관리. `resume_cleanup.py` 전용 |
 
 ```python
 # ports/llm.py — 구현을 전혀 모른다
@@ -1045,6 +1046,39 @@ workflow 코드 안에서 잡아 `NEEDS_HUMAN`으로 정상 종료시키는 것�
 (3) 콜백이 실제로 어떤 payload로 오는지(Nexus completion 프로토콜 포맷 추정) 검증 못 했다.
 안정적으로 보장된 visibility API 폴링을 두고 비공식·불안정 표면으로 갈아탈 이유가 없다는
 판단이다 — 나중에 같은 질문이 또 나오면 이 문단으로 답할 것.
+
+### 11.2e 플랫폼 첨부파일 정리 — `AttachmentManager` / `resume_cleanup.py`
+
+Recipe는 지원마다 `resumes/{resume_id}.pdf`(`resume_id = UuidIdGen.new_id("res")` →
+`res_<16-hex>.pdf`)로 이력서를 **새로** 렌더링해 업로드한다 — 과거에 올린 파일을 재사용하는
+경로가 없다. 그 결과 지원(dry_run 포함) 1회 = 플랫폼 계정에 영구히 남는 고아 파일 1개다.
+실측(2026-08-20, agent-browser 라이브 탐색으로 wanted `/cv/list` 확인): 이 축적이 실제
+문제였고(wanted-resume-list-cleanup-backlog), wanted는 `DELETE
+/api/chaos/resumes/v1/{key}` 삭제 API를 제공하며 **쿠키 인증만으로** 동작한다(Authorization
+헤더·localStorage 토큰 불필요) — `PlaywrightExecutor`가 쓰는 것과 같은
+storage_state(`var/auth/wanted.json`)를 httpx 로 그대로 재사용하면 되고, 브라우저를 새로
+띄울 필요가 없다.
+
+`PlatformAdapter`(공고 조회/지원 실행, §11.2)와는 다른 축이라 새 port
+`AttachmentManager`(`list_attachments`/`delete_attachment`, `StaticAttachmentRegistry`로
+등록 — `PlatformRegistry`와 같은 allowlist 패턴)를 만들었다. 판정은 순수 함수
+`domain/resume_cleanup.select_deletable`이 한다 — `res_<16-hex>.pdf` 패턴(또는 알려진
+테스트 산출물 `recipe-test-dummy.pdf`)에 맞는 `application/pdf` 만 대상이다. 포트폴리오
+파일(`config/portfolio_map.yaml`, 고정 파일명으로 여러 지원에 재선택됨)과 사람이 직접 올린
+이력서, `content_type == "wanted/resume"`(이 프로젝트가 만들지 않는 원티드 자체 이력서
+빌더 문서)는 이름이 패턴에 안 맞아 자동으로 보존된다.
+
+`application_id` ↔ wanted 파일 사이의 상관관계는 DB에 없다(`application_attempts`가 업로드한
+이력서 파일명을 기록하지 않는다 — 확인됨) — 그래서 "이미 지원 완료된 것만" 지우는 대신 age
+버퍼(기본 2시간, `--min-age-hours`)로 "혹시 아직 실행 중인 워크플로우가 쓰고 있을 최근 파일"을
+보호한다.
+
+`resume_cleanup.py`는 `watchdog.py`처럼 Temporal Client SDK를 직접 쓰는 **운영
+진입점**(workflow 파일이 아니므로 §11.3 대상 아님)이지만, watchdog와 달리 Temporal 자체가
+필요 없다(워크플로우 상태를 안 보고 플랫폼 API만 친다) — `make resume-cleanup`으로 1회
+실행한다. 상시 폴링 프로세스가 아니다: 삭제는 되돌릴 수 없는 행위라 사람이 그때그때 후보
+목록을 보고 판단하는 쪽을 택했다(CLAUDE.md "되돌릴 수 없는 행위는 사람 승인 뒤에서만" —
+여긴 텔레그램 승인 대신 명시적 `--yes` 플래그가 그 역할). 기본은 dry-run(후보만 출력).
 
 ### 11.3 Temporal에서의 주입 — activity가 곧 seam
 

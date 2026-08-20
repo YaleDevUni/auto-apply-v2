@@ -256,3 +256,13 @@ try/except 픽스(=알고 있는 실패 지점을 워크플로우 안에서 잡�
 `schedule.py`와 같은 운영 진입점으로 Temporal Client를 직접 쓴다. 재시작 사이 워터마크를
 영속화하지 않는다(`WATCHDOG_LOOKBACK_MINUTES`만큼 재훑음 — `telegram/listener.py`와 같은
 트레이드오프, 놓치는 것보다 중복 알림이 싸다). 자세한 설계와 근거는 ARCHITECTURE.md §11.2d.
+
+**wanted 이력서 첨부파일 정리** (wanted-resume-list-cleanup-backlog) — Recipe가 지원마다
+`res_<hex>.pdf`로 이력서를 새로 렌더링해 업로드해서 지원 1회 = 계정에 남는 고아 파일 1개인
+문제를 `resume_cleanup.py`(`make resume-cleanup`, 기본 dry-run·`ARGS="--yes"`로 실제 삭제)로
+해결. wanted 삭제 API(`DELETE /api/chaos/resumes/v1/{key}`)가 storage_state 쿠키 인증만으로
+동작하는 걸 agent-browser 라이브 탐색으로 확인 → `AttachmentManager` port +
+`WantedAttachmentManager`/`FixtureAttachmentManager` + 순수 판정 함수
+`domain/resume_cleanup.select_deletable`(포트폴리오/직접 업로드/원티드 자체 이력서는 이름이
+패턴에 안 맞아 자동 보존) 구현·테스트·커밋 완료(7be2703, main), 라이브로 실제 계정 정리까지
+검증(14→11개). 자세한 설계는 ARCHITECTURE.md §11.2e.
