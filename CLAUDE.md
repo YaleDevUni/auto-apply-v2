@@ -246,3 +246,13 @@ ForceReply 프롬프트 본문에 실어 보내고 사용자의 답장이 담아
 배선까지 구현됨. `uv run python -m auto_apply.cli collect-schedule`로 등록/갱신(idempotent),
 `collect-unschedule`로 삭제, `collect --platforms wanted`로 수동 1회 실행. 자세한 설계는
 ARCHITECTURE.md §11.2b.
+
+**워크플로우 능동 감시 watchdog** (workflow-failure-visibility-backlog §3, `de56dcd`의 나머지
+스코프) — `watchdog.py`(`make watchdog`)가 Temporal visibility API(`list_workflows`)를 주기
+폴링해 FAILED/TERMINATED/TIMED_OUT으로 끝난 워크플로우를 `Notifier`로 알린다. `_execute()`
+try/except 픽스(=알고 있는 실패 지점을 워크플로우 안에서 잡는 것, Temporal 커뮤니티 표준
+권고)로 못 덮는 부분 — 코드 버그·사람의 실수로 인한 terminate·workflow_execution_timeout처럼
+워크플로우 코드가 아예 더 못 도는 종료 — 를 잡는 프로세스 밖 백스톱이다. 새 port 없이 `cli.py`/
+`schedule.py`와 같은 운영 진입점으로 Temporal Client를 직접 쓴다. 재시작 사이 워터마크를
+영속화하지 않는다(`WATCHDOG_LOOKBACK_MINUTES`만큼 재훑음 — `telegram/listener.py`와 같은
+트레이드오프, 놓치는 것보다 중복 알림이 싸다). 자세한 설계와 근거는 ARCHITECTURE.md §11.2d.

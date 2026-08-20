@@ -53,4 +53,7 @@ worker: ## Temporal worker (QUEUE=default|ai|browser)
 telegram-listen: ## 텔레그램 롱폴링 리스너 (NOTIFIER=telegram, 공인 URL 없는 로컬 개발용)
 	uv run python -m auto_apply.telegram.listener
 
-.PHONY: help setup up down reset migrate fmt lint type arch test test-all check api worker telegram-listen
+watchdog: ## 워크플로우 능동 감시 (FAILED/TERMINATED/TIMED_OUT → 알림, WATCHDOG_* 로 튜닝)
+	uv run python -m auto_apply.watchdog
+
+.PHONY: help setup up down reset migrate fmt lint type arch test test-all check api worker telegram-listen watchdog

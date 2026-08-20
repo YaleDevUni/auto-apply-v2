@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     job_collection_cron: str = "0 9 * * *"
     job_collection_platforms: str = "wanted,saramin,jasoseol"
 
+    # 워크플로우 감시 watchdog (`make watchdog`, workflow-failure-visibility-backlog §3) —
+    # FAILED/TERMINATED/TIMED_OUT 으로 끝난 워크플로우를 능동으로 텔레그램 알림한다.
+    watchdog_poll_interval_seconds: int = Field(default=60, ge=5)
+    watchdog_lookback_minutes: int = Field(default=60, ge=1)
+
     s3_endpoint_url: str = "http://localhost:9000"
     s3_bucket: str = "auto-apply"
     s3_access_key: str = ""

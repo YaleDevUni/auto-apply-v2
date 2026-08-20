@@ -698,6 +698,7 @@ auto-apply-v2/
 │   ├── bootstrap.py              ★ composition root: 설정 → 구현체 조립
 │   ├── config.py                 pydantic-settings
 │   ├── schedule.py               JobCollectionWorkflow Temporal Schedule 등록/삭제 (§11.2b)
+│   ├── watchdog.py                워크플로우 능동 감시 — `make watchdog` (§11.2d)
 │   └── worker.py                 --queue {default|ai|browser}
 └── tests/
     ├── ports/                    ★ contract test: 모든 구현체에 동일 스위트
@@ -990,6 +991,33 @@ propose_guide_patch`처럼 재시도 루프가 없는 단발 호출은 재사용
 사용자 몫이다(§11.6과 같은 이유로 자동 전환하지 않는다). worker 를 띄우는 머신에 `claude` CLI 가
 설치되고 로그인돼 있어야 한다는 전제가 있어 CI/컨테이너 배포 환경에는 안 맞을 수 있다 — 로컬
 개발/개인 실행 용도다.
+
+### 11.2d 워크플로우 능동 감시 — `watchdog.py`
+
+`_execute()`의 `load_active_recipe`가 try/except 없이 흘러 `ApplicationWorkflow`가 조용히
+FAILED로 죽었던 사고(workflow-failure-visibility-backlog, `de56dcd`)의 1차 픽스는 그 지점을
+workflow 코드 안에서 잡아 `NEEDS_HUMAN`으로 정상 종료시키는 것이었다 — 이게 Temporal
+커뮤니티의 표준 권고이기도 하다: "워크플로우 실패를 감지하려면 워크플로우 안에서
+잡아라"(maxim, [Temporal Forum](https://community.temporal.io/t/sending-notification-when-the-workflow-has-failed/14701)).
+하지만 이건 *알고 있는* 실패 지점에만 통한다. 앞으로 또 생길 수 있는 코드 버그, 사람의 실수로
+인한 `terminate`, `workflow_execution_timeout`처럼 워크플로우 코드가 아예 더 못 도는 종료까지
+잡으려면 프로세스 밖에서 감시하는 수밖에 없다 — 이것도 커뮤니티에서 "실시간은 아니지만
+유일한 외부 감지 수단"으로 확인했다([Forum](https://community.temporal.io/t/is-it-possible-to-listen-for-workflow-failures/6843)).
+
+그래서 `watchdog.py`는 `cli.py`/`schedule.py`와 같은 부류의 **운영 진입점**(workflow 파일이
+아니므로 §11.3 규칙 대상이 아니다)으로, Temporal Client의 visibility API(`list_workflows`)를
+직접 폴링한다. Elasticsearch 없는 이 스택(Standard/SQL visibility, docker-compose)도
+`ExecutionStatus IN (...) AND CloseTime > ...` 쿼리를 지원해서
+([List Filter 문서](https://docs.temporal.io/list-filter)) 별도 검색 인프라 없이 충분하다.
+새 port를 만들지 않았다 — 알림은 이미 있는 `Notifier` port(`notify` activity와 같은 이벤트
+모양, kind=`WORKFLOW_UNHEALTHY`)를 그대로 쓴다.
+
+재시작 사이의 워터마크(마지막으로 확인한 시각)를 영속화하지 않는다 —
+`telegram/listener.py`의 offset과 같은 트레이드오프다. 재시작 직후엔
+`WATCHDOG_LOOKBACK_MINUTES`(기본 60분)만큼 과거를 다시 훑어서 최대 그 창 안에서 중복 알림이
+날 수 있는데, 감시의 존재 이유 자체가 "아무도 안 보고 있을 때" 대비라 놓치는 것보다 몇 번 더
+알리는 쪽이 훨씬 싸다. `WATCHDOG_POLL_INTERVAL_SECONDS`(기본 60초)로 폴링 주기를 조정한다.
+`make watchdog`으로 띄운다 — 워커/리스너처럼 상시 프로세스다.
 
 ### 11.3 Temporal에서의 주입 — activity가 곧 seam
 
