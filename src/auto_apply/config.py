@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # nonce 발급 프로세스(worker activity)와 승인 프로세스(webhook/리스너)가 갈라져서
     # in-process 상태로는 공유가 안 된다.
     checkpoint_store: Literal["file", "memory"] = "file"
+    # 태그(REVISE/가이드 patch 답장) 없는 자유 텍스트를 telegram/agent.py 의 채팅 에이전트로
+    # 넘길지. 끄면 예전 동작(조용히 무시)으로 정확히 되돌아간다 — LLM 비용/예산
+    # (CLAUDE_CLI_MAX_BUDGET_USD)이나 예상 밖 동작이 우려되면 재배포 없이 끌 수 있는 손잡이.
+    telegram_chat_agent_enabled: bool = True
 
     # 인프라
     database_url: str = "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply"

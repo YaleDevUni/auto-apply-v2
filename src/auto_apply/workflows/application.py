@@ -32,6 +32,7 @@ from auto_apply.contracts.dto import (
     GuidePatchReviseSignal,
     JobRef,
     NotifyEvent,
+    PendingDecisionView,
     PersistState,
     RejectSignal,
     RescheduleSignal,
@@ -472,3 +473,15 @@ class ApplicationWorkflow:
         return StateView(
             state=self._state, scheduled_at=self._scheduled_at, attempts=self._attempts
         )
+
+    @workflow.query
+    def pending_decision(self) -> PendingDecisionView:
+        """텔레그램 채팅 에이전트의 `resend_pending_decision` 도구가 쓴다 (telegram/agent.py).
+
+        nonce 가 워크플로우 밖으로 나가는 유일한 통로다 — signal 검증(§6)과 달리 여기선 그냥
+        읽어서 기존 승인/거절/수정요청 버튼을 다시 보내는 데만 쓴다. 본 승인 대기
+        (`_decision_nonce`)만 다룬다 — 가이드 patch 2차 승인(`_guide_nonce`)은 범위 밖이다.
+        """
+        pending = self._decision is None and self._decision_nonce is not None
+        nonce = self._decision_nonce if pending and self._decision_nonce else ""
+        return PendingDecisionView(has_pending=pending, nonce=nonce)

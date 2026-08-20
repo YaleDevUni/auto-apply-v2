@@ -85,7 +85,7 @@ class TelegramNotifier:
         elif req.checkpoint:
             keyboard = _checkpoint_keyboard(req, ticket.nonce)
         else:
-            keyboard = _keyboard(req, ticket.nonce)
+            keyboard = _keyboard(req.application_id, ticket.nonce)
         # 평문으로 보낸다 — title/summary/artifact_url 은 스크래핑된 공고 데이터라 마크다운
         # 특수문자(_ * ` 등)를 언제든 포함할 수 있다. parse_mode 를 쓰면 그런 문자가 섞일 때마다
         # "can't find end of the entity" 로 전송 자체가 실패한다 (라이브 스모크테스트로 확인).
@@ -196,6 +196,20 @@ class TelegramNotifier:
                 chat_id=chat_id, text=cancel_text, reply_markup=cancel_keyboard
             )
 
+    async def resend_decision(self, application_id: str, nonce: str) -> None:
+        """대기 중인 승인 요청의 버튼을 다시 보낸다 — 새 nonce 를 발급하지 않는다.
+
+        텔레그램 채팅 에이전트의 `resend_pending_decision` 도구가 쓴다(telegram/agent.py).
+        새 워크플로우 signal 을 만드는 대신 워크플로우가 이미 들고 있는 nonce
+        (`ApplicationWorkflow.pending_decision` query)를 그대로 실어 원래 버튼과 동일하게
+        동작하는 메시지를 다시 보낸다 — 자연어 요청이 실제 승인/거절을 대신하지 않는다
+        (CLAUDE.md 절대규칙 4).
+        """
+        keyboard = _keyboard(application_id, nonce)
+        text = f"⏳ 대기 중인 승인 요청을 다시 보냅니다: {application_id}"
+        for chat_id in self._chat_ids:
+            await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+
     async def answer_callback_query(self, callback_query_id: str) -> None:
         """버튼을 눌렀을 때 뜨는 "불러오는 중" 스피너를 즉시 꺼준다.
 
@@ -249,13 +263,13 @@ def _mode_badge(req: DecisionRequest) -> str:
     return f"{label}\n"
 
 
-def _keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:
+def _keyboard(application_id: str, nonce: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("✅ 승인", callback_data=f"a:{req.application_id}:{nonce}"),
-                InlineKeyboardButton("❌ 거절", callback_data=f"r:{req.application_id}:{nonce}"),
-                InlineKeyboardButton("✏️ 수정요청", callback_data=f"v:{req.application_id}:{nonce}"),
+                InlineKeyboardButton("✅ 승인", callback_data=f"a:{application_id}:{nonce}"),
+                InlineKeyboardButton("❌ 거절", callback_data=f"r:{application_id}:{nonce}"),
+                InlineKeyboardButton("✏️ 수정요청", callback_data=f"v:{application_id}:{nonce}"),
             ]
         ]
     )

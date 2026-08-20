@@ -125,6 +125,52 @@ async def test_unknown_application_returns_empty_history(uow_factory):
         assert await uow.applications.history("nope") == []
 
 
+async def test_list_recent_returns_latest_state_of_each_application(uow_factory):
+    """텔레그램 채팅 에이전트의 list_applications 도구가 쓴다 — 정렬 순서는 백엔드마다
+
+    다를 수 있어(ports/repository.py 참고) 존재 여부/최신 상태만 본다.
+    """
+    async with uow_factory() as uow:
+        await uow.applications.upsert_state(
+            PersistState(
+                application_id="app_1", workflow_run_id="run_1", state=ApplicationState.EVALUATING
+            )
+        )
+        await uow.applications.upsert_state(
+            PersistState(
+                application_id="app_1", workflow_run_id="run_1", state=ApplicationState.COMPLETED
+            )
+        )
+        await uow.applications.upsert_state(
+            PersistState(
+                application_id="app_2", workflow_run_id="run_1", state=ApplicationState.REJECTED
+            )
+        )
+        await uow.commit()
+    async with uow_factory() as uow:
+        summaries = await uow.applications.list_recent(limit=10)
+
+    by_id = {s.application_id: s for s in summaries}
+    assert by_id.keys() == {"app_1", "app_2"}
+    assert by_id["app_1"].state is ApplicationState.COMPLETED  # 최신 상태만, 이력 전체 아님
+    assert by_id["app_2"].state is ApplicationState.REJECTED
+
+
+async def test_list_recent_respects_limit(uow_factory):
+    async with uow_factory() as uow:
+        for i in range(3):
+            await uow.applications.upsert_state(
+                PersistState(
+                    application_id=f"app_{i}",
+                    workflow_run_id="run_1",
+                    state=ApplicationState.EVALUATING,
+                )
+            )
+        await uow.commit()
+    async with uow_factory() as uow:
+        assert len(await uow.applications.list_recent(limit=2)) == 2
+
+
 async def test_satisfies_protocol(uow_factory):
     uow: UnitOfWork = uow_factory()
     assert hasattr(uow.applications, "upsert_state")

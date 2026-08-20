@@ -342,3 +342,22 @@ activity 호출을 감싸 `AuthRequired`(storage_state 만료) 등 activity 실�
 `WantedAttachmentManager`와 겹치던 걸 `adapters/_wanted_auth.py`로 뺐다. 유닛 테스트 +
 실제 wanted 계정 대상 라이브 검증(과거 지원 건 매칭/미래 since 오탐 방지/무관한 job_id 모두
 확인) + `make check` 통과 완료.
+
+**텔레그램 자유 텍스트 채팅 에이전트** — 승인/거절 버튼, REVISE ForceReply 답장처럼 정해진
+경로 없이 그냥 채팅해도 도구를 골라 처리하도록 `telegram/agent.py`를 추가했다. 멀티턴
+tool-use가 없는 `LLMClient`(complete/structured 뿐) 위에서 ReAct 루프를 직접 짰다 — 매 턴
+`structured()`로 discriminator 필드 하나짜리 스키마(`AgentStep`, ai/schemas.py: action이
+call_tool/respond를 가른다)를 강제해 "도구를 부를지 답할지"만 고르게 하고, 실제 실행은
+`TOOLS` 레지스트리(코드)가 한다 — Recipe와 같은 "AI는 생성만, 판정·조합은 코드" 철학의
+연장. 설계 세션에서 스코프를 먼저 확정했다: 행동성 도구도 허용하되 실제 mutate는 여전히
+사람이 기존 버튼을 눌러야 일어난다 — `resend_pending_decision` 도구는 새 workflow query
+`ApplicationWorkflow.pending_decision()`으로 nonce를 읽어와 `TelegramNotifier.resend_decision`
+이 원래 승인/거절/수정요청 버튼과 동일한 콜백을 다시 보낼 뿐, 새 signal은 안 쏜다(절대규칙
+4를 자연어 오인식으로 우회하지 않기 위함). 탐색 중 `ApplicationRepository`에 "지원 건 목록
+조회"가 아예 없던 공백을 발견해 `list_recent(limit)`를 신설했다 — file/memory/postgres 세
+구현 모두 순서는 보장하지 않는다(채팅 편의 용도라 강한 계약 불필요). 도구 카탈로그→프롬프트
+조립은 `domain/chat_agent.py` 순수 함수(포트 무의존)로 뺐다. 도구 하나가 실패해도, LLM
+호출 자체가 실패(스키마 위반/quota)해도 `handle_chat`은 예외를 던지지 않고 사과 메시지로
+마무리한다(webhook 라우트가 500을 내지 않는 전제). `telegram_chat_agent_enabled=false`로
+재배포 없이 끌 수 있다(기본 true). 구현·유닛/통합 테스트(workflow query, postgres
+list_recent, webhook 라우팅 포함)·`make check` 통과 완료. 자세한 설계는 ARCHITECTURE.md §6.

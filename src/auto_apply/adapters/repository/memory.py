@@ -1,12 +1,22 @@
 from types import TracebackType
 from typing import Self
 
-from auto_apply.contracts.dto import ApplicationAttempt, PersistState
+from auto_apply.contracts.dto import ApplicationAttempt, ApplicationSummary, PersistState
 from auto_apply.contracts.job import JobRecord
 
 Rows = dict[str, list[PersistState]]
 JobRows = dict[tuple[str, str], JobRecord]
 AttemptRows = dict[str, list[ApplicationAttempt]]
+
+
+def _summary(application_id: str, latest: PersistState) -> ApplicationSummary:
+    return ApplicationSummary(
+        application_id=application_id,
+        state=latest.state,
+        reason=latest.reason,
+        scheduled_at=latest.scheduled_at,
+        submitted_at=latest.submitted_at,
+    )
 
 
 class InMemoryApplicationRepository:
@@ -24,6 +34,14 @@ class InMemoryApplicationRepository:
 
     async def history(self, application_id: str) -> list[PersistState]:
         return list(self._rows.get(application_id, []))
+
+    async def list_recent(self, limit: int = 10) -> list[ApplicationSummary]:
+        # 정렬 순서는 보장하지 않는다(테스트 대역, ports/repository.py 참고) — dict 삽입 순서를
+        # 최신순처럼 뒤집어 보여줄 뿐이다.
+        app_ids = list(reversed(self._rows))[:limit]
+        return [
+            _summary(app_id, self._rows[app_id][-1]) for app_id in app_ids if self._rows[app_id]
+        ]
 
 
 class InMemoryJobRepository:

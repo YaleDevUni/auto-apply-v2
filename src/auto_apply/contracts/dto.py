@@ -58,6 +58,27 @@ class StateView(_Frozen):
     attempts: int = 0
 
 
+class PendingDecisionView(_Frozen):
+    """워크플로우 query 응답. 텔레그램 채팅 에이전트의 `resend_pending_decision` 도구가 쓴다
+
+    (telegram/agent.py). nonce 는 워크플로우 밖으로 나가는 유일한 통로가 이 query 다 — signal
+    검증(§6)과 달리 여기선 그냥 읽어서 기존 버튼을 다시 보내는 데만 쓴다.
+    """
+
+    has_pending: bool
+    nonce: str = ""
+
+
+class ApplicationSummary(_Frozen):
+    """`ApplicationRepository.list_recent`의 반환 항목 — 지원 건 1개의 최신 상태 스냅샷."""
+
+    application_id: str
+    state: ApplicationState
+    reason: str = ""
+    scheduled_at: datetime | None = None
+    submitted_at: datetime | None = None
+
+
 # ── Human-in-the-loop ────────────────────────────────────────────────────
 class DecisionRequest(_Frozen):
     application_id: str

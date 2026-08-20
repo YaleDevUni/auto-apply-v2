@@ -170,6 +170,11 @@ class _NonceSpy:
         assert isinstance(self.inner, TelegramNotifier)
         await self.inner.answer_callback_query(callback_query_id)
 
+    async def resend_decision(self, application_id: str, nonce: str) -> None:
+        """텔레그램 채팅 에이전트의 resend_pending_decision 도구가 쓴다 (telegram/agent.py)."""
+        assert isinstance(self.inner, TelegramNotifier)
+        await self.inner.resend_decision(application_id, nonce)
+
 
 def sample_recipe(
     *, status: str = "active", with_submit: bool = True, submit_selector: str = "#submit"

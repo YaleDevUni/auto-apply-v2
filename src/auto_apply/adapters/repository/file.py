@@ -11,8 +11,18 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
-from auto_apply.contracts.dto import ApplicationAttempt, PersistState
+from auto_apply.contracts.dto import ApplicationAttempt, ApplicationSummary, PersistState
 from auto_apply.contracts.job import JobRecord
+
+
+def _summary(application_id: str, latest: PersistState) -> ApplicationSummary:
+    return ApplicationSummary(
+        application_id=application_id,
+        state=latest.state,
+        reason=latest.reason,
+        scheduled_at=latest.scheduled_at,
+        submitted_at=latest.submitted_at,
+    )
 
 
 class FileApplicationRepository:
@@ -54,6 +64,21 @@ class FileApplicationRepository:
 
     async def history(self, application_id: str) -> list[PersistState]:
         return await asyncio.to_thread(self._read, self._path(application_id))
+
+    async def list_recent(self, limit: int = 10) -> list[ApplicationSummary]:
+        def _scan() -> list[ApplicationSummary]:
+            apps_dir = self._root / "applications"
+            if not apps_dir.is_dir():
+                return []
+            paths = sorted(apps_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+            out = []
+            for path in paths[:limit]:
+                history = self._read(path)
+                if history:
+                    out.append(_summary(history[-1].application_id, history[-1]))
+            return out
+
+        return await asyncio.to_thread(_scan)
 
 
 class FileJobRepository:

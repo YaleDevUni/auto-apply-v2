@@ -9,7 +9,7 @@ from collections.abc import Callable
 from types import TracebackType
 from typing import Self
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -23,10 +23,20 @@ from auto_apply.adapters.repository.models import (
     ApplicationStateRow,
     JobRow,
 )
-from auto_apply.contracts.dto import ApplicationAttempt, PersistState
+from auto_apply.contracts.dto import ApplicationAttempt, ApplicationSummary, PersistState
 from auto_apply.contracts.job import JobRecord
 
 SessionFactory = async_sessionmaker[AsyncSession]
+
+
+def _summary(state: PersistState) -> ApplicationSummary:
+    return ApplicationSummary(
+        application_id=state.application_id,
+        state=state.state,
+        reason=state.reason,
+        scheduled_at=state.scheduled_at,
+        submitted_at=state.submitted_at,
+    )
 
 
 class SqlAlchemyApplicationRepository:
@@ -53,6 +63,22 @@ class SqlAlchemyApplicationRepository:
             .order_by(ApplicationStateRow.id)
         )
         return [PersistState.model_validate(r.payload) for r in rows]
+
+    async def list_recent(self, limit: int = 10) -> list[ApplicationSummary]:
+        # 새 컬럼 없이 기존 autoincrement id 를 "최근성"으로 쓴다 — application_id 별 최신 id 를
+        # 서브쿼리로 구해 그 row 들만 id 내림차순으로 가져온다.
+        latest_id = (
+            select(func.max(ApplicationStateRow.id))
+            .group_by(ApplicationStateRow.application_id)
+            .scalar_subquery()
+        )
+        rows = await self._session.scalars(
+            select(ApplicationStateRow)
+            .where(ApplicationStateRow.id.in_(latest_id))
+            .order_by(ApplicationStateRow.id.desc())
+            .limit(limit)
+        )
+        return [_summary(PersistState.model_validate(r.payload)) for r in rows]
 
 
 class SqlAlchemyJobRepository:

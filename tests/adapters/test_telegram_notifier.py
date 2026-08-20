@@ -426,6 +426,22 @@ async def test_request_decision_attaches_resume_pdf_when_store_has_it() -> None:
     assert isinstance(doc["reply_markup"], InlineKeyboardMarkup)
 
 
+async def test_resend_decision_reuses_the_given_nonce_with_original_buttons() -> None:
+    """resend_decision 은 새 nonce 를 만들지 않는다 — 원래 승인/거절/수정요청 버튼과 같은 콜백."""
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111, 222}), UuidIdGen(), bot=bot)
+
+    await notifier.resend_decision("app_1", "nonce_1")
+
+    assert {m["chat_id"] for m in bot.sent} == {111, 222}
+    markup = bot.sent[0]["reply_markup"]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    approve, reject, revise = markup.inline_keyboard[0]
+    assert approve.callback_data == "a:app_1:nonce_1"
+    assert reject.callback_data == "r:app_1:nonce_1"
+    assert revise.callback_data == "v:app_1:nonce_1"
+
+
 async def test_request_decision_falls_back_to_text_when_blob_missing() -> None:
     """조회 실패는 첨부만 포기한다 — 승인 흐름 자체를 막으면 안 된다."""
     store = InMemoryBlobStore()  # 아무것도 put 하지 않음 → get 이 BlobNotFound

@@ -301,20 +301,65 @@ async def test_revise_feedback_prompt_cancel_leaves_original_decision_buttons_us
     assert result.state is ApplicationState.COMPLETED
 
 
-async def test_revise_reply_without_matching_tag_is_ignored(client):
-    """태그가 안 붙은 일반 답장(REVISE 프롬프트가 아닌 메시지에 대한 답)은 조용히 무시된다."""
+async def test_revise_reply_without_matching_tag_is_routed_to_chat_agent(client):
+    """태그가 안 붙은 일반 답장(REVISE 프롬프트가 아닌 메시지에 대한 답)은 더 이상 무시되지
+
+    않는다 — telegram/agent.py 의 채팅 에이전트로 넘어간다. 이 fixture 의 StubLLM 은 resume
+    payload 큐를 쓰므로(AgentStep 스키마와 안 맞는다) 여기서는 "채팅 에이전트가 스키마 위반을
+    안 죽고 사과 메시지로 흡수하는지"만 본다 — 실제 도구 선택 로직은 tests/telegram/test_agent.py.
+    워크플로우는 이 대화와 무관하게 그대로 AWAITING_APPROVAL 이어야 한다(자연어가 승인을
+    대신하지 않는다, CLAUDE.md 절대규칙 4).
+    """
     ac, env, h = client
     handle, _nonce = await _awaiting_approval_with_nonce(env, h)
 
     resp = await ac.post(
         "/telegram/webhook",
-        json=_revise_reply_body("아무 태그도 없는 메시지", "이건 무시돼야 한다", ALLOWED_CHAT_ID),
+        json=_revise_reply_body("아무 태그도 없는 메시지", "오늘 지원 몇 건이야?", ALLOWED_CHAT_ID),
     )
     assert resp.status_code == 200
-    assert resp.json()["handled"] is False
+    assert resp.json()["handled"] is True
 
     view = await handle.query(ApplicationWorkflow.state)
     assert view.state is ApplicationState.AWAITING_APPROVAL
+
+    assert h.notifier is not None
+    assert any(e.kind == "CHAT" for e in h.notifier.notified)
+
+
+async def test_chat_agent_disabled_setting_falls_back_to_ignoring(env: WorkflowEnvironment):
+    """telegram_chat_agent_enabled=False 면 예전 동작(태그 없는 자유 텍스트는 조용히 무시)으로
+
+    정확히 되돌아간다 — 재배포 없이 끌 수 있는 손잡이(config.py 참고).
+    """
+    h = Harness()
+    app.state.container = h.container(
+        settings=Settings(
+            notifier="telegram",
+            telegram_allowed_chat_ids=str(ALLOWED_CHAT_ID),
+            storage="memory",
+            llm_provider="stub",
+            telegram_chat_agent_enabled=False,
+        )
+    )
+    app.state.temporal_client = env.client
+    async with (
+        _Workers(env.client, h),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac,
+    ):
+        _handle, _nonce = await _awaiting_approval_with_nonce(env, h)
+
+        resp = await ac.post(
+            "/telegram/webhook",
+            json=_revise_reply_body(
+                "아무 태그도 없는 메시지", "오늘 지원 몇 건이야?", ALLOWED_CHAT_ID
+            ),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["handled"] is False
+
+        assert h.notifier is not None
+        assert not any(e.kind == "CHAT" for e in h.notifier.notified)
 
 
 # ──────────────── recipe 승격 승인(pa/pr, §2.4) — AutomationRepairWorkflow 라우팅 ────────────────

@@ -4,7 +4,9 @@
 PydanticAI든 같은 스키마를 그대로 재사용할 수 있다 (§9.2).
 """
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from auto_apply.contracts.recipe import Action
 
@@ -77,3 +79,26 @@ class RecipeDiffSchema(_Frozen):
     actions: list[Action] = Field(min_length=1, max_length=120)
     success_signals: list[str] = Field(min_length=1)
     rationale: str = ""
+
+
+class AgentStep(_Frozen):
+    """텔레그램 채팅 에이전트의 ReAct 루프 한 스텝 (telegram/agent.py, domain/chat_agent.py).
+
+    멀티턴 tool-use 프리미티브가 없어(`LLMClient`는 `complete`/`structured` 뿐, §9.2) Union
+    대신 discriminator 필드(`action`)로 "도구를 부를지 답할지"를 표현한다 —
+    `RecipeDiffSchema`처럼 스키마 하나만 강제할 수 있어서다. 실제 도구 실행은 이 스키마가
+    아니라 telegram/agent.py 의 코드가 한다(AI는 고르기만, 실행·조합은 코드).
+    """
+
+    action: Literal["call_tool", "respond"]
+    tool: str = ""
+    tool_args: dict[str, str] = Field(default_factory=dict)
+    response: str = ""
+
+    @model_validator(mode="after")
+    def _check_shape(self) -> Self:
+        if self.action == "call_tool" and not self.tool:
+            raise ValueError("action=call_tool 이면 tool 이 필요하다")
+        if self.action == "respond" and not self.response:
+            raise ValueError("action=respond 면 response 가 필요하다")
+        return self

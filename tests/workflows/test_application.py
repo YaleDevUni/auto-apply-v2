@@ -179,6 +179,36 @@ async def test_reject_signal_ends_as_rejected(env: WorkflowEnvironment):
     assert "executing" not in h.states(APP_ID), "거절했는데 실행 단계로 갔다"
 
 
+async def test_pending_decision_query_exposes_nonce_while_awaiting_then_clears(
+    env: WorkflowEnvironment,
+):
+    """텔레그램 채팅 에이전트의 resend_pending_decision 도구가 쓰는 query (telegram/agent.py)."""
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+
+        assert h.notifier is not None
+        real_nonce = None
+        for _ in range(100):
+            real_nonce = h.notifier.last_ticket.get(APP_ID)
+            if real_nonce is not None:
+                break
+            await _tick()
+        assert real_nonce is not None, "request_approval activity 가 끝나지 않았다"
+
+        pending = await handle.query(ApplicationWorkflow.pending_decision)
+        assert pending.has_pending is True
+        assert pending.nonce == real_nonce
+
+        await handle.signal(ApplicationWorkflow.reject, RejectSignal())
+        await handle.result()
+
+        pending_after = await handle.query(ApplicationWorkflow.pending_decision)
+        assert pending_after.has_pending is False
+        assert pending_after.nonce == ""
+
+
 async def test_duplicate_approval_is_idempotent(env: WorkflowEnvironment):
     """Telegram 버튼은 두 번 눌린다. 첫 승인만 반영되어야 한다."""
     h = Harness()

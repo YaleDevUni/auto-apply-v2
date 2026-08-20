@@ -760,6 +760,19 @@ DAILY_DIGEST                    /recipes wanted
   2버튼(`ca`/`cr`)을 보낸다. 다른 콜백과 달리 워크플로우 signal이 아니라
   `checkpoint_store.record_decision`을 직접 호출한다 — 기다리는 게 워크플로우가 아니라
   activity 자신이기 때문이다.
+- **자유 텍스트 채팅 에이전트**: REVISE/가이드 patch ForceReply 태그에 안 걸리는 자유 텍스트는
+  더 이상 무시되지 않고 `telegram/agent.py`의 ReAct 루프로 간다 — 슬래시 커맨드 없이 채팅으로
+  물으면 LLM이 매 턴 `LLMClient.structured()`로 `AgentStep`(도구를 부를지 최종 답을 할지) 하나만
+  고르고, 실제 도구 실행은 `TOOLS` 레지스트리(읽기: `list_applications`/`get_application`/
+  `list_recipe_versions`, 행동: `resend_pending_decision`)가 한다. 행동성 도구도 워크플로우를
+  직접 mutate하지 않는다 — `ApplicationWorkflow.pending_decision` query로 nonce를 읽어와
+  `TelegramNotifier.resend_decision`으로 **원래 승인/거절/수정요청 버튼과 같은 콜백을 다시
+  보낼 뿐**이다. 실제 승인/거절/제출은 여전히 사람이 그 버튼을 누르는 순간에만 일어난다 —
+  절대규칙 4를 자연어 오인식 경로로 우회하지 않기 위한 설계(설계 세션에서 확정, 메모리
+  telegram-chat-agent-design). `telegram_chat_agent_enabled=false`로 재배포 없이 끌 수 있다
+  (LLM 비용/예상 밖 동작 손잡이). 프롬프트 조립(도구 카탈로그 → 문자열)은 `domain/chat_agent.py`
+  순수 함수라 포트 없이 테스트되고, `ApplicationRepository.list_recent`(신설, §11.2 포트)가
+  "최근 지원 건 목록" 조회 공백을 메웠다.
 
 ---
 

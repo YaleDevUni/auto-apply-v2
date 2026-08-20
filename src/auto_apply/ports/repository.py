@@ -1,7 +1,7 @@
 from types import TracebackType
 from typing import Protocol, Self
 
-from auto_apply.contracts.dto import ApplicationAttempt, PersistState
+from auto_apply.contracts.dto import ApplicationAttempt, ApplicationSummary, PersistState
 from auto_apply.contracts.job import JobRecord
 
 
@@ -15,6 +15,15 @@ class ApplicationRepository(Protocol):
 
     async def history(self, application_id: str) -> list[PersistState]:
         """상태 전이 이력. 감사 로그 겸 테스트 검증용."""
+        ...
+
+    async def list_recent(self, limit: int = 10) -> list[ApplicationSummary]:
+        """최근 갱신된 지원 건 상위 `limit`개, 각 건의 최신 상태만 (텔레그램 채팅 에이전트의
+
+        `list_applications` 도구가 쓴다 — telegram/agent.py). "최근"의 기준은 구현마다 다르다
+        (postgres 는 history row 의 자동증가 id, file 은 파일 mtime) — 정확한 정렬 보장이
+        필요한 용도가 아니라 강한 계약을 두지 않는다.
+        """
         ...
 
 

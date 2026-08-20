@@ -56,6 +56,7 @@ from auto_apply.contracts.dto import (
     ReviseSignal,
 )
 from auto_apply.domain.enums import RevisionScope
+from auto_apply.telegram import agent
 from auto_apply.workflows.application import ApplicationWorkflow
 from auto_apply.workflows.repair import AutomationRepairWorkflow
 
@@ -251,11 +252,12 @@ async def handle_callback_query(
 
 
 async def handle_message(message: dict[str, Any], c: Container, client: Client) -> CallbackOutcome:
-    """REVISE/가이드 patch 코멘트 ForceReply 답장(`message`, raw dict)을 처리한다.
+    """REVISE/가이드 patch 코멘트 ForceReply 답장, 그리고 그 외 자유 텍스트(`message`, raw dict)를
 
-    `[revise:...]`/`[guiderevise:...]` 태그가 안 붙은 답장(태그 있는 프롬프트에 대한 답이 아닌
-    일반 대화)은 조용히 무시한다 — 이 봇이 다루는 유일한 자유 텍스트 인바운드가 이 태그
-    답장들뿐이다.
+    처리한다. `[revise:...]`/`[guiderevise:...]` 태그가 붙은 답장은 그 흐름대로 signal 로
+    이어진다. 그 외 태그 없는 자유 텍스트는(ForceReply 답장이 아니거나 우리가 모르는 답장)
+    `telegram/agent.py`의 채팅 에이전트로 넘어간다 — `telegram_chat_agent_enabled` 설정으로
+    끌 수 있고, 끄면 예전처럼(태그 없는 자유 텍스트는 조용히 무시) 동작한다.
     """
     from_id = (message.get("from") or {}).get("id")
     if from_id not in c.settings.allowed_chat_ids:
@@ -289,32 +291,38 @@ async def handle_message(message: dict[str, Any], c: Container, client: Client) 
         return CallbackOutcome(handled=True)
 
     match = _REVISE_TAG_RE.search(reply_text)
-    if match is None:
-        return CallbackOutcome(handled=False, reason="not a revise reply")
+    if match is not None:
+        if not feedback:
+            return CallbackOutcome(handled=False, reason="empty feedback")
+        application_id, nonce, scope = match.groups()
+        wf_id = f"application-{application_id}"
+        try:
+            handle = client.get_workflow_handle(wf_id)
+            await handle.signal(
+                ApplicationWorkflow.revise,
+                ReviseSignal(
+                    feedback=feedback,
+                    scope=RevisionScope(scope),
+                    decided_by=str(from_id),
+                    nonce=nonce,
+                ),
+            )
+        except RPCError as e:
+            return CallbackOutcome(handled=False, reason=f"workflow not found: {e.message}")
+
+        await c.notifier.notify(
+            NotifyEvent(
+                kind="DECISION_RECORDED",
+                application_id=application_id,
+                message="수정요청이 접수됐습니다.",
+            )
+        )
+        return CallbackOutcome(handled=True)
+
+    # 태그가 안 붙은 자유 텍스트 — 채팅 에이전트로 (telegram/agent.py)
     if not feedback:
-        return CallbackOutcome(handled=False, reason="empty feedback")
-
-    application_id, nonce, scope = match.groups()
-    wf_id = f"application-{application_id}"
-    try:
-        handle = client.get_workflow_handle(wf_id)
-        await handle.signal(
-            ApplicationWorkflow.revise,
-            ReviseSignal(
-                feedback=feedback,
-                scope=RevisionScope(scope),
-                decided_by=str(from_id),
-                nonce=nonce,
-            ),
-        )
-    except RPCError as e:
-        return CallbackOutcome(handled=False, reason=f"workflow not found: {e.message}")
-
-    await c.notifier.notify(
-        NotifyEvent(
-            kind="DECISION_RECORDED",
-            application_id=application_id,
-            message="수정요청이 접수됐습니다.",
-        )
-    )
+        return CallbackOutcome(handled=False, reason="empty message")
+    if not c.settings.telegram_chat_agent_enabled:
+        return CallbackOutcome(handled=False, reason="chat agent disabled")
+    await agent.handle_chat(feedback, c, client)
     return CallbackOutcome(handled=True)
