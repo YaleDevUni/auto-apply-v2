@@ -1019,6 +1019,21 @@ workflow 코드 안에서 잡아 `NEEDS_HUMAN`으로 정상 종료시키는 것�
 알리는 쪽이 훨씬 싸다. `WATCHDOG_POLL_INTERVAL_SECONDS`(기본 60초)로 폴링 주기를 조정한다.
 `make watchdog`으로 띄운다 — 워커/리스너처럼 상시 프로세스다.
 
+**폴링 대신 서버 push는 검토했으나 보류.** Temporal 서버에 워크플로우 종료(`WorkflowClosed`)
+시 서버가 직접 HTTP로 콜백을 쏘는 `completion_callbacks` 메커니즘이 실제로 존재한다(proto
+`Callback.Nexus` variant, `CallbackInfo.Trigger.WorkflowClosed`) — 죽은 워크플로우가 스스로
+알리는 게 아니라 서버가 상태 전이를 감지해서 보내는 것이라 "코드 안에서 못 잡는 종료"도
+원리적으로 커버할 수 있다. 설치된 `temporalio==1.31.0`의 `Client.start_workflow(callbacks=...)`
+로 실제로 호출 가능한 것까지 코드 레벨(`client/_client.py`, `client/_impl.py`,
+`nexus/_operation_context.py`)로 확인했다. 그럼에도 안 쓰기로 한 이유:
+(1) SDK가 이 파라미터를 `start_workflow` 타입 오버로드에서 일부러 빼고 "public API 아님,
+하위호환 보장 안 함"이라 주석에 명시 — Nexus worker 내부 배관용이지 애플리케이션이 쓰라고
+낸 표면이 아니다. (2) 서버 쪽 dynamic config(`component.callbacks.allowedAddresses` 등)로
+콜백 주소를 whitelist해야 하고, 공식 문서도 Nexus 오퍼레이션 문맥으로만 이 기능을 설명한다.
+(3) 콜백이 실제로 어떤 payload로 오는지(Nexus completion 프로토콜 포맷 추정) 검증 못 했다.
+안정적으로 보장된 visibility API 폴링을 두고 비공식·불안정 표면으로 갈아탈 이유가 없다는
+판단이다 — 나중에 같은 질문이 또 나오면 이 문단으로 답할 것.
+
 ### 11.3 Temporal에서의 주입 — activity가 곧 seam
 
 이 부분이 Temporal 프로젝트에서 가장 자주 틀리는 지점이다.
