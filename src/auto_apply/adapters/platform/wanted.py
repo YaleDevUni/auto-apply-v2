@@ -3,23 +3,49 @@
 공고 조회는 `job_source/wanted.py` 와 같은 공개 상세 API(`DETAIL_URL`)를 재사용한다 — 인증이
 필요 없고, 두 트랙(공고 수집 vs 지원 실행)이 같은 데이터를 다른 DTO(`JobPosting` vs `JobRef`)로
 쓸 뿐이라 파싱 로직을 또 만들 이유가 없다.
+
+`verify_submission`만 예외적으로 인증이 필요하다 — "내 지원 현황"(`/api/v1/applications`)은
+본인 데이터라 로그인 쿠키 없인 조회가 안 된다(`AttachmentManager`와 같은 storage_state 재사용
+패턴, `adapters/_wanted_auth.py`). agent-browser 라이브 탐색(2026-08-20)으로 확인한 것들:
+`/api/v1/applications`는 `job_id` 쿼리 파라미터로 특정 공고만 필터링해주고, `create_time`은
+`WantedAttachmentManager`의 `update_time`과 같은 타임존 표기 없는 KST 벽시계 값이다. 또한
+`user_id`(numeric)가 없으면 401 이 나는데 storage_state 엔 쿠키만 있어 이 값을 안 갖고 있어서
+`/api/v1/me`로 먼저 조회한다(쿠키만으로 동작, 두 API 모두 같은 도메인 `www.wanted.co.kr`).
 """
 
 import re
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
+import httpx
+
+from auto_apply.adapters._wanted_auth import wanted_cookie_client
 from auto_apply.adapters.job_source._http import ThrottledClient
 from auto_apply.adapters.job_source.wanted import DETAIL_URL
 from auto_apply.contracts.dto import Eligibility, JobRef, VerifyInput, VerifyResult
 from auto_apply.domain.errors import PolicyViolation
 
 _JOB_ID = re.compile(r"/wd/(\d+)")
+_ME_URL = "https://www.wanted.co.kr/api/v1/me"
+_APPLICATIONS_URL = "https://www.wanted.co.kr/api/v1/applications"
+_KST = ZoneInfo("Asia/Seoul")
+# 워크플로우 시각(Temporal, UTC)과 wanted 서버 시각 사이의 오차를 흡수하는 여유.
+# 너무 크면 과거의 무관한 지원 기록을 오탐하고, 너무 작으면 정상 제출을 놓친다.
+_CLOCK_SKEW = timedelta(minutes=5)
 
 
 def _extract_job_id(url: str) -> str | None:
     match = _JOB_ID.search(urlparse(url).path)
     return match.group(1) if match else None
+
+
+def _wanted_job_id(job_id: str) -> str | None:
+    """`JobRef.job_id`(예: "wanted:380443")에서 wanted 쪽 순수 job_id만 뽑는다."""
+    prefix = "wanted:"
+    return job_id[len(prefix) :] if job_id.startswith(prefix) else None
 
 
 def _describe(jd: dict[str, Any]) -> str:
@@ -42,8 +68,16 @@ def _describe(jd: dict[str, Any]) -> str:
 
 
 class WantedPlatformAdapter:
-    def __init__(self, client: ThrottledClient) -> None:
+    def __init__(
+        self,
+        client: ThrottledClient,
+        *,
+        auth_dir: Path,
+        auth_transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self._client = client
+        self._auth_dir = auth_dir
+        self._auth_transport = auth_transport  # 테스트에서만 httpx.MockTransport 로 주입한다
 
     @property
     def platform(self) -> str:
@@ -94,10 +128,42 @@ class WantedPlatformAdapter:
         return Eligibility(eligible=True)
 
     async def verify_submission(self, inp: VerifyInput) -> VerifyResult:
-        # TODO(M2 후속): 원티드 "내 지원 현황" API로 실제 확인하는 로직이 아직 없다.
-        # 거짓 확인(verified=True 오판)이 부분 제출을 놓치는 것보다 훨씬 위험하므로, 확인
-        # 수단이 생기기 전까지는 항상 unverified 를 돌려 needs_human 으로 안전하게 떨어뜨린다
+        # job_id/since 가 없으면 애초에 뭘 대조할지 모른다 — 거짓 확인(verified=True 오판)이
+        # 부분 제출을 놓치는 것보다 훨씬 위험하므로 항상 unverified 로 안전하게 떨어뜨린다
         # (_execution.py 의 "부분 제출 위험 방어" 로직이 그 다음을 받는다).
-        return VerifyResult(
-            verified=False, detail="wanted verify_submission 미구현 — 사람 확인 필요"
-        )
+        job_id = _wanted_job_id(inp.job_id)
+        if job_id is None or inp.since is None:
+            return VerifyResult(
+                verified=False, detail="job_id/since 정보 없음 — 확인 불가, 사람 확인 필요"
+            )
+
+        async with wanted_cookie_client(self._auth_dir, transport=self._auth_transport) as client:
+            # /api/v1/applications 는 본인 확인용으로 numeric user_id 를 요구한다(실측: 없으면
+            # 401) — storage_state 에는 쿠키만 있어 이 값을 안 들고 있으니 /api/v1/me 로 먼저
+            # 구한다. 그 응답엔 email/jwt 등 민감정보가 같이 오므로 user_id 외엔 쓰지 않는다.
+            me = await client.get(_ME_URL)
+            me.raise_for_status()
+            user_id = me.json()["id"]
+
+            resp = await client.get(
+                _APPLICATIONS_URL,
+                params={
+                    "user_id": user_id,
+                    "sort": "-apply_time,-create_time",
+                    "limit": 5,
+                    "status": "complete,pass,hire,reject",
+                    "includes": "summary",
+                    "job_id": job_id,
+                },
+            )
+            resp.raise_for_status()
+            body = resp.json()
+
+        cutoff = inp.since - _CLOCK_SKEW
+        for row in body.get("applications", []):
+            created = datetime.fromisoformat(row["create_time"]).replace(tzinfo=_KST)
+            if created >= cutoff:
+                return VerifyResult(
+                    verified=True, detail=f"원티드 지원 현황에서 확인됨(status={row.get('status')})"
+                )
+        return VerifyResult(verified=False, detail="원티드 지원 현황에서 확인 안 됨")

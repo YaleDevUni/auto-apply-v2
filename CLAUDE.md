@@ -327,3 +327,18 @@ postgres 때와 같은 이유로(postgres-integration-test-data-wipe-hazard) 매
 통째로 비우는 방식이라 운영 `S3_BUCKET`과 분리된 `S3_TEST_BUCKET`(기본 `auto-apply-test`)을
 새로 뒀다. 버킷은 없으면 `head_bucket`/`create_bucket`으로 첫 호출 시 lazy 생성한다. `STORAGE`
 기본값은 여전히 `local`이다.
+
+**wanted `verify_submission` 구현** — `WantedPlatformAdapter.verify_submission`이 항상
+`unverified`를 반환하던 TODO를 메웠다. agent-browser 라이브 탐색(2026-08-20)으로 "내 지원
+현황" API(`/api/v1/applications`)가 `job_id` 쿼리로 필터링되고, numeric `user_id`를 요구하며
+(storage_state 엔 쿠키만 있어 `/api/v1/me`로 먼저 조회), `create_time`이 `WantedAttachmentManager`
+의 `update_time`과 같은 타임존 표기 없는 KST 값이라는 걸 확인했다. `VerifyInput`에 `job_id`/
+`since`를 추가해(_execution.py가 `job.job_id`/`started_at`을 채워 보낸다) 과거의 무관한
+지원 이력으로 오탐(verified=True)하지 않게 했다 — `since`(워크플로우 시각, UTC) 기준 5분
+여유(`_CLOCK_SKEW`)로 wanted 서버와의 시계 오차만 흡수한다. `_execution.py`의 verify_submission
+activity 호출을 감싸 `AuthRequired`(storage_state 만료) 등 activity 실패를 "확인 안 됨"으로
+안전하게 떨어뜨리게 했고(이전엔 안 잡혀서 워크플로우가 조용히 FAILED 로 죽을 수 있었다 —
+`_QUICK`에 `non_retryable_error_types`도 빠져 있던 걸 같이 고쳤다), storage_state 쿠키 로더는
+`WantedAttachmentManager`와 겹치던 걸 `adapters/_wanted_auth.py`로 뺐다. 유닛 테스트 +
+실제 wanted 계정 대상 라이브 검증(과거 지원 건 매칭/미래 since 오탐 방지/무관한 job_id 모두
+확인) + `make check` 통과 완료.

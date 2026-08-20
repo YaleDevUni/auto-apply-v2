@@ -6,8 +6,15 @@ ports/platform.py 의 계약:
   - StaticPlatformRegistry.for_url() 은 매칭되는 어댑터가 없으면 PolicyViolation
 
 WantedPlatformAdapter 는 `httpx.MockTransport` 로 오프라인 검증한다(`test_job_source_contract.py`
-와 같은 패턴) — 파싱 로직은 매번 검증하되 네트워크는 타지 않는다.
+와 같은 패턴) — 파싱 로직은 매번 검증하되 네트워크는 타지 않는다. verify_submission 은 별도
+인증 클라이언트(`_wanted_auth.wanted_cookie_client`)를 쓰므로 `test_attachment_contract.py`와
+같은 방식으로 tmp_path 에 가짜 storage_state 를 만들어 검증한다.
 """
+
+import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -17,7 +24,37 @@ from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
 from auto_apply.adapters.platform.registry import StaticPlatformRegistry
 from auto_apply.adapters.platform.wanted import WantedPlatformAdapter
 from auto_apply.contracts.dto import VerifyInput
-from auto_apply.domain.errors import PolicyViolation
+from auto_apply.domain.errors import AuthRequired, PolicyViolation
+
+_DUMMY_AUTH_DIR = Path("/nonexistent")  # fetch_job/evaluate/matches 는 인증을 안 타서 안전하다
+
+
+def _auth_dir(tmp_path: Path) -> Path:
+    auth_dir = tmp_path / "auth"
+    auth_dir.mkdir()
+    state = {
+        "cookies": [{"name": "session", "value": "x", "domain": ".wanted.co.kr", "path": "/"}],
+        "origins": [],
+    }
+    (auth_dir / "wanted.json").write_text(json.dumps(state))
+    return auth_dir
+
+
+def _wanted_verify_handler(applications: list[dict], *, user_id: int = 2763813):
+    """verify_submission 이 먼저 /api/v1/me 로 user_id 를 구하고 그걸로 /api/v1/applications 를
+
+    조회하는 2단계 흐름(실측, 2026-08-20)을 오프라인으로 검증한다.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/me"):
+            return httpx.Response(200, json={"id": user_id})
+        assert request.url.params["user_id"] == str(user_id)
+        assert request.url.params["job_id"] == "380443"
+        return httpx.Response(200, json={"applications": applications})
+
+    return handler
+
 
 WANTED_DETAIL = {
     "job": {
@@ -47,7 +84,7 @@ def _wanted_adapter(status_code: int = 200, body: object = WANTED_DETAIL) -> Wan
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(status_code, json=body)
 
-    return WantedPlatformAdapter(_mock_client(handler))
+    return WantedPlatformAdapter(_mock_client(handler), auth_dir=_DUMMY_AUTH_DIR)
 
 
 class TestFixturePlatformAdapter:
@@ -73,7 +110,9 @@ class TestFixturePlatformAdapter:
 
 class TestWantedPlatformAdapter:
     def test_matches_wanted_host_only(self):
-        adapter = WantedPlatformAdapter(_mock_client(lambda r: httpx.Response(200, json={})))
+        adapter = WantedPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200, json={})), auth_dir=_DUMMY_AUTH_DIR
+        )
         assert adapter.matches("https://www.wanted.co.kr/wd/373300") is True
         assert adapter.matches("https://fixture.local/job/1") is False
 
@@ -115,13 +154,86 @@ class TestWantedPlatformAdapter:
         assert verdict.eligible is False
         assert "마감" in verdict.reason
 
-    async def test_verify_submission_never_falsely_confirms(self):
-        """검증 API 가 아직 없다 — 항상 unverified 로 안전하게 떨어진다(§5 부분 제출 방어)."""
-        adapter = _wanted_adapter()
+    async def test_verify_submission_without_job_id_or_since_is_unverified(self):
+        """job_id/since 가 없으면 뭘 대조할지 모른다 — 네트워크도 안 타고 안전하게 떨어진다
+
+        (§5 부분 제출 방어: 거짓 확인보다 미확인이 낫다).
+        """
+        adapter = _wanted_adapter()  # auth_dir 도 더미라 인증 클라이언트를 만들면 즉시 실패한다
         result = await adapter.verify_submission(
             VerifyInput(application_id="a1", platform="wanted")
         )
         assert result.verified is False
+
+    async def test_verify_submission_matches_recent_application(self, tmp_path: Path):
+        since = datetime(2026, 8, 20, tzinfo=UTC)
+        handler = _wanted_verify_handler(
+            [{"job_id": 380443, "status": "complete", "create_time": "2026-08-20T09:10:00"}]
+        )
+
+        adapter = WantedPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200)),
+            auth_dir=_auth_dir(tmp_path),
+            auth_transport=httpx.MockTransport(handler),
+        )
+        result = await adapter.verify_submission(
+            VerifyInput(application_id="a1", platform="wanted", job_id="wanted:380443", since=since)
+        )
+        assert result.verified is True
+
+    async def test_verify_submission_tolerates_clock_skew(self, tmp_path: Path):
+        """wanted 서버 시각과 워크플로우 시각(UTC) 사이 몇 분 오차는 오탐 방지 기준에서 봐준다."""
+        since = datetime(2026, 8, 20, 9, 0, 0, tzinfo=UTC)
+        # since 보다 3분 이르지만 _CLOCK_SKEW(5분) 안쪽 — KST 벽시계 문자열로 인코딩한다.
+        created_instant = since - timedelta(minutes=3)
+        create_time_kst_naive = created_instant.astimezone(ZoneInfo("Asia/Seoul")).strftime(
+            "%Y-%m-%dT%H:%M:%S"
+        )
+        handler = _wanted_verify_handler(
+            [{"job_id": 380443, "status": "complete", "create_time": create_time_kst_naive}]
+        )
+
+        adapter = WantedPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200)),
+            auth_dir=_auth_dir(tmp_path),
+            auth_transport=httpx.MockTransport(handler),
+        )
+        result = await adapter.verify_submission(
+            VerifyInput(application_id="a1", platform="wanted", job_id="wanted:380443", since=since)
+        )
+        assert result.verified is True
+
+    async def test_verify_submission_ignores_stale_application(self, tmp_path: Path):
+        """같은 공고에 과거(이번 시도 전)에 지원한 이력이 있어도 그걸로 오탐하지 않는다."""
+        since = datetime(2026, 8, 20, 12, 0, 0, tzinfo=UTC)
+        handler = _wanted_verify_handler(
+            [{"job_id": 380443, "status": "reject", "create_time": "2026-08-16T21:51:19"}]
+        )
+
+        adapter = WantedPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200)),
+            auth_dir=_auth_dir(tmp_path),
+            auth_transport=httpx.MockTransport(handler),
+        )
+        result = await adapter.verify_submission(
+            VerifyInput(application_id="a1", platform="wanted", job_id="wanted:380443", since=since)
+        )
+        assert result.verified is False
+
+    async def test_verify_submission_raises_auth_required_without_state_file(self, tmp_path: Path):
+        adapter = WantedPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200)),
+            auth_dir=tmp_path / "no-such-dir",
+        )
+        with pytest.raises(AuthRequired):
+            await adapter.verify_submission(
+                VerifyInput(
+                    application_id="a1",
+                    platform="wanted",
+                    job_id="wanted:380443",
+                    since=datetime(2026, 8, 20, tzinfo=UTC),
+                )
+            )
 
 
 class TestStaticPlatformRegistry:
@@ -129,7 +241,9 @@ class TestStaticPlatformRegistry:
         registry = StaticPlatformRegistry(
             [
                 FixturePlatformAdapter(),
-                WantedPlatformAdapter(_mock_client(lambda r: httpx.Response(200))),
+                WantedPlatformAdapter(
+                    _mock_client(lambda r: httpx.Response(200)), auth_dir=_DUMMY_AUTH_DIR
+                ),
             ]
         )
         assert registry.for_url("https://www.wanted.co.kr/wd/1").platform == "wanted"

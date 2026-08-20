@@ -26,13 +26,21 @@ from auto_apply.contracts.dto import (
     JobRef,
     StartApplication,
     VerifyInput,
+    VerifyResult,
 )
 from auto_apply.contracts.recipe import AutomationRecipe
 from auto_apply.domain.enums import ApplicationState, AttemptOutcome, ExecutionMode
+from auto_apply.domain.errors import NON_RETRYABLE
 from auto_apply.workflows._errors import activity_failure
 
 QUEUE_BROWSER = "browser"
-_QUICK = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
+# AuthRequired(예: wanted storage_state 만료) 등 재시도로 안 풀리는 실패를 5번 반복하지
+# 않게 non_retryable_error_types 를 건다 — application.py 의 같은 이름 _QUICK 과 같은 이유.
+_QUICK = RetryPolicy(
+    maximum_attempts=5,
+    initial_interval=timedelta(seconds=1),
+    non_retryable_error_types=NON_RETRYABLE,
+)
 _PERSIST = RetryPolicy(maximum_attempts=10, initial_interval=timedelta(seconds=1))
 
 
@@ -144,12 +152,7 @@ async def run_execution(
         return ExecutionOutcome(ApplicationState.COMPLETED, f"dry_run: {result.detail}")
 
     await persist(ApplicationState.VERIFYING)
-    verified = await workflow.execute_activity(
-        verify_submission,
-        VerifyInput(application_id=cmd.application_id, platform=job.platform),
-        start_to_close_timeout=timedelta(minutes=5),
-        retry_policy=_QUICK,
-    )
+    verified = await _verify(cmd, job, started_at)
     if not verified.verified:
         reason = f"제출 확인 실패: {verified.detail}"
         await _record_attempt(
@@ -200,12 +203,7 @@ async def _handle_execution_failure(
     # 부분 제출 위험 방어 (§5): 실행 activity 가 실패해도 실제로는 submit 이 됐을 수 있다.
     # dry_run 은 애초에 submit 을 안 하니 확인할 게 없다.
     if mode is not ExecutionMode.DRY_RUN:
-        verified = await workflow.execute_activity(
-            verify_submission,
-            VerifyInput(application_id=cmd.application_id, platform=job.platform),
-            start_to_close_timeout=timedelta(minutes=5),
-            retry_policy=_QUICK,
-        )
+        verified = await _verify(cmd, job, started_at)
         if verified.verified:
             await _record_attempt(
                 cmd,
@@ -236,6 +234,31 @@ async def _handle_execution_failure(
         else None
     )
     return ExecutionOutcome(ApplicationState.NEEDS_HUMAN, reason, repair=repair)
+
+
+async def _verify(cmd: StartApplication, job: JobRef, started_at: datetime) -> VerifyResult:
+    """verify_submission activity 호출을 감싼다.
+
+    activity 실행 자체가 실패해도(예: `AuthRequired` — wanted storage_state 만료) 워크플로우를
+    죽이지 않고 "확인 안 됨"으로 안전하게 떨어뜨린다 — 부분 제출 위험 방어(§5)와 같은 원칙,
+    거짓 확인보다 미확인이 낫다. `_finish`가 NEEDS_HUMAN 사유로 이 detail 을 그대로 텔레그램에
+    실어 보내서 "왜 확인이 안 됐는지"가 사람에게 그대로 드러난다.
+    """
+    try:
+        return await workflow.execute_activity(
+            verify_submission,
+            VerifyInput(
+                application_id=cmd.application_id,
+                platform=job.platform,
+                job_id=job.job_id,
+                since=started_at,
+            ),
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=_QUICK,
+        )
+    except ActivityError as e:
+        _, reason = activity_failure(e)
+        return VerifyResult(verified=False, detail=f"제출 확인 activity 실패: {reason}")
 
 
 async def _record_attempt(

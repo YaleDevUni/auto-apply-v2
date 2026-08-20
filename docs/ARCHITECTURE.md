@@ -708,6 +708,18 @@ s3://auto-apply/
 재개 시 항상 `verify_submission`(지원 내역 페이지 확인)을 **먼저** 돌린다. 되돌릴 수 없는
 단계 앞뒤에 기록을 남기는 것이 유일한 방어다.
 
+`WantedPlatformAdapter.verify_submission`은 "내 지원 현황" API(`/api/v1/applications`)를
+`job_id`로 필터링해 조회한다 — `VerifyInput`에 `job_id`(`JobRef.job_id`)/`since`(이번 시도의
+`started_at`)를 추가로 실었다. `since` 없이 job_id만 대조하면 "예전에 같은 공고에 지원한 적
+있음"으로 이번 시도와 무관하게 오탐(verified=True)할 수 있어서다 — 거짓 확인이 부분 제출을
+놓치는 것보다 위험하다는 원칙(위)의 연장. wanted 서버 시각과 워크플로우 시각(Temporal, UTC)
+사이 오차를 흡수하려 5분 여유(`_CLOCK_SKEW`)를 둔다. 이 API는 numeric `user_id`를 요구하는데
+storage_state 엔 쿠키만 있어서(`AttachmentManager`와 동일 패턴, `adapters/_wanted_auth.py`)
+`/api/v1/me`로 먼저 구한다(agent-browser 라이브 탐색으로 실측, 2026-08-20). `verify_submission`
+activity 호출 자체가 실패해도(예: `AuthRequired` — storage_state 만료) `_execution.py`가
+잡아서 "확인 안 됨"으로 안전하게 떨어뜨린다 — 안 잡으면 워크플로우가 조용히 FAILED 로 죽는다
+(workflow-failure-visibility-backlog 와 같은 이유).
+
 ---
 
 ## 6. Telegram Control Plane

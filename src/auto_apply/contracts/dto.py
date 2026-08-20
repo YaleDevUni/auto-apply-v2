@@ -294,6 +294,12 @@ class ReviewRequest(_Frozen):
 class VerifyInput(_Frozen):
     application_id: str
     platform: str
+    # 플랫폼이 실제 제출 여부를 조회하는 데 필요한 부가 정보. 둘 다 없어도 구조는 유효하지만
+    # (기존 어댑터/테스트와의 호환), 실제 조회를 하는 어댑터(wanted 등)는 이게 없으면 확인을
+    # 포기하고 unverified 로 안전하게 떨어뜨린다(§5 부분 제출 위험 방어).
+    job_id: str = ""  # JobRef.job_id (플랫폼 접두어 포함, 예: "wanted:380443")
+    since: datetime | None = None  # 이 시각 이후 생성된 기록만 "이번 시도의 제출"로 인정한다
+    # — 과거에 같은 공고에 지원한 이력이 있으면 그 기록으로 오탐(false verified)할 수 있다.
 
 
 class VerifyResult(_Frozen):

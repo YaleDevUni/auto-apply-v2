@@ -11,27 +11,18 @@ Authorization 헤더/localStorage 토큰이 필요 없다(httpx 로 쿠키만 �
 tz-aware `now` 뺄셈이 안전하다.
 """
 
-import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httpx
 
+from auto_apply.adapters._wanted_auth import wanted_cookie_client
 from auto_apply.contracts.dto import ResumeAttachment
-from auto_apply.domain.errors import AuthRequired
 
 _BASE_URL = "https://www.wanted.co.kr/api/chaos/resumes/v1"
 _PAGE_SIZE = 50
 _KST = ZoneInfo("Asia/Seoul")
-
-
-def _load_cookies(state_path: Path) -> httpx.Cookies:
-    state = json.loads(state_path.read_text())
-    jar = httpx.Cookies()
-    for c in state.get("cookies", []):
-        jar.set(c["name"], c["value"], domain=c["domain"], path=c.get("path", "/"))
-    return jar
 
 
 class WantedAttachmentManager:
@@ -46,15 +37,7 @@ class WantedAttachmentManager:
         return "wanted"
 
     def _client(self) -> httpx.AsyncClient:
-        state_path = self._auth_dir / "wanted.json"
-        if not state_path.is_file():
-            raise AuthRequired(
-                f"wanted 로그인 상태가 없다 — scripts/save_auth_state.py 로 먼저 로그인해라 "
-                f"({state_path})"
-            )
-        return httpx.AsyncClient(
-            cookies=_load_cookies(state_path), transport=self._transport, timeout=20.0
-        )
+        return wanted_cookie_client(self._auth_dir, transport=self._transport)
 
     async def list_attachments(self) -> list[ResumeAttachment]:
         out: list[ResumeAttachment] = []

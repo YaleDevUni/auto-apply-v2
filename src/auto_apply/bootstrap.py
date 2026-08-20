@@ -234,7 +234,9 @@ def _build_registry(cfg: Settings) -> PlatformRegistry:
         case "live":
             # saramin/jasoseol 은 job_source(공고 수집) 는 있어도 PlatformAdapter(지원 실행)
             # 는 아직 없다 — 필요해지면 여기에 추가한다.
-            return StaticPlatformRegistry([WantedPlatformAdapter(ThrottledClient())])
+            return StaticPlatformRegistry(
+                [WantedPlatformAdapter(ThrottledClient(), auth_dir=cfg.data_dir / "auth")]
+            )
 
 
 def _build_attachments(cfg: Settings) -> AttachmentRegistry:
