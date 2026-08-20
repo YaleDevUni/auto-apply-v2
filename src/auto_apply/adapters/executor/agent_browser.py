@@ -45,6 +45,7 @@ from collections.abc import Callable
 from datetime import UTC
 from pathlib import Path
 
+from auto_apply.adapters.executor._checkpoint import CheckpointWaiter
 from auto_apply.contracts.dto import ExecutionContext, ExecutionResult
 from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.domain.agent_browser_selector import (
@@ -77,12 +78,14 @@ class AgentBrowserExecutor:
         auth_dir: Path,
         binary: str = "agent-browser",
         headless: bool = True,
+        checkpoint: CheckpointWaiter | None = None,
     ) -> None:
         self._clock = clock
         self._store = store
         self._auth_dir = auth_dir
         self._binary = binary
         self._headless = headless
+        self._checkpoint = checkpoint
 
     async def run(
         self,
@@ -92,9 +95,6 @@ class AgentBrowserExecutor:
         *,
         heartbeat: Callable[[str], None] | None = None,
     ) -> ExecutionResult:
-        # 체크포인트를 아직 안 지원한다 — Playwright 실행기(§ supervised-checkpoint-design)만
-        # 우선 구현했다. agent_browser 로 SUPERVISED 를 쓰면 오늘은 그냥 체크포인트 없이 돈다.
-        del heartbeat
         state_path = self._auth_dir / f"{recipe.platform}.json"
         if not state_path.is_file():
             raise AuthRequired(
@@ -106,7 +106,7 @@ class AgentBrowserExecutor:
         # 열린 탭이 남아 헷갈릴 수 있어서다.
         session = f"aa-{ctx.application_id}-{ctx.attempt}"
         try:
-            return await self._run_actions(recipe, ctx, mode, session, state_path)
+            return await self._run_actions(recipe, ctx, mode, session, state_path, heartbeat)
         finally:
             await self._close(session)
 
@@ -117,6 +117,7 @@ class AgentBrowserExecutor:
         mode: ExecutionMode,
         session: str,
         state_path: Path,
+        heartbeat: Callable[[str], None] | None,
     ) -> ExecutionResult:
         artifacts: list[str] = []
         state_applied = False
@@ -130,6 +131,23 @@ class AgentBrowserExecutor:
                         detail="dry_run: submit 을 실행하지 않았다",
                     )
                 await self._check_captcha(session, recipe, ctx)
+
+            # SUBMIT 은 recipe 가 checkpoint 를 안 세워도 항상 막는다(CLAUDE.md 절대규칙 4).
+            # PlaywrightExecutor 와 같은 배선(§2.4c) — DRY_RUN 은 위에서 이미 return 했으므로
+            # 여기 닿지 않는다.
+            if (
+                mode is ExecutionMode.SUPERVISED
+                and self._checkpoint is not None
+                and (action.checkpoint or action.type is ActionType.SUBMIT)
+            ):
+                screenshot = await self._screenshot_bytes(session)
+                await self._checkpoint.wait(
+                    application_id=ctx.application_id,
+                    attempt=ctx.attempt,
+                    label=f"{i:02d}:{action.type}",
+                    screenshot=screenshot,
+                    heartbeat=heartbeat,
+                )
 
             apply_state = None
             if action.type is ActionType.GOTO and not state_applied:
@@ -353,13 +371,18 @@ class AgentBrowserExecutor:
         return None
 
     async def _dispatch_screenshot(self, session: str, index: int, ctx: ExecutionContext) -> str:
-        with tempfile.TemporaryDirectory(prefix="auto-apply-screenshot-") as tmp_dir:
-            tmp_path = Path(tmp_dir) / f"{index:02d}.png"
-            await self._cli(session, ["screenshot", str(tmp_path)], timeout_s=15.0)
-            data = tmp_path.read_bytes()
+        data = await self._screenshot_bytes(session)
         key = f"application-artifacts/{ctx.application_id}/{ctx.attempt}/{index:02d}.png"
         await self._store.put(key, data, content_type="image/png")
         return key
+
+    async def _screenshot_bytes(self, session: str) -> bytes:
+        # CheckpointWaiter 가 자기 blob key 로 직접 저장하므로(§2.4c) 여기서는 저장 없이
+        # 바이트만 돌려준다 — _dispatch_screenshot(SCREENSHOT 액션)과 공유하는 CLI 호출부.
+        with tempfile.TemporaryDirectory(prefix="auto-apply-screenshot-") as tmp_dir:
+            tmp_path = Path(tmp_dir) / "shot.png"
+            await self._cli(session, ["screenshot", str(tmp_path)], timeout_s=15.0)
+            return tmp_path.read_bytes()
 
     # ── 값 치환 (PlaywrightExecutor 와 같은 계약, §3) ────────────────────
     def _resolve_value(self, action: Action, ctx: ExecutionContext) -> str:

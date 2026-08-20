@@ -194,12 +194,21 @@ def _build_executor(
                 checkpoint=checkpoint,
             )
         case "agent_browser":
+            checkpoint = CheckpointWaiter(
+                notifier,
+                checkpoint_store,
+                store,
+                idgen,
+                timeout=timedelta(minutes=cfg.checkpoint_timeout_minutes),
+                poll_interval=timedelta(seconds=cfg.checkpoint_poll_seconds),
+            )
             return AgentBrowserExecutor(
                 clock,
                 store,
                 auth_dir=cfg.data_dir / "auth",
                 binary=cfg.agent_browser_binary,
                 headless=cfg.playwright_headless,
+                checkpoint=checkpoint,
             )
 
 

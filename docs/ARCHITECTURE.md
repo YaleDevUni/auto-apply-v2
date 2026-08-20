@@ -532,9 +532,16 @@ flowchart TB
 
 구현·유닛/통합 테스트(`tests/ports/test_checkpoint_store_contract.py`,
 `tests/adapters/test_checkpoint_waiter.py`, `tests/adapters/test_playwright_checkpoint.py`,
-`tests/telegram/test_bridge_checkpoint.py`)·`make check` 통과 완료. `EXECUTOR=agent_browser`는
-아직 체크포인트를 안 지원한다(Playwright만 우선 구현) — SUPERVISED로 그 실행기를 쓰면
-오늘은 체크포인트 없이 그냥 진행된다.
+`tests/telegram/test_bridge_checkpoint.py`)·`make check` 통과 완료.
+
+**`EXECUTOR=agent_browser`도 같은 체크포인트를 지원한다** (2026-08-20 연장). `PlaywrightExecutor`와
+똑같이 `CheckpointWaiter`를 생성자로 주입받고, `_run_actions` 루프에서 같은 조건
+(`mode is SUPERVISED and (action.checkpoint or SUBMIT)`)으로 멈춰 선다 — 차이는 스크린샷을
+찍는 방식뿐이다(Playwright는 `page.screenshot()`, agent-browser는 CLI `screenshot`
+서브커맨드로 임시 파일에 찍고 바이트를 읽는다, `_screenshot_bytes`). `bootstrap.py`의
+`_build_executor` "agent_browser" 분기도 playwright와 동일하게 `CheckpointWaiter`를
+조립해서 넘긴다. 테스트는 `tests/adapters/test_agent_browser_checkpoint.py`(playwright
+버전과 같은 시나리오를 agent-browser 엔진에 대고 재실행)로 커버.
 
 ---
 

@@ -304,8 +304,9 @@ try/except 픽스(=알고 있는 실패 지점을 워크플로우 안에서 잡�
 signal을 못 쓴다) + `CheckpointWaiter`(port 아님, Notifier/CheckpointStore/BlobStore/IdGen
 조합 클래스, `adapters/executor/_checkpoint.py`) + `RecipeExecutor.run()`에 `heartbeat`
 키워드 인자 추가(activity가 `temporalio.activity.heartbeat`를 plain callable로 넘겨 adapters
-레이어가 temporalio를 안 봐도 되게) + `PlaywrightExecutor` 배선(`EXECUTOR=agent_browser`는
-아직 미지원) + `CheckpointDeclined`(거절/타임아웃 둘 다 이 하나로, `NON_RETRYABLE`) + 텔레그램
-`ca`/`cr` 콜백(워크플로우 signal이 아니라 `checkpoint_store.record_decision` 직접 호출)까지
-구현·유닛/통합 테스트·`make check`(+ 실제 Postgres/Temporal/Playwright integration까지)
-통과 완료. 자세한 설계는 ARCHITECTURE.md §2.4c.
+레이어가 temporalio를 안 봐도 되게) + `PlaywrightExecutor` 배선 + `CheckpointDeclined`(거절/
+타임아웃 둘 다 이 하나로, `NON_RETRYABLE`) + 텔레그램 `ca`/`cr` 콜백(워크플로우 signal이
+아니라 `checkpoint_store.record_decision` 직접 호출)까지 구현·유닛/통합 테스트·`make check`
+(+ 실제 Postgres/Temporal/Playwright integration까지) 통과 완료. 이어서 `AgentBrowserExecutor`
+에도 같은 `CheckpointWaiter` 배선을 추가해 `EXECUTOR=agent_browser`도 체크포인트를 지원한다
+(스크린샷만 CLI `screenshot` 서브커맨드로 찍는 차이). 자세한 설계는 ARCHITECTURE.md §2.4c.
