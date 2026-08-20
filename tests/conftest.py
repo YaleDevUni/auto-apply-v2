@@ -11,6 +11,7 @@ from auto_apply.activities.browser import BrowserActivities
 from auto_apply.activities.guide import GuideActivities
 from auto_apply.activities.resume import ResumeActivities
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
+from auto_apply.adapters.credentials.static import StaticCredentialSource
 from auto_apply.adapters.executor.replay import ReplayExecutor
 from auto_apply.adapters.facts.static import StaticFactSource
 from auto_apply.adapters.guide.static import StaticGuideSource
@@ -28,6 +29,7 @@ from auto_apply.adapters.recipe.memory import InMemoryRecipeSource
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
+from auto_apply.adapters.web_agent.replay import ReplayWebAgentExecutor
 from auto_apply.bootstrap import Container
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import (
@@ -299,6 +301,8 @@ class Harness:
             profile=profile,
             portfolio=portfolio,
             guide=guide,
+            credentials=StaticCredentialSource(),
+            web_agent=ReplayWebAgentExecutor(clock),
         )
 
     def states(self, application_id: str) -> list[str]:
