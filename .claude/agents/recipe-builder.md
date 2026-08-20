@@ -70,6 +70,17 @@ model: sonnet
 - 만든 selector가 Playwright 전용 문법(`:has-text()`, `:text-is()`)인지 표준 CSS인지
   구분해서 기억한다 — agent-browser의 CSS 엔진은 Playwright 확장 문법을 지원하지 않는다
   (탐색 중 검증할 때 헷갈리지 않게).
+- **실행 엔진이 여기서 검증한 것과 다르게 해석할 수 있다는 걸 전제한다.** 실측(wanted,
+  2026-08-20): 같은 Chromium/CDP 위에서도 agent-browser(접근성 트리 직접 사용)와
+  Playwright(자체 accessible-name 계산)의 role/name 해석이 갈린 사례가 있었다 — agent-browser
+  에서 `role=radio[name="이력서"]`처럼 보이던 게 Playwright 실행에서는 안 먹혀서
+  `value="RESUME"` 속성 selector로 우회해야 했다. 그래서 role/text 기반 selector를 확정한
+  뒤에는 **가능하면 속성 기반(`[value=...]`, `[name=...]`, `[type=...]`) 대안도 같이
+  적어두거나**, 최소한 최종 보고에 "이 selector는 agent-browser로만 검증했고 Playwright
+  재생은 아직 안 됐다"를 명시한다 — 사람이 candidate 승격 전 첫 supervised 실행에서 걸러낼
+  수 있게. (`RecipeExecutor`의 3번째 구현으로 agent-browser 자체를 실행 엔진 후보에 추가하는
+  설계가 진행 중이니, 이 격차가 언젠가 사라질 수 있다 — 메모리 `agent-browser-executor-design`
+  참고.)
 
 ## 5. 스키마 한계를 만나면 — 우회하지 말고 정식 확장
 
