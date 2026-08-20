@@ -598,6 +598,18 @@ DAILY_DIGEST                    /recipes wanted
   프로세스가 갈라진다) — `[revise:{application_id}:{nonce}:{scope}]` 태그를 ForceReply 프롬프트
   본문에 실어 보내고, 사용자 답장의 `reply_to_message.text`에서 그 태그를 파싱해 복원한다
   (상태를 안 들고도 왕복). `telegram/bridge.py`의 `handle_message`가 이 답장을 처리한다.
+- **dry-run 배지(M3 연장)**: 승인 요청 메시지 맨 앞에 🧪 DRY RUN / ⚠️ SUPERVISED / 🚨 LIVE /
+  ❓ 확인 불가 배지를 붙인다 — dry-run인 줄 알고 안심했는데 recipe가 이미 candidate/active로
+  승격돼 실제로는 제출되는 경우를 혼동할 위험 때문(메모리 dry-run-indicator-backlog).
+  `_execution.resolve_mode()`가 실행 activity 안에서만 모드를 결정하던 걸,
+  `ApplicationWorkflow._peek_mode`가 승인 요청 직전에 미리 알아내 `DecisionRequest.mode`에
+  실어 보낸다 — `dry_run_only`면 recipe 상태와 무관하게 항상 DRY_RUN이라 조회 없이 바로
+  정해지고, 아니면 recipe.status를 봐야 해서 `load_active_recipe`를 한 번 더 부른다(가벼운
+  read라 `_execute`가 실행 시점에 다시 부르는 것과 중복 호출을 감수). 조회가 실패하면 mode를
+  None으로 둬 "확인 불가" 배지로 보여준다 — 잘못된 낙관적 배지보다 모른다고 말하는 쪽이 안전.
+  이 배지는 승인 요청 시점의 스냅샷이라 그 뒤 recipe 상태가 바뀌면(드묾) 실제 실행 때와
+  달라질 수 있다는 한계는 남는다. 가이드 patch 2차 승인(`guide_patch=True`)은 실행과 무관해
+  배지를 안 붙인다.
 
 ---
 

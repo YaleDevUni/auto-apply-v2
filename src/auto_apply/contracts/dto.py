@@ -68,6 +68,10 @@ class DecisionRequest(_Frozen):
     # True 면 이력서 가이드 patch 승인 요청이다 — Notifier 가 승인/거절 2버튼만 보여준다
     # (중첩 승인이라 그 자체를 다시 REVISE 할 순 없다).
     guide_patch: bool = False
+    # 본 승인 요청(guide_patch=False)에만 채워진다 — 실제 실행될 모드를 배지로 보여주기 위함
+    # (dry-run-indicator-backlog). None 이면 조회 실패로 승인 요청 시점엔 확정 못 한 것이다
+    # (workflows/application.py `_peek_mode` 참고) — guide_patch 요청은 실행과 무관해 항상 None.
+    mode: ExecutionMode | None = None
 
 
 class DecisionTicket(_Frozen):

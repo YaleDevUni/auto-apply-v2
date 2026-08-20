@@ -10,7 +10,7 @@ from auto_apply.adapters.clock.system import UuidIdGen
 from auto_apply.adapters.notifier.telegram import TelegramNotifier
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.contracts.dto import DecisionRequest, NotifyEvent
-from auto_apply.domain.enums import RevisionScope
+from auto_apply.domain.enums import ExecutionMode, RevisionScope
 from telegram import ForceReply, InlineKeyboardMarkup
 
 
@@ -82,6 +82,69 @@ async def test_request_decision_callback_data_encodes_app_id_and_nonce() -> None
     assert approve.callback_data == f"a:app_1:{ticket.nonce}"
     assert reject.callback_data == f"r:app_1:{ticket.nonce}"
     assert revise.callback_data == f"v:app_1:{ticket.nonce}"
+
+
+async def test_request_decision_prefixes_dry_run_badge() -> None:
+    """dry-run-indicator-backlog: dry-run 인지 실제 제출인지 메시지만 보고 구분할 수 있어야 한다."""
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="Wanted / 백엔드 엔지니어 지원 승인",
+        summary="https://wanted.co.kr/jobs/1",
+        mode=ExecutionMode.DRY_RUN,
+    )
+
+    await notifier.request_decision(req)
+
+    assert bot.sent[0]["text"].startswith("🧪 DRY RUN")
+
+
+async def test_request_decision_prefixes_live_badge() -> None:
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="Wanted / 백엔드 엔지니어 지원 승인",
+        summary="https://wanted.co.kr/jobs/1",
+        mode=ExecutionMode.LIVE,
+    )
+
+    await notifier.request_decision(req)
+
+    assert bot.sent[0]["text"].startswith("🚨 LIVE")
+
+
+async def test_request_decision_prefixes_unknown_badge_when_mode_missing() -> None:
+    """recipe 조회 실패로 워크플로우가 mode 를 못 정했을 때(None) 안심시키지 않는다."""
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = _req()  # mode 미지정 → None
+
+    await notifier.request_decision(req)
+
+    assert bot.sent[0]["text"].startswith("❓ 모드 확인 불가")
+
+
+async def test_guide_patch_decision_has_no_mode_badge() -> None:
+    """가이드 patch 승인은 실행과 무관해 배지를 안 붙인다."""
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="이력서 가이드 수정 제안",
+        summary="- 기존: (없음)\n+ 변경: 항상 존댓말로 쓴다.",
+        guide_patch=True,
+    )
+
+    await notifier.request_decision(req)
+
+    assert bot.sent[0]["text"] == (
+        "이력서 가이드 수정 제안\n- 기존: (없음)\n+ 변경: 항상 존댓말로 쓴다."
+    )
 
 
 async def test_guide_patch_decision_has_approve_reject_and_comment_buttons() -> None:
@@ -216,11 +279,15 @@ async def test_request_decision_passes_through_markdown_special_chars() -> None:
         title="Fixture Inc. / 백엔드_엔지니어* 지원 승인",
         summary="_짝이_안_맞는_밑줄_",
         artifact_url="resumes/res_293033665fef4ddd.json",
+        mode=ExecutionMode.DRY_RUN,
     )
 
     await notifier.request_decision(req)
 
-    assert bot.sent[0]["text"] == ("Fixture Inc. / 백엔드_엔지니어* 지원 승인\n_짝이_안_맞는_밑줄_")
+    assert bot.sent[0]["text"] == (
+        "🧪 DRY RUN — 실제 제출 안 함\n"
+        "Fixture Inc. / 백엔드_엔지니어* 지원 승인\n_짝이_안_맞는_밑줄_"
+    )
 
 
 async def test_request_decision_attaches_resume_pdf_when_store_has_it() -> None:
@@ -238,6 +305,7 @@ async def test_request_decision_attaches_resume_pdf_when_store_has_it() -> None:
         title="Wanted / 백엔드 엔지니어 지원 승인",
         summary="https://wanted.co.kr/jobs/1",
         artifact_url="resumes/res_1.pdf",
+        mode=ExecutionMode.DRY_RUN,
     )
 
     await notifier.request_decision(req)
@@ -247,7 +315,9 @@ async def test_request_decision_attaches_resume_pdf_when_store_has_it() -> None:
     assert doc["document"] == b"%PDF-fake-bytes"
     assert doc["filename"] == "resume_app_1.pdf"
     # 캡션에 공고 링크(summary)가 그대로 실려서 승인 전에 원본 공고를 다시 볼 수 있다.
-    assert doc["caption"] == "Wanted / 백엔드 엔지니어 지원 승인\nhttps://wanted.co.kr/jobs/1"
+    assert doc["caption"] == (
+        "🧪 DRY RUN — 실제 제출 안 함\nWanted / 백엔드 엔지니어 지원 승인\nhttps://wanted.co.kr/jobs/1"
+    )
     assert isinstance(doc["reply_markup"], InlineKeyboardMarkup)
 
 
@@ -262,9 +332,12 @@ async def test_request_decision_falls_back_to_text_when_blob_missing() -> None:
         title="Wanted / 백엔드 엔지니어 지원 승인",
         summary="https://wanted.co.kr/jobs/1",
         artifact_url="resumes/missing.pdf",
+        mode=ExecutionMode.DRY_RUN,
     )
 
     await notifier.request_decision(req)
 
     assert bot.documents == []
-    assert bot.sent[0]["text"] == "Wanted / 백엔드 엔지니어 지원 승인\nhttps://wanted.co.kr/jobs/1"
+    assert bot.sent[0]["text"] == (
+        "🧪 DRY RUN — 실제 제출 안 함\nWanted / 백엔드 엔지니어 지원 승인\nhttps://wanted.co.kr/jobs/1"
+    )

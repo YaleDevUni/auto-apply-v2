@@ -26,7 +26,7 @@ from typing import Protocol
 import structlog
 
 from auto_apply.contracts.dto import DecisionRequest, DecisionTicket, NotifyEvent
-from auto_apply.domain.enums import RevisionScope
+from auto_apply.domain.enums import ExecutionMode, RevisionScope
 from auto_apply.domain.errors import AutoApplyError
 from auto_apply.ports.clock import IdGen
 from auto_apply.ports.storage import BlobStore
@@ -88,7 +88,7 @@ class TelegramNotifier:
         # "can't find end of the entity" 로 전송 자체가 실패한다 (라이브 스모크테스트로 확인).
         # summary 에는 공고 링크(job.url)가 이미 실려 온다(workflows/application.py 참고) —
         # 승인 여부를 판단하려면 원본 공고를 다시 확인할 수 있어야 해서다.
-        text = f"{req.title}\n{req.summary}"
+        text = f"{_mode_badge(req)}{req.title}\n{req.summary}"
         pdf_bytes = await self._fetch_pdf(req.artifact_url)
         for chat_id in self._chat_ids:
             if pdf_bytes is not None:
@@ -217,6 +217,25 @@ class TelegramNotifier:
             await self._bot.send_message(
                 chat_id=chat_id, text=cancel_text, reply_markup=cancel_keyboard
             )
+
+
+def _mode_badge(req: DecisionRequest) -> str:
+    """실제 제출 여부를 헷갈리지 않도록 메시지 맨 앞에 붙이는 배지 (dry-run-indicator-backlog).
+
+    가이드 patch 승인(`guide_patch=True`)은 실행과 무관해 배지를 안 붙인다. `req.mode`가
+    None 인 건 워크플로우가 승인 요청 시점에 recipe 조회에 실패해 못 정했다는 뜻이라(
+    `workflows/application.py` `_peek_mode`) "확인 불가"로 명시해 사람이 안심하지 않게 한다.
+    """
+    if req.guide_patch:
+        return ""
+    labels = {
+        ExecutionMode.DRY_RUN: "🧪 DRY RUN — 실제 제출 안 함",
+        ExecutionMode.SUPERVISED: "⚠️ SUPERVISED — 실제 제출(submit 직전 재확인)",
+        ExecutionMode.LIVE: "🚨 LIVE — 실제 제출",
+    }
+    fallback = "❓ 모드 확인 불가 — 승인 전 recipe 상태를 확인하세요"
+    label = labels.get(req.mode, fallback) if req.mode is not None else fallback
+    return f"{label}\n"
 
 
 def _keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:

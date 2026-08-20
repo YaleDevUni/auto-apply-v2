@@ -134,8 +134,12 @@ class _NonceSpy:
     # NEEDS_HUMAN/EXPIRED 종료 시 실제로 notify 가 나가는지(라이브 세션에서 실측된 회귀,
     # workflows/application.py `_finish` 참고) 관찰하기 위한 로그.
     notified: list[NotifyEvent] = field(default_factory=list)
+    # dry-run-indicator-backlog: 승인 요청에 실린 mode 배지 값을 워크플로우 테스트에서
+    # 검증하기 위한 로그.
+    requests: list[DecisionRequest] = field(default_factory=list)
 
     async def request_decision(self, req: DecisionRequest) -> DecisionTicket:
+        self.requests.append(req)
         ticket = await self.inner.request_decision(req)
         self.last_ticket[req.application_id] = ticket.nonce
         return ticket

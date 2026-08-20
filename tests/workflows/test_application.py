@@ -124,6 +124,47 @@ async def test_approve_then_scheduled_execution_completes(env: WorkflowEnvironme
     assert attempt.recipe_platform == "fixture"
 
 
+async def test_decision_request_carries_dry_run_mode_without_recipe_lookup(
+    env: WorkflowEnvironment,
+):
+    """dry-run-indicator-backlog: dry_run_only 면 recipe 상태와 무관하게 항상 DRY_RUN 배지다."""
+    h = Harness(recipe_status="deprecated")  # recipe 조회가 있었다면 PolicyViolation 이 났을 상태
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        await handle.signal(ApplicationWorkflow.reject, RejectSignal())
+        await handle.result()
+
+    assert h.notifier is not None
+    assert h.notifier.requests[0].mode is ExecutionMode.DRY_RUN
+
+
+async def test_decision_request_carries_live_mode_from_active_recipe(env: WorkflowEnvironment):
+    """dry_run_only=False 면 recipe.status(기본 active)로 LIVE 를 미리 알아낸다."""
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd(dry_run_only=False))
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        await handle.signal(ApplicationWorkflow.reject, RejectSignal())
+        await handle.result()
+
+    assert h.notifier is not None
+    assert h.notifier.requests[0].mode is ExecutionMode.LIVE
+
+
+async def test_decision_request_mode_is_none_when_recipe_lookup_fails(env: WorkflowEnvironment):
+    """조회 실패로 승인 시점엔 모드를 못 정하면 None — Notifier 가 "확인 불가"로 보여준다."""
+    h = Harness(recipe_status="deprecated")
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd(dry_run_only=False))
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        await handle.signal(ApplicationWorkflow.reject, RejectSignal())
+        await handle.result()
+
+    assert h.notifier is not None
+    assert h.notifier.requests[0].mode is None
+
+
 async def test_reject_signal_ends_as_rejected(env: WorkflowEnvironment):
     h = Harness()
     async with _Workers(env.client, h):

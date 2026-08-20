@@ -37,6 +37,7 @@ class ConsoleNotifier:
             title=req.title,
             artifact_url=req.artifact_url,
             guide_patch=req.guide_patch,
+            mode=str(req.mode) if req.mode else "unknown",
             approve_cmd=(
                 f"temporal workflow signal --workflow-id {req.workflow_id} "
                 f"--name {'approve_guide_patch' if req.guide_patch else 'approve'} "

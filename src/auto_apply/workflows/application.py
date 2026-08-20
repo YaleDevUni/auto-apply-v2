@@ -38,7 +38,7 @@ from auto_apply.contracts.dto import (
     StartApplication,
     StateView,
 )
-from auto_apply.domain.enums import ApplicationState, DecisionKind, RevisionScope
+from auto_apply.domain.enums import ApplicationState, DecisionKind, ExecutionMode, RevisionScope
 from auto_apply.domain.errors import NON_RETRYABLE
 from auto_apply.workflows import _execution, _revision
 from auto_apply.workflows._errors import activity_failure
@@ -204,10 +204,36 @@ class ApplicationWorkflow:
         self._guide_decision = None
         return decision
 
+    async def _peek_mode(self, cmd: StartApplication, job: JobRef) -> ExecutionMode | None:
+        """승인 요청 시점에 실제 실행될 모드를 미리 알아내 배지로 보여준다.
+
+        dry-run-indicator-backlog.
+
+        `dry_run_only`면 recipe 상태와 무관하게 항상 DRY_RUN 이라(§ `_execution.resolve_mode`)
+        recipe 조회가 필요 없다 — 대부분의 요청이 이 경로라 조회를 건너뛴다. 아니면
+        recipe.status 로 SUPERVISED/LIVE 를 갈라야 해서 조회한다. 조회 실패(등록된 active
+        recipe 없음 등)는 None 을 돌려준다 — Notifier 가 "확인 불가" 배지로 보여준다. 여기서
+        실패해도 워크플로우를 멈추지 않는다: 실제 recipe 조회는 `_execute`가 다시 하고,
+        거기서 못 찾으면 그때 NEEDS_HUMAN 으로 정상 종료한다(§2.2).
+        """
+        if cmd.dry_run_only:
+            return ExecutionMode.DRY_RUN
+        try:
+            recipe = await workflow.execute_activity(
+                load_active_recipe,
+                job.platform,
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=_QUICK,
+            )
+        except ActivityError:
+            return None
+        return _execution.resolve_mode(cmd, recipe.status)
+
     async def _await_decision(
         self, cmd: StartApplication, job: JobRef, pdf_key: str
     ) -> Decision | None:
         await self._persist(cmd, ApplicationState.AWAITING_APPROVAL)
+        mode = await self._peek_mode(cmd, job)
         ticket = await workflow.execute_activity(
             request_approval,
             DecisionRequest(
@@ -216,6 +242,7 @@ class ApplicationWorkflow:
                 title=f"{job.company} / {job.title} 지원 승인",
                 summary=job.url,
                 artifact_url=pdf_key,
+                mode=mode,
             ),
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_QUICK,
