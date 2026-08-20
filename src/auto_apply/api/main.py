@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from temporalio.client import Client
 
 from auto_apply.api.deps import ContainerDep
-from auto_apply.api.routers import applications, telegram
+from auto_apply.api.routers import applications, recipes, telegram
 from auto_apply.bootstrap import build_container
 from auto_apply.config import load_settings
 from auto_apply.temporal_config import DATA_CONVERTER
@@ -28,6 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="auto-apply", version="0.1.0", lifespan=lifespan)
 app.include_router(applications.router)
+app.include_router(recipes.router)
 app.include_router(telegram.router)
 
 

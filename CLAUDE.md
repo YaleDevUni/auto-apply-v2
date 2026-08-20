@@ -180,9 +180,6 @@ libgobject/pango/cairo 를 찾으려면 `DYLD_FALLBACK_LIBRARY_PATH`가 필요�
 대신 어댑터 모듈 로드 시점에 보정한다. weasyprint 렌더 테스트는 시스템 라이브러리가 있어야 돌아서
 `@pytest.mark.integration`(`make up` 불필요), `PDF_RENDERER` 기본값은 `weasyprint`다.
 
-아직 **없는** 것: `/recipes/{platform}` 계열 엔드포인트(승격은 여전히 손으로
-recipe JSON의 `status`를 고치거나 M4의 Telegram 승인 흐름으로 한다 — 아래 참고).
-
 **M3 연장 — `ClaudeCodeCliLLM`(API 키 대신 로컬 Claude Code 구독).** `LLMClient`의 세 번째
 구현(`adapters/llm/claude_code_cli.py`)으로, `ANTHROPIC_API_KEY` 종량제 대신 이 머신에
 로그인된 Claude Code 구독으로 `claude` CLI 를 headless subprocess 로 부른다.
@@ -310,6 +307,15 @@ signal을 못 쓴다) + `CheckpointWaiter`(port 아님, Notifier/CheckpointStore
 (+ 실제 Postgres/Temporal/Playwright integration까지) 통과 완료. 이어서 `AgentBrowserExecutor`
 에도 같은 `CheckpointWaiter` 배선을 추가해 `EXECUTOR=agent_browser`도 체크포인트를 지원한다
 (스크린샷만 CLI `screenshot` 서브커맨드로 찍는 차이). 자세한 설계는 ARCHITECTURE.md §2.4c.
+
+**`/recipes/{platform}` 엔드포인트** (§7 백로그) — 승격이 손으로 recipe JSON의 `status`를
+고치거나 M4 Telegram 승인 흐름으로만 가능했던 갭을 메웠다. `RecipeSource` port가 이미
+`versions()`/`promote()`로 invariant(candidate만 승격 가능, 승격 시 기존 active는
+deprecated로)를 강제하고 있어서 라우터(`api/routers/recipes.py`)는 그 port를 얇게
+노출하기만 한다 — `GET /recipes/{platform}`은 버전 목록(없으면 빈 리스트), `POST
+/recipes/{platform}/promote`는 `PolicyViolation`을 409로 매핑한다. workflow signal/query가
+없는 순수 조회+상태전이라 `applications` 라우터 테스트와 달리 `WorkflowEnvironment` 없이
+컨테이너만 갈아끼운 가벼운 테스트로 검증했다(`tests/api/test_recipes_api.py`).
 
 **S3BlobStore** (§11.2 백로그) — `bootstrap.py`의 `STORAGE=s3` 분기가 `NotImplementedError`만
 던지던 갭을 메웠다. `boto3` 동기 클라이언트를 `LocalBlobStore`와 같은 패턴으로

@@ -9,6 +9,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.recipe import AutomationRecipe
 from auto_apply.domain.enums import ApplicationState
 
 
@@ -34,3 +35,14 @@ class ApplicationView(_Model):
     scheduled_at: datetime | None = None
     attempts: int = 0
     history: list[PersistState] = Field(default_factory=list)
+
+
+class RecipeVersionsResponse(_Model):
+    """§7 GET /recipes/{platform} — RecipeSource.versions() 그대로, version 오름차순."""
+
+    platform: str
+    versions: list[AutomationRecipe]
+
+
+class PromoteRecipeRequest(_Model):
+    version: int
