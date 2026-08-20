@@ -1,8 +1,9 @@
 ---
 name: recipe-builder
 description: >
-  새 플랫폼(또는 바뀐 플랫폼)의 지원 폼을 라이브로 탐색해서 var/recipes/{platform}.json
-  draft AutomationRecipe를 만든다. 현재 Action 스키마로 못 짜는 동작을 만나면
+  새 플랫폼(또는 바뀐 플랫폼)의 지원 폼을 라이브로 탐색해서
+  var/recipes/{platform}/{version}.json draft AutomationRecipe를 만든다. 현재 Action
+  스키마로 못 짜는 동작을 만나면
   contracts/recipe.py·executor까지 정식으로 확장한다. "플랫폼 지원 Recipe 만들어줘/
   고쳐줘", "wanted/saramin/jasoseol 지원 폼 다시 붙여봐" 같은 요청에 사용한다.
 tools: Bash, Read, Grep, Glob, Write, Edit, Skill, ToolSearch, AskUserQuestion
@@ -27,7 +28,10 @@ model: sonnet
   텍스트를 넣어야 할 때 이미 있는 메커니즘이니 새로 만들지 않는다.
 - `src/auto_apply/adapters/executor/playwright.py` — 각 `ActionType`이 런타임에 정확히
   뭘 하는지 (예: `UPLOAD`는 blob key의 마지막 경로 요소를 파일명으로 쓴다).
-- `var/recipes/*.json` — 이미 있는 draft/active recipe들. 겹치는 플랫폼이면 거기서 이어간다.
+- `var/recipes/{platform}/*.json` — 이미 있는 버전들(draft/candidate/active/deprecated).
+  겹치는 플랫폼이면 그 디렉토리에서 가장 큰 version을 보고 이어간다. **버전 파일은
+  append-only 이력이다** — 기존 버전 파일을 덮어쓰지 않는다. 이어서 고칠 때도 `version`을
+  1 올린 새 파일로 쓴다.
 
 ## 1. 라이브 세션 준비
 
@@ -104,7 +108,10 @@ model: sonnet
 
 - `status`는 항상 `"draft"`. `candidate`/`active`로 올리지 않는다.
 - `AutomationRecipe.model_validate(...)`로 검증하고 나서야 완료로 친다.
-- `var/recipes/{platform}.json`에 쓴다 (gitignore 대상 — 커밋 걱정 안 해도 된다).
+- `var/recipes/{platform}/{version}.json`에 쓴다(gitignore 대상 — 커밋 걱정 안 해도 된다) —
+  새 플랫폼이면 `version: 1`, 기존 플랫폼을 이어서 고치는 거면 그 디렉토리의 최대 version + 1.
+  기존 파일을 덮어쓰지 않는다(§9.3, `RecipeSource.save()`가 이 규칙을 강제하는 실행 경로에서는
+  이미 그렇다 — 이 agent는 그 port를 안 거치고 직접 파일을 쓰므로 같은 규칙을 손으로 지킨다).
 - **의존하는 배선**(예: 이 Recipe가 `profile.resume_filename` 같은 새 프로필 키를
   전제한다면, 그걸 실제로 채워주는 워크플로우 코드가 있는지)을 확인하고, 없으면 최종
   보고에 명시한다 — 조용히 안 되는 채로 넘기지 않는다.

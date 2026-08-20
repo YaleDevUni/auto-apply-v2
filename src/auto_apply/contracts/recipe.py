@@ -8,6 +8,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from auto_apply.domain.enums import RecipePolicyBlockerCode
+
 
 class ActionType(StrEnum):
     GOTO = "goto"
@@ -112,3 +114,21 @@ class AutomationRecipe(BaseModel):
     @property
     def has_submit(self) -> bool:
         return any(a.type is ActionType.SUBMIT for a in self.actions)
+
+
+class RecipePolicyBlocker(BaseModel):
+    """domain/recipe_policy.py::check_recipe_policy() 의 결과 항목 하나."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: RecipePolicyBlockerCode
+    detail: str = ""
+
+
+class RecipePolicyVerdict(BaseModel):
+    """domain/recipe_policy.py::check_recipe_policy() 의 결과."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    safe: bool
+    blockers: list[RecipePolicyBlocker] = Field(default_factory=list)

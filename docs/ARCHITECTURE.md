@@ -347,6 +347,40 @@ flowchart TB
   성공 1회 후 자동으로 `active` 승격.
 - Sandbox dry-run은 `stop_before_submit=True`로 실제 제출 없이 전 단계를 검증한다.
 
+**진행 상황 — M4 phase 1(버전관리 write path + 정책 검증) 구현 완료, 나머지는 여전히 0%.**
+이 다이어그램의 B(LLM diff 제안)~J(active 승격) 전 구간은 아직 코드가 없다 — 실제로
+`AutomationRepairWorkflow` 클래스도, LLM diff 스키마도, 샌드박스 dry-run 실행도, child
+workflow dedupe(`repair-{platform}-{form_hash}`)도, `ApplicationWorkflow` 연동도 없다.
+phase 1은 그 앞에 필요한 두 기반만 만들었다:
+
+- **`RecipeSource` write path** — 지금까지 `active(platform)` 조회 하나뿐이던 Protocol에
+  `versions`/`save`/`promote`를 추가했다(`ports/recipe_source.py`). `save()`는 `status="active"`
+  로 저장하는 걸 거부하고, `promote()`는 대상이 `candidate`가 아니면 거부하면서 승격 시
+  기존 active를 자동으로 `deprecated`로 내린다 — "AI가 만든 Recipe를 active로 바로 안
+  올린다"는 지금까지 사람이 파일을 손으로 고쳐서 지키던 invariant를 이제 port 레벨에서도
+  강제한다. `active()`는 "status가 candidate|active인 버전 중 version이 가장 큰 것"으로
+  일반화했다 — repair가 candidate v+1을 만들면 자동으로 그게 "지금 실행 대상"이 되어 위
+  다이어그램의 "candidate의 첫 실전 실행은 supervised mode"가 실제로 성립한다(단, 아직
+  candidate를 만드는 코드가 없어 지금 당장 동작 변화는 없다).
+- **파일 레이아웃 변경** — `JsonFileRecipeSource`가 `{platform}.json`(파일 하나, 버전 이력
+  없음) 대신 `{platform}/{version}.json`(버전마다 파일, append-only 이력)을 쓴다. 기존
+  flat 파일은 `scripts/migrate_recipes_to_versioned.py`(1회성, `migrate_file_to_postgres.py`와
+  같은 스타일 — Makefile 타겟 없이 직접 실행, 여러 번 돌려도 안전)로 옮긴다. 실제
+  `var/recipes/wanted.json`도 이 스크립트로 `var/recipes/wanted/1.json`으로 옮겨졌다(원본
+  flat 파일은 백업 겸 그대로 둠).
+- **`domain/recipe_policy.py`**(신규) — §3 정책 체크리스트 중 코드화 안 돼 있던 부분을
+  `job_applicability.py`와 같은 스타일(순수 함수, verdict 반환)로 채웠다. `credential 필드
+  금지`/`domain drift 금지`/`submit 셀렉터 변경 플래그` 3개만 구현 — action 개수·timeout
+  상한은 이미 `Action`/`AutomationRecipe`의 Pydantic `Field` bound가 스키마 검증 단계(다이어그램
+  노드 C)에서 처리하고 있어서 정책 검증(노드 D)에서 다시 볼 필요가 없었다. `platform_policies`
+  같은 별도 도메인 allowlist config는 아직 없어서(§4 ERD에만 있고 미구현) domain drift 체크는
+  "이전 recipe 자신의 goto 도메인"을 기준선으로 삼는다.
+
+다음 단계(별도 세션): `ai/schemas.py`의 LLM diff 스키마 + 재프롬프트 활동, 실제
+`AutomationRepairWorkflow`(샌드박스 dry-run, 승격 2차 승인 — `_guide_decision`/`_guide_nonce`
+패턴 재사용, child workflow dedupe id), `ApplicationWorkflow`가 `RecipeExecutionError`를 잡아
+이 워크플로우를 부르도록 연동.
+
 ### 2.4b ATS/자체구축 실행 — `WebAgentExecutor`(Aside)
 
 외부 ATS(`domain/job_applicability.py`의 `channel == "external_ats"`)와 회사 자체구축 채용폼은

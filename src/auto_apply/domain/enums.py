@@ -95,3 +95,11 @@ class BlockerCode(StrEnum):
     ESSAY_TOO_MANY = "ESSAY_TOO_MANY"
     DOC_MISSING = "DOC_MISSING"
     NO_DETAIL = "NO_DETAIL"
+
+
+class RecipePolicyBlockerCode(StrEnum):
+    """domain/recipe_policy.py 가 매기는 코드. §3 정책 체크리스트를 코드화한 고정 집합."""
+
+    CREDENTIAL_FIELD = "CREDENTIAL_FIELD"  # 비밀번호로 보이는 필드에 채워넣는 action
+    DOMAIN_DRIFT = "DOMAIN_DRIFT"  # goto 대상 도메인이 이전 recipe 와 다름
+    SUBMIT_SELECTOR_CHANGED = "SUBMIT_SELECTOR_CHANGED"  # submit 셀렉터 변경 — 사람 재확인 필요
