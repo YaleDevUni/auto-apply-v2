@@ -152,6 +152,17 @@ async def test_wanted_enrich_fills_description_and_deadline():
     assert enriched.deadline == "2026-12-31"
 
 
+async def test_saramin_url_is_the_apply_form_not_the_search_relay_link():
+    """카드의 href 는 검색 세션이 실린 relay 링크라 지원 실행(Recipe goto)이 기대하는
+
+    지원폼 URL(`member/apply?rec_idx=`)과 다르다 — rec_idx 로 직접 조립해야 한다
+    (saramin-recipe-progress 메모리 공백 #1).
+    """
+    source = _saramin_source()
+    job = await anext(source.list_jobs())
+    assert job.url == "https://www.saramin.co.kr/zf_user/member/apply?rec_idx=222"
+
+
 async def test_saramin_enrich_is_a_documented_noop():
     """카드 자체에 필터에 필요한 정보가 다 있어 상세 조회를 하지 않는다."""
     source = _saramin_source()

@@ -22,6 +22,7 @@ import pytest
 from auto_apply.adapters.job_source._http import ThrottledClient
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
 from auto_apply.adapters.platform.registry import StaticPlatformRegistry
+from auto_apply.adapters.platform.saramin import SaraminPlatformAdapter
 from auto_apply.adapters.platform.wanted import WantedPlatformAdapter
 from auto_apply.contracts.dto import VerifyInput
 from auto_apply.domain.errors import AuthRequired, PolicyViolation
@@ -234,6 +235,99 @@ class TestWantedPlatformAdapter:
                     since=datetime(2026, 8, 20, tzinfo=UTC),
                 )
             )
+
+
+def _saramin_detail_html(
+    *,
+    company: str = "지팩토리인터랙티브",
+    title: str = "풀스택(웹) 신입 개발자 채용",
+    deadline: str = "2099-12-31",
+) -> str:
+    og_title = f"[{company}] {title}(D-28) - 사람인"
+    og_description = (
+        f"{company}, {title}, 경력:경력무관, 학력:대학졸업이상, 마감일:{deadline}, 홈페이지:x.kr"
+    )
+    return (
+        "<html><head>"
+        f'<meta property="og:title" content="{og_title}" >'
+        f'<meta property="og:description" content="{og_description}" >'
+        "</head><body></body></html>"
+    )
+
+
+_SARAMIN_NOT_FOUND_HTML = '<html><head><meta property="og:title" content="사람인" ></head></html>'
+
+
+def _saramin_adapter(
+    status_code: int = 200, html: str = _saramin_detail_html()
+) -> SaraminPlatformAdapter:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code, text=html)
+
+    return SaraminPlatformAdapter(_mock_client(handler))
+
+
+class TestSaraminPlatformAdapter:
+    def test_matches_saramin_host_only(self):
+        adapter = SaraminPlatformAdapter(_mock_client(lambda r: httpx.Response(200)))
+        assert adapter.matches("https://www.saramin.co.kr/zf_user/member/apply?rec_idx=1") is True
+        assert adapter.matches("https://www.wanted.co.kr/wd/1") is False
+
+    async def test_fetch_job_parses_og_meta(self):
+        adapter = _saramin_adapter()
+        job = await adapter.fetch_job(
+            "https://www.saramin.co.kr/zf_user/member/apply?rec_idx=54782535"
+        )
+        assert job.job_id == "saramin:54782535"
+        assert job.platform == "saramin"
+        assert job.title == "풀스택(웹) 신입 개발자 채용"
+        assert job.company == "지팩토리인터랙티브"
+        assert "마감일:2099-12-31" in job.description
+
+    async def test_fetch_job_rejects_url_without_rec_idx(self):
+        adapter = _saramin_adapter()
+        with pytest.raises(PolicyViolation):
+            await adapter.fetch_job("https://www.saramin.co.kr/zf_user/search/recruit")
+
+    async def test_fetch_job_rejects_not_found_posting(self):
+        """마감/비공개/삭제된 공고는 og:title 이 브랜드명("사람인")뿐이다(실측)."""
+        adapter = _saramin_adapter(html=_SARAMIN_NOT_FOUND_HTML)
+        with pytest.raises(PolicyViolation):
+            await adapter.fetch_job(
+                "https://www.saramin.co.kr/zf_user/member/apply?rec_idx=99999999"
+            )
+
+    async def test_fetch_job_rejects_http_404(self):
+        adapter = _saramin_adapter(status_code=404, html=_SARAMIN_NOT_FOUND_HTML)
+        with pytest.raises(PolicyViolation):
+            await adapter.fetch_job(
+                "https://www.saramin.co.kr/zf_user/member/apply?rec_idx=99999999"
+            )
+
+    async def test_evaluate_eligible_when_deadline_in_future(self):
+        adapter = _saramin_adapter()
+        job = await adapter.fetch_job(
+            "https://www.saramin.co.kr/zf_user/member/apply?rec_idx=54782535"
+        )
+        verdict = await adapter.evaluate(job)
+        assert verdict.eligible is True
+
+    async def test_evaluate_rejects_when_deadline_passed(self):
+        adapter = _saramin_adapter(html=_saramin_detail_html(deadline="2000-01-01"))
+        job = await adapter.fetch_job(
+            "https://www.saramin.co.kr/zf_user/member/apply?rec_idx=54782535"
+        )
+        verdict = await adapter.evaluate(job)
+        assert verdict.eligible is False
+        assert "마감" in verdict.reason
+
+    async def test_verify_submission_is_always_unverified(self):
+        """미구현 — 로그인 세션 확보 방식이 아직 실측 검증 안 됨 (거짓 확인보다 안전)."""
+        adapter = _saramin_adapter()
+        result = await adapter.verify_submission(
+            VerifyInput(application_id="a1", platform="saramin")
+        )
+        assert result.verified is False
 
 
 class TestStaticPlatformRegistry:

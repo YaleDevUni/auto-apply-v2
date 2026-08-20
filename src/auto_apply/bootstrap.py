@@ -38,6 +38,7 @@ from auto_apply.adapters.pdf.stub import StubPdfRenderer
 from auto_apply.adapters.pdf.weasyprint import WeasyPrintPdfRenderer
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
 from auto_apply.adapters.platform.registry import StaticPlatformRegistry
+from auto_apply.adapters.platform.saramin import SaraminPlatformAdapter
 from auto_apply.adapters.platform.wanted import WantedPlatformAdapter
 from auto_apply.adapters.portfolio.static import StaticPortfolioSource
 from auto_apply.adapters.portfolio.yaml_source import YamlPortfolioSource
@@ -232,10 +233,13 @@ def _build_registry(cfg: Settings) -> PlatformRegistry:
         case "fixture":
             return StaticPlatformRegistry([FixturePlatformAdapter()])
         case "live":
-            # saramin/jasoseol 은 job_source(공고 수집) 는 있어도 PlatformAdapter(지원 실행)
-            # 는 아직 없다 — 필요해지면 여기에 추가한다.
+            # jasoseol 은 job_source(공고 수집) 는 있어도 PlatformAdapter(지원 실행) 는 아직
+            # 없다 — 필요해지면 여기에 추가한다.
             return StaticPlatformRegistry(
-                [WantedPlatformAdapter(ThrottledClient(), auth_dir=cfg.data_dir / "auth")]
+                [
+                    WantedPlatformAdapter(ThrottledClient(), auth_dir=cfg.data_dir / "auth"),
+                    SaraminPlatformAdapter(ThrottledClient()),
+                ]
             )
 
 

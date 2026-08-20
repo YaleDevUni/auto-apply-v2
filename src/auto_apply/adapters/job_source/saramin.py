@@ -8,7 +8,7 @@
 import re
 from collections.abc import AsyncIterator, Sequence
 from datetime import date
-from urllib.parse import quote, urljoin
+from urllib.parse import quote
 
 from selectolax.parser import HTMLParser, Node
 
@@ -125,7 +125,6 @@ def _parse_card(node: Node, keyword: str) -> JobPosting | None:
     if link is None:
         return None
     title = link.attributes.get("title") or _text(link)
-    href = link.attributes.get("href") or ""
 
     company = _text(node.css_first(".area_corp .corp_name a")) or _text(
         node.css_first(".area_corp .corp_name")
@@ -173,7 +172,11 @@ def _parse_card(node: Node, keyword: str) -> JobPosting | None:
     return JobPosting(
         platform="saramin",
         platform_job_id=str(rec_idx),
-        url=urljoin(BASE, href.replace("&amp;", "&")),
+        # 검색결과 카드의 href 는 검색 세션(search_uuid 등)이 실린 relay URL 이라 (§0의
+        # SaraminPlatformAdapter/ApplicationWorkflow) 지원폼과 다른 페이지다. 지원 실행이
+        # 기대하는 지원폼 URL(`member/apply?rec_idx=`)을 rec_idx 로 직접 조립해 둔다 —
+        # 이 값이 그대로 StartApplication.job_url 로 재사용되기 때문(§4 saramin-recipe-progress).
+        url=f"{BASE}/zf_user/member/apply?rec_idx={rec_idx}",
         company=company,
         title=title,
         category=sector or None,
