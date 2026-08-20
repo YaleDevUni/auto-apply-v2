@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     s3_bucket: str = "auto-apply"
     s3_access_key: str = ""
     s3_secret_key: str = ""
+    # S3BlobStore contract test 전용 버킷 — TRUNCATE 대신 매 테스트 전 전체 object 삭제라
+    # postgres-integration-test-data-wipe-hazard 와 같은 이유로 운영 s3_bucket 과 분리한다.
+    s3_test_bucket: str = "auto-apply-test"
 
     # 외부 서비스
     anthropic_api_key: str = ""

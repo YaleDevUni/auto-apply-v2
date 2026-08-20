@@ -51,6 +51,7 @@ from auto_apply.adapters.repository.postgres import sqlalchemy_uow_factory
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
 from auto_apply.adapters.storage.local import LocalBlobStore
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
+from auto_apply.adapters.storage.s3 import S3BlobStore
 from auto_apply.adapters.web_agent.aside_cli import AsideCliExecutor
 from auto_apply.adapters.web_agent.replay import ReplayWebAgentExecutor
 from auto_apply.config import Settings
@@ -112,7 +113,12 @@ def _build_store(cfg: Settings) -> BlobStore:
         case "local":
             return LocalBlobStore(cfg.data_dir)
         case "s3":
-            raise NotImplementedError("S3BlobStore 는 M2 에서 추가한다")
+            return S3BlobStore(
+                endpoint_url=cfg.s3_endpoint_url,
+                bucket=cfg.s3_bucket,
+                access_key=cfg.s3_access_key,
+                secret_key=cfg.s3_secret_key,
+            )
 
 
 def _build_llm(cfg: Settings) -> LLMClient:

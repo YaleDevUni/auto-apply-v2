@@ -180,7 +180,7 @@ libgobject/pango/cairo 를 찾으려면 `DYLD_FALLBACK_LIBRARY_PATH`가 필요�
 대신 어댑터 모듈 로드 시점에 보정한다. weasyprint 렌더 테스트는 시스템 라이브러리가 있어야 돌아서
 `@pytest.mark.integration`(`make up` 불필요), `PDF_RENDERER` 기본값은 `weasyprint`다.
 
-아직 **없는** 것: S3 어댑터, `/recipes/{platform}` 계열 엔드포인트(승격은 여전히 손으로
+아직 **없는** 것: `/recipes/{platform}` 계열 엔드포인트(승격은 여전히 손으로
 recipe JSON의 `status`를 고치거나 M4의 Telegram 승인 흐름으로 한다 — 아래 참고).
 
 **M3 연장 — `ClaudeCodeCliLLM`(API 키 대신 로컬 Claude Code 구독).** `LLMClient`의 세 번째
@@ -310,3 +310,14 @@ signal을 못 쓴다) + `CheckpointWaiter`(port 아님, Notifier/CheckpointStore
 (+ 실제 Postgres/Temporal/Playwright integration까지) 통과 완료. 이어서 `AgentBrowserExecutor`
 에도 같은 `CheckpointWaiter` 배선을 추가해 `EXECUTOR=agent_browser`도 체크포인트를 지원한다
 (스크린샷만 CLI `screenshot` 서브커맨드로 찍는 차이). 자세한 설계는 ARCHITECTURE.md §2.4c.
+
+**S3BlobStore** (§11.2 백로그) — `bootstrap.py`의 `STORAGE=s3` 분기가 `NotImplementedError`만
+던지던 갭을 메웠다. `boto3` 동기 클라이언트를 `LocalBlobStore`와 같은 패턴으로
+`asyncio.to_thread`에 태우고, MinIO는 virtual-hosted-style DNS를 못 풀어서
+`addressing_style="path"`로 고정했다. `ClientError`의 `NoSuchKey`/`404`/`NotFound` 코드를
+`BlobNotFound`로 매핑해 `LocalBlobStore`/`InMemoryBlobStore`와 같은 예외 계약을 지킨다.
+contract test에 `s3` 파라미터를 추가했는데(`@pytest.mark.integration`, `make up` 필요),
+postgres 때와 같은 이유로(postgres-integration-test-data-wipe-hazard) 매 테스트 전 버킷을
+통째로 비우는 방식이라 운영 `S3_BUCKET`과 분리된 `S3_TEST_BUCKET`(기본 `auto-apply-test`)을
+새로 뒀다. 버킷은 없으면 `head_bucket`/`create_bucket`으로 첫 호출 시 lazy 생성한다. `STORAGE`
+기본값은 여전히 `local`이다.
