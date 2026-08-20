@@ -29,6 +29,7 @@ from auto_apply.contracts.dto import (
 )
 from auto_apply.contracts.recipe import AutomationRecipe
 from auto_apply.domain.enums import ApplicationState, AttemptOutcome, ExecutionMode
+from auto_apply.workflows._errors import activity_failure
 
 QUEUE_BROWSER = "browser"
 _QUICK = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
@@ -161,12 +162,9 @@ async def _handle_execution_failure(
     started_at: datetime,
     e: ActivityError,
 ) -> ExecutionOutcome:
-    # Temporal 은 예외를 ApplicationError 로 감싸며 원래 클래스는 .type 문자열로 남는다.
-    # 그래서 isinstance 가 아니라 type 비교를 해야 한다.
-    cause = e.cause
-    failure_type = cause.type if isinstance(cause, ApplicationError) else None
-    reason = f"{failure_type or 'unknown'}: {cause}"
+    failure_type, reason = activity_failure(e)
     snapshot_key = ""
+    cause = e.cause
     if failure_type == "RecipeExecutionError" and isinstance(cause, ApplicationError):
         # BrowserActivities 가 details[0] 에 snapshot_key 를 실어 보낸다 (M4 repair 용).
         snapshot_key = str(cause.details[0]) if cause.details else ""

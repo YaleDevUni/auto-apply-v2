@@ -11,6 +11,7 @@ from functools import partial
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 from auto_apply.contracts.activity_defs import (
     collect_job,
@@ -40,6 +41,7 @@ from auto_apply.contracts.dto import (
 from auto_apply.domain.enums import ApplicationState, DecisionKind, RevisionScope
 from auto_apply.domain.errors import NON_RETRYABLE
 from auto_apply.workflows import _execution, _revision
+from auto_apply.workflows._errors import activity_failure
 
 # collect_job/evaluate_eligibility 등이 PolicyViolation 같은 non-retryable 도메인 예외를
 # 던지면 여기서 바로 멈춰야 한다 — 안 넘기면 같은 실패를 maximum_attempts 만큼 반복하고서야
@@ -263,12 +265,22 @@ class ApplicationWorkflow:
     ) -> ApplicationResult:
         self._attempts += 1
         await self._persist(cmd, ApplicationState.EXECUTING)
-        recipe = await workflow.execute_activity(
-            load_active_recipe,
-            job.platform,
-            start_to_close_timeout=timedelta(minutes=1),
-            retry_policy=_QUICK,
-        )
+        try:
+            recipe = await workflow.execute_activity(
+                load_active_recipe,
+                job.platform,
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=_QUICK,
+            )
+        except ActivityError as e:
+            # 등록된 active recipe 가 없거나 draft/candidate 밖 status(PolicyViolation, §3)일
+            # 때 여기서 그대로 흘리면 워크플로우 자체가 조용히 FAILED 로 죽는다 — CLI 의 `status`
+            # 는 내부 `_state` query 만 보여줘서 "아직 실행 중"처럼 보인다(라이브 테스트로 실측,
+            # 메모리 workflow-failure-visibility-backlog). 다른 실패 지점들처럼 사람이 알아챌 수
+            # 있는 종료 상태(NEEDS_HUMAN)로 정상 종료시킨다 — `_finish` 가 텔레그램 알림도 보낸다.
+            _, reason = activity_failure(e)
+            reason = f"recipe 조회 실패: {reason}"
+            return await self._finish(cmd, ApplicationState.NEEDS_HUMAN, reason)
         # executing~verifying 구간(§2.2)은 _execution.py 로 분리했다 — attempt 감사 로그(§4, §5)
         # 까지 포함하면 이 파일 하나로는 200줄 기준을 크게 넘는다.
         outcome = await _execution.run_execution(

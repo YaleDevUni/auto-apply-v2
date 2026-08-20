@@ -89,10 +89,21 @@ async def _run(args: argparse.Namespace) -> None:
             )
             print(f"started: {handle.id} (run {handle.result_run_id})")
         case "status":
-            view = await client.get_workflow_handle(wf_id).query(ApplicationWorkflow.state)
-            print(
-                f"{args.id}: {view.state} scheduled_at={view.scheduled_at} attempts={view.attempts}"
-            )
+            # `_state` query 만 보여주면 워크플로우가 FAILED 로 죽었을 때도 마지막으로 기록된
+            # 내부 상태("executing" 등)가 그대로 남아 "아직 실행 중"처럼 보인다 — 실제로 그렇게
+            # 조용히 죽은 워크플로우를 놓친 적이 있다(메모리 workflow-failure-visibility-backlog).
+            # Temporal 의 실제 실행 상태(RUNNING/FAILED/...)를 함께 보여줘서 그 간극을 없앤다.
+            handle = client.get_workflow_handle(wf_id)
+            desc = await handle.describe()
+            wf_status = desc.status.name if desc.status else "UNKNOWN"
+            try:
+                view = await handle.query(ApplicationWorkflow.state)
+                internal = f"{view.state} scheduled_at={view.scheduled_at} attempts={view.attempts}"
+            except Exception:  # 워크플로우가 이미 끝났으면 query 가 막힐 수 있다
+                internal = "(조회 불가)"
+            print(f"{args.id}: wf_status={wf_status} {internal}")
+            if wf_status not in ("RUNNING", "COMPLETED"):
+                print(f"  ⚠ 워크플로우가 {wf_status} 로 끝났다 — Temporal UI 에서 이력을 확인해라")
         case "approve":
             await client.get_workflow_handle(wf_id).signal(
                 ApplicationWorkflow.approve, ApproveSignal(scheduled_at=_parse_at(args.at))

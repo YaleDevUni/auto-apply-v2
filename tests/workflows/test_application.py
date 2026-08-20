@@ -568,6 +568,29 @@ async def test_ineligible_job_never_reaches_execution(env: WorkflowEnvironment):
     assert h.states(APP_ID) == ["evaluating", "rejected"]
 
 
+async def test_no_active_recipe_goes_to_needs_human_not_silent_crash(env: WorkflowEnvironment):
+    """회귀 테스트 (메모리 workflow-failure-visibility-backlog): `load_active_recipe` 가
+
+    PolicyViolation(§3, recipe status 가 active/candidate 밖)을 던져도 워크플로우가 그대로
+    FAILED 로 죽지 않는다 — 다른 실패 지점들처럼 NEEDS_HUMAN 으로 정상 종료 + 텔레그램 알림을
+    남겨야 CLI `status`/사람이 "조용한 크래시"를 놓치지 않는다(라이브 테스트로 실측).
+    """
+    h = Harness(recipe_status="deprecated")
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal())
+        result = await handle.result()
+
+    assert result.state is ApplicationState.NEEDS_HUMAN
+    assert "PolicyViolation" in result.reason
+    assert h.states(APP_ID)[-1] == "needs_human"
+    assert h.notifier is not None
+    needs_human_events = [e for e in h.notifier.notified if e.kind == "NEEDS_HUMAN"]
+    assert len(needs_human_events) == 1
+    assert needs_human_events[0].application_id == APP_ID
+
+
 async def test_recipe_failure_goes_to_needs_human(env: WorkflowEnvironment):
     """DOM 변경 상황. M4 까지는 사람에게 넘긴다 — 절대 재시도로 밀어붙이지 않는다."""
     h = Harness(fail_selectors=frozenset({"#email"}))
