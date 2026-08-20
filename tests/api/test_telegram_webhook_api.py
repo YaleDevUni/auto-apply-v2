@@ -17,10 +17,12 @@ from auto_apply.api.main import app
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import ApplicationResult
 from auto_apply.domain.enums import ApplicationState
-from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_DEFAULT
+from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_AI, QUEUE_DEFAULT
 from auto_apply.workflows.application import ApplicationWorkflow
+from auto_apply.workflows.repair import AutomationRepairWorkflow
 from tests.conftest import Harness
 from tests.workflows.test_application import APP_ID, _cmd, _wait_state, _Workers
+from tests.workflows.test_repair import _FIXED_DIFF, FORM_HASH, PLATFORM, _req
 
 pytestmark = pytest.mark.integration
 
@@ -313,3 +315,74 @@ async def test_revise_reply_without_matching_tag_is_ignored(client):
 
     view = await handle.query(ApplicationWorkflow.state)
     assert view.state is ApplicationState.AWAITING_APPROVAL
+
+
+# ──────────────── recipe 승격 승인(pa/pr, §2.4) — AutomationRepairWorkflow 라우팅 ────────────────
+@pytest.fixture
+async def repair_client(env: WorkflowEnvironment):
+    """`client`와 별도 fixture다 — repair 는 `repair_diff_payloads`가 채워진 Harness 가 필요해서
+
+    기본 `client`(빈 payload, 곧바로 포기하는 경로용)를 공유할 수 없다.
+    """
+    h = Harness(repair_diff_payloads=[_FIXED_DIFF])
+    app.state.container = h.container(
+        settings=Settings(
+            notifier="telegram",
+            telegram_allowed_chat_ids=str(ALLOWED_CHAT_ID),
+            storage="memory",
+            llm_provider="stub",
+        )
+    )
+    app.state.temporal_client = env.client
+    async with (
+        # _Workers(tests.workflows.test_application) 가 QUEUE_AI 에 AutomationRepairWorkflow 도
+        # 이미 등록해 둔다 — application-*/repair-* 를 구분하지 않는 같은 워커 셋을 그대로 쓴다.
+        _Workers(env.client, h),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac,
+    ):
+        yield ac, env, h
+
+
+async def _repairing_with_nonce(env: WorkflowEnvironment, h: Harness):
+    key = f"{PLATFORM}-{FORM_HASH}"
+    handle = await env.client.start_workflow(
+        AutomationRepairWorkflow.run,
+        _req(),
+        id=f"repair-{PLATFORM}-{FORM_HASH}",
+        task_queue=QUEUE_AI,
+    )
+    assert h.notifier is not None
+    nonce = None
+    for _ in range(300):
+        nonce = h.notifier.last_ticket.get(key)
+        if nonce is not None:
+            break
+        await asyncio.sleep(0.05)
+    assert nonce is not None, "recipe 승격 승인 요청이 안 왔다"
+    return handle, key, nonce
+
+
+async def test_repair_promotion_approve_callback_promotes_recipe(repair_client):
+    ac, env, h = repair_client
+    handle, key, nonce = await _repairing_with_nonce(env, h)
+
+    resp = await ac.post(
+        "/telegram/webhook", json=_callback_body("pa", key, nonce, ALLOWED_CHAT_ID)
+    )
+    assert resp.status_code == 200
+
+    result = await handle.result()
+    assert result.promoted is True
+
+
+async def test_repair_promotion_reject_callback_leaves_candidate_unpromoted(repair_client):
+    ac, env, h = repair_client
+    handle, key, nonce = await _repairing_with_nonce(env, h)
+
+    resp = await ac.post(
+        "/telegram/webhook", json=_callback_body("pr", key, nonce, ALLOWED_CHAT_ID)
+    )
+    assert resp.status_code == 200
+
+    result = await handle.result()
+    assert result.promoted is False

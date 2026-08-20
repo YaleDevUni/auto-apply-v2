@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from auto_apply.activities.application import ApplicationActivities
 from auto_apply.activities.browser import BrowserActivities
 from auto_apply.activities.guide import GuideActivities
+from auto_apply.activities.repair import RepairActivities
 from auto_apply.activities.resume import ResumeActivities
 from auto_apply.adapters.attachments.fixture import FixtureAttachmentManager
 from auto_apply.adapters.attachments.registry import StaticAttachmentRegistry
@@ -209,6 +210,11 @@ class Harness:
     # StubLLM 이 GuidePatchSchema 요청에도 순서대로 payload 를 내주므로, guide patch 를 쓰는
     # 테스트는 여기 채워서 다음 propose_guide_patch 호출이 이 값을 쓰게 한다.
     guide_patch_payloads: list[dict[str, object]] = field(default_factory=list)
+    # RecipeDiffSchema 용 — repair(§2.4)를 쓰는 테스트가 채운다. 비어 있으면(기본값)
+    # propose_recipe_diff 가 빈 payload({}) 를 받아 필수 필드 누락으로 LLMSchemaViolation을
+    # 내고, repair 는 그대로 실패해서(포기) 기존 "M4 까지는 사람에게 넘긴다" 테스트가
+    # 그대로 성립한다.
+    repair_diff_payloads: list[dict[str, object]] = field(default_factory=list)
 
     def _shared_notifier(self, *, telegram: bool = False) -> _NonceSpy:
         """첫 호출이 종류를 정한다(이후는 메모이즈) — REVISE 텔레그램 흐름 테스트는
@@ -266,7 +272,11 @@ class Harness:
         )
         browser = BrowserActivities(ReplayExecutor(clock, fail_selectors=self.fail_selectors))
         guide_activities = GuideActivities(StubLLM(payloads=list(self.guide_patch_payloads)), guide)
-        return [*app.all(), *resume.all(), *browser.all(), *guide_activities.all()]
+        # 별도 StubLLM — resume/guide payload 큐와 섞이면 스키마가 안 맞는 값을 뽑아갈 수 있다
+        # (위 guide_activities 와 같은 이유). recipes 는 ApplicationActivities 와 같은 인스턴스를
+        # 공유해야 save/promote 결과를 load_active_recipe 가 그대로 본다.
+        repair = RepairActivities(StubLLM(payloads=list(self.repair_diff_payloads)), recipes, store)
+        return [*app.all(), *resume.all(), *browser.all(), *guide_activities.all(), *repair.all()]
 
     def container(self, *, settings: Settings | None = None) -> Container:
         """FastAPI 테스트용 `Container`. `activities()` 가 쓰는 것과 같은 `rows`/notifier 를

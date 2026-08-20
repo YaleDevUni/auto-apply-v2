@@ -22,6 +22,10 @@ JSON 스키마 그대로)만 쓴다. scope 선택/ForceReply 프롬프트를 보
   signal 없음 — 원래 승인/거절/수정요청 버튼의 nonce 가 아직 안 쓰였으므로 안내만 보낸다)
 - `"{ga|gr|gv}:{application_id}:{nonce}"` — 가이드 patch 승인/거절/코멘트 시작
 - `"gc:{application_id}:{nonce}"` — 가이드 patch 코멘트 취소 (`vc`와 같은 이유, 안내 문구만 다르다)
+- `"{pa|pr}:{platform}-{form_hash}:{nonce}"` — recipe 승격 승인/보류 (§2.4). 다른 액션과 달리
+  `application_id` 자리가 실제 지원 건이 아니라 `AutomationRepairWorkflow`의 정체성
+  (`platform`/`form_hash`)을 담는다 — `wf_id = f"repair-{platform}-{form_hash}"`를 그대로
+  복원할 수 있게(workflows/repair.py `_await_promotion`).
 
 REVISE 자유 텍스트 피드백은 콜백이 아니라 `message`(ForceReply 답장)로 온다 —
 `[revise:{application_id}:{nonce}:{scope}]` 태그를 프롬프트 메시지 본문에 실어 보내고,
@@ -49,8 +53,20 @@ from auto_apply.contracts.dto import (
 )
 from auto_apply.domain.enums import RevisionScope
 from auto_apply.workflows.application import ApplicationWorkflow
+from auto_apply.workflows.repair import AutomationRepairWorkflow
 
-_ACTIONS = {"a": "승인", "r": "거절", "ga": "가이드 반영", "gr": "가이드 무시"}
+_ACTIONS = {
+    "a": "승인",
+    "r": "거절",
+    "ga": "가이드 반영",
+    "gr": "가이드 무시",
+    "pa": "recipe 승격",
+    "pr": "recipe 승격 보류",
+}
+# pa/pr(recipe 승격, §2.4)은 `application-{id}` 가 아니라 `repair-{id}` 워크플로우를 겨눈다 —
+# AutomationRepairWorkflow 의 승인 요청은 application_id 자리에 "{platform}-{form_hash}"를
+# 담아 보낸다(DecisionRequest.repair_promotion, workflows/repair.py 참고).
+_REPAIR_ACTIONS = frozenset({"pa", "pr"})
 _REVISE_TAG_RE = re.compile(r"\[revise:([^:\s]+):([^:\s]+):(specific|general)\]")
 _GUIDE_REVISE_TAG_RE = re.compile(r"\[guiderevise:([^:\s]+):([^:\s]+)\]")
 
@@ -168,7 +184,9 @@ async def handle_callback_query(
         )
         return CallbackOutcome(handled=True)
 
-    wf_id = f"application-{application_id}"
+    wf_id = (
+        f"repair-{application_id}" if action in _REPAIR_ACTIONS else f"application-{application_id}"
+    )
     decided_by = str(from_id)
     try:
         handle = client.get_workflow_handle(wf_id)
@@ -186,10 +204,20 @@ async def handle_callback_query(
                     ApplicationWorkflow.approve_guide_patch,
                     GuidePatchDecisionSignal(decided_by=decided_by, nonce=nonce),
                 )
-            case _:  # "gr"
+            case "gr":
                 await handle.signal(
                     ApplicationWorkflow.reject_guide_patch,
                     GuidePatchDecisionSignal(decided_by=decided_by, nonce=nonce),
+                )
+            case "pa":
+                await handle.signal(
+                    AutomationRepairWorkflow.approve,
+                    ApproveSignal(decided_by=decided_by, nonce=nonce),
+                )
+            case _:  # "pr"
+                await handle.signal(
+                    AutomationRepairWorkflow.reject,
+                    RejectSignal(decided_by=decided_by, nonce=nonce),
                 )
     except RPCError as e:
         return CallbackOutcome(handled=False, reason=f"workflow not found: {e.message}")

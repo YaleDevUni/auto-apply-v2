@@ -171,6 +171,48 @@ async def test_guide_patch_decision_has_approve_reject_and_comment_buttons() -> 
     assert comment_btn.callback_data == f"gv:app_1:{ticket.nonce}"
 
 
+async def test_repair_promotion_decision_has_no_mode_badge() -> None:
+    """recipe 승격 승인(§2.4)도 실행 모드와 무관해 배지를 안 붙인다."""
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="fixture-h-fixture-1",
+        workflow_id="repair-fixture-h-fixture-1",
+        title="fixture recipe v2 승격 승인",
+        summary="actions 3개, success_signals=['완료']",
+        repair_promotion=True,
+    )
+
+    await notifier.request_decision(req)
+
+    assert bot.sent[0]["text"] == (
+        "fixture recipe v2 승격 승인\nactions 3개, success_signals=['완료']"
+    )
+
+
+async def test_repair_promotion_decision_has_only_approve_and_hold_buttons() -> None:
+    """REVISE/코멘트가 없다 — 승격하거나 그대로 candidate 로 둔다."""
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="fixture-h-fixture-1",
+        workflow_id="repair-fixture-h-fixture-1",
+        title="fixture recipe v2 승격 승인",
+        summary="actions 3개",
+        repair_promotion=True,
+    )
+
+    ticket = await notifier.request_decision(req)
+
+    markup = bot.sent[0]["reply_markup"]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    buttons = markup.inline_keyboard[0]
+    assert len(buttons) == 2
+    promote_btn, hold_btn = buttons
+    assert promote_btn.callback_data == f"pa:fixture-h-fixture-1:{ticket.nonce}"
+    assert hold_btn.callback_data == f"pr:fixture-h-fixture-1:{ticket.nonce}"
+
+
 async def test_send_guide_feedback_prompt_uses_force_reply_and_encodes_context() -> None:
     bot = FakeBot()
     notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)

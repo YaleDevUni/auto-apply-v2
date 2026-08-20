@@ -20,8 +20,11 @@ from auto_apply.contracts.dto import (
     JobRef,
     NotifyEvent,
     PersistState,
+    PromoteRecipeInput,
     ProposeGuidePatchRequest,
+    RecipeDiffResult,
     RenderedPdf,
+    RepairInput,
     ResumeDraft,
     ReviewRequest,
     ReviewVerdict,
@@ -115,4 +118,25 @@ async def ping(message: str) -> str:
 @activity.defn(name="collect_platform_jobs")
 async def collect_platform_jobs(platform: str) -> PlatformCollectionResult:
     """목록 수집 → 스크리닝 → 상세 조회 → 지원가능성 판정 → 저장 (§11.2b)."""
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="propose_recipe_diff")
+async def propose_recipe_diff(req: RepairInput) -> RecipeDiffResult:
+    """LLM diff 제안 (§2.4 node B). `previous`도 같이 돌려줘 워크플로우가 재조회 없이
+
+    정책 검증(순수 함수)을 직접 부를 수 있게 한다.
+    """
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="save_recipe_candidate")
+async def save_recipe_candidate(recipe: AutomationRecipe) -> AutomationRecipe:
+    """샌드박스 dry-run 을 통과한 draft 를 candidate 로 이력에 추가한다 (§2.4 node G)."""
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="promote_recipe")
+async def promote_recipe(req: PromoteRecipeInput) -> AutomationRecipe:
+    """사람이 승격을 승인한 뒤에만 호출된다 (§2.4 node J)."""
     raise NotImplementedError(_ONLY)

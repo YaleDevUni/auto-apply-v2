@@ -31,6 +31,12 @@ def test_parse_accepts_guide_patch_cancel_action():
     assert _parse("gc:app_1:nonce_1") == ("gc", "app_1", "nonce_1")
 
 
+def test_parse_accepts_repair_promotion_actions():
+    """pa/pr(recipe 승격 승인/보류, §2.4) — application_id 자리는 "{platform}-{form_hash}"다."""
+    assert _parse("pa:fixture-h1:nonce_1") == ("pa", "fixture-h1", "nonce_1")
+    assert _parse("pr:fixture-h1:nonce_1") == ("pr", "fixture-h1", "nonce_1")
+
+
 def test_parse_rejects_unknown_action():
     with pytest.raises(MalformedCallback):
         _parse("x:app_1:nonce_1")

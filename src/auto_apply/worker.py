@@ -18,6 +18,7 @@ from auto_apply.activities.browser import BrowserActivities
 from auto_apply.activities.guide import GuideActivities
 from auto_apply.activities.job_collection import JobCollectionActivities
 from auto_apply.activities.ping import PingActivities
+from auto_apply.activities.repair import RepairActivities
 from auto_apply.activities.resume import ResumeActivities
 from auto_apply.bootstrap import Container, build_container
 from auto_apply.config import load_settings
@@ -25,6 +26,7 @@ from auto_apply.temporal_config import DATA_CONVERTER
 from auto_apply.workflows.application import ApplicationWorkflow
 from auto_apply.workflows.job_collection import JobCollectionWorkflow
 from auto_apply.workflows.ping import PingWorkflow
+from auto_apply.workflows.repair import AutomationRepairWorkflow
 from auto_apply.workflows.resume import ResumeWorkflow
 
 log = structlog.get_logger(__name__)
@@ -57,10 +59,11 @@ def _registrations(
             )
         case "ai":
             return (
-                [ResumeWorkflow],
+                [ResumeWorkflow, AutomationRepairWorkflow],
                 [
                     *ResumeActivities(c.generator, c.reviewer, c.pdf).all(),
                     *GuideActivities(c.llm, c.guide).all(),
+                    *RepairActivities(c.llm, c.recipes, c.store).all(),
                 ],
             )
         case "browser":

@@ -6,6 +6,8 @@ PydanticAI든 같은 스키마를 그대로 재사용할 수 있다 (§9.2).
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from auto_apply.contracts.recipe import Action
+
 
 class _Frozen(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -60,3 +62,18 @@ class GuidePatchSchema(_Frozen):
     """
 
     patches: list[GuidePatchItem] = Field(min_length=1)
+
+
+class RecipeDiffSchema(_Frozen):
+    """recipe 수선 제안(§2.4 node B). `actions`가 `contracts.recipe.Action`을 그대로 재사용하는
+
+    이유 — `Action`의 model_validator(selector 필요 여부 등)가 `LLMClient.structured()`의
+    `model_validate()` 경유로 이미 실행된다(§2.4 node C "Pydantic 스키마 검증"이 재프롬프트
+    루프 안에서 공짜로 딸려온다). `expected_elements`/`validation_rules`는 LLM이 건드리지
+    않는다 — 폼 자체의 정체성이라 이전 recipe 값을 코드가 그대로 들고 간다
+    (domain/recipe_repair.py, "AI는 생성만, 조합은 코드").
+    """
+
+    actions: list[Action] = Field(min_length=1, max_length=120)
+    success_signals: list[str] = Field(min_length=1)
+    rationale: str = ""

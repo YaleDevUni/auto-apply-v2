@@ -20,16 +20,20 @@ class ConsoleNotifier:
         ticket = DecisionTicket(
             ticket_id=self._idgen.new_id("tkt"), nonce=self._idgen.new_id("nonce")
         )
-        revise_name = "revise_guide_patch" if req.guide_patch else "revise"
-        revise_input = (
-            '{"feedback":"..."}' if req.guide_patch else '{"feedback":"...","scope":"specific"}'
-        )
-        revise_cmd = {
-            "revise_cmd": (
-                f"temporal workflow signal --workflow-id {req.workflow_id} "
-                f"--name {revise_name} --input '{revise_input}'"
+        # repair_promotion(§2.4)은 승인/거절 2버튼뿐이다 — REVISE 에 대응하는 signal 이 없다.
+        revise_cmd = {}
+        if not req.repair_promotion:
+            revise_name = "revise_guide_patch" if req.guide_patch else "revise"
+            revise_input = (
+                '{"feedback":"..."}' if req.guide_patch else '{"feedback":"...","scope":"specific"}'
             )
-        }
+            revise_cmd = {
+                "revise_cmd": (
+                    f"temporal workflow signal --workflow-id {req.workflow_id} "
+                    f"--name {revise_name} --input '{revise_input}'"
+                )
+            }
+        approve_name = "approve_guide_patch" if req.guide_patch else "approve"
         log.info(
             "decision.requested",
             application_id=req.application_id,
@@ -37,11 +41,11 @@ class ConsoleNotifier:
             title=req.title,
             artifact_url=req.artifact_url,
             guide_patch=req.guide_patch,
+            repair_promotion=req.repair_promotion,
             mode=str(req.mode) if req.mode else "unknown",
             approve_cmd=(
                 f"temporal workflow signal --workflow-id {req.workflow_id} "
-                f"--name {'approve_guide_patch' if req.guide_patch else 'approve'} "
-                f"--input '{{}}'"
+                f"--name {approve_name} --input '{{}}'"
             ),
             **revise_cmd,
         )

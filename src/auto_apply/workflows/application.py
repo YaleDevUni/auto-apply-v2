@@ -6,6 +6,7 @@
   - 승인/예약 대기는 sleep 이 아니라 wait_condition(timeout=) 이어야 reschedule/cancel 이 먹는다
 """
 
+from dataclasses import replace as _dataclasses_replace
 from datetime import datetime, timedelta
 from functools import partial
 
@@ -38,9 +39,10 @@ from auto_apply.contracts.dto import (
     StartApplication,
     StateView,
 )
+from auto_apply.contracts.recipe import AutomationRecipe
 from auto_apply.domain.enums import ApplicationState, DecisionKind, ExecutionMode, RevisionScope
 from auto_apply.domain.errors import NON_RETRYABLE
-from auto_apply.workflows import _execution, _revision
+from auto_apply.workflows import _execution, _repair, _revision
 from auto_apply.workflows._errors import activity_failure
 
 # collect_job/evaluate_eligibility 등이 PolicyViolation 같은 non-retryable 도메인 예외를
@@ -219,12 +221,7 @@ class ApplicationWorkflow:
         if cmd.dry_run_only:
             return ExecutionMode.DRY_RUN
         try:
-            recipe = await workflow.execute_activity(
-                load_active_recipe,
-                job.platform,
-                start_to_close_timeout=timedelta(minutes=1),
-                retry_policy=_QUICK,
-            )
+            recipe = await self._load_recipe(job.platform)
         except ActivityError:
             return None
         return _execution.resolve_mode(cmd, recipe.status)
@@ -290,15 +287,9 @@ class ApplicationWorkflow:
     async def _execute(
         self, cmd: StartApplication, job: JobRef, generated: _revision.GeneratedResume
     ) -> ApplicationResult:
-        self._attempts += 1
         await self._persist(cmd, ApplicationState.EXECUTING)
         try:
-            recipe = await workflow.execute_activity(
-                load_active_recipe,
-                job.platform,
-                start_to_close_timeout=timedelta(minutes=1),
-                retry_policy=_QUICK,
-            )
+            recipe = await self._load_recipe(job.platform)
         except ActivityError as e:
             # 등록된 active recipe 가 없거나 draft/candidate 밖 status(PolicyViolation, §3)일
             # 때 여기서 그대로 흘리면 워크플로우 자체가 조용히 FAILED 로 죽는다 — CLI 의 `status`
@@ -308,9 +299,36 @@ class ApplicationWorkflow:
             _, reason = activity_failure(e)
             reason = f"recipe 조회 실패: {reason}"
             return await self._finish(cmd, ApplicationState.NEEDS_HUMAN, reason)
+
         # executing~verifying 구간(§2.2)은 _execution.py 로 분리했다 — attempt 감사 로그(§4, §5)
         # 까지 포함하면 이 파일 하나로는 200줄 기준을 크게 넘는다.
-        outcome = await _execution.run_execution(
+        outcome = await self._run_execution(cmd, job, recipe, generated)
+        # §2.2 pseudocode 의 "attempt in (1, 2)": RecipeExecutionError 로 실패했을 때만 한 번
+        # 수선을 시도하고 recipe 를 다시 읽어 딱 한 번 더 실행한다 — 그마저 실패하면 더 반복하지
+        # 않고 그대로 사람에게 넘긴다(무한 수선 루프 방지).
+        if outcome.repair is not None:
+            outcome = await self._repair_and_retry(cmd, job, generated, outcome)
+        return await self._finish(
+            cmd, outcome.state, outcome.reason, submitted_at=outcome.submitted_at
+        )
+
+    async def _load_recipe(self, platform: str) -> AutomationRecipe:
+        return await workflow.execute_activity(
+            load_active_recipe,
+            platform,
+            start_to_close_timeout=timedelta(minutes=1),
+            retry_policy=_QUICK,
+        )
+
+    async def _run_execution(
+        self,
+        cmd: StartApplication,
+        job: JobRef,
+        recipe: AutomationRecipe,
+        generated: _revision.GeneratedResume,
+    ) -> _execution.ExecutionOutcome:
+        self._attempts += 1
+        return await _execution.run_execution(
             cmd,
             job,
             recipe,
@@ -319,9 +337,31 @@ class ApplicationWorkflow:
             generated.draft.content,
             persist=lambda state: self._persist(cmd, state),
         )
-        return await self._finish(
-            cmd, outcome.state, outcome.reason, submitted_at=outcome.submitted_at
+
+    async def _repair_and_retry(
+        self,
+        cmd: StartApplication,
+        job: JobRef,
+        generated: _revision.GeneratedResume,
+        outcome: _execution.ExecutionOutcome,
+    ) -> _execution.ExecutionOutcome:
+        trigger = outcome.repair
+        assert trigger is not None
+        await self._persist(cmd, ApplicationState.REPAIRING)
+        ctx = _execution.build_context(
+            cmd, self._attempts, generated.pdf.blob_key, generated.draft.content
         )
+        promoted, repair_reason = await _repair.run_repair(job.platform, trigger, ctx)
+        if not promoted:
+            reason = f"{outcome.reason} / recipe 수선 실패: {repair_reason}"
+            return _dataclasses_replace(outcome, reason=reason)
+
+        try:
+            recipe = await self._load_recipe(job.platform)
+        except ActivityError:
+            reason = f"{outcome.reason} / recipe 수선은 성공했지만 재조회에 실패했다"
+            return _dataclasses_replace(outcome, reason=reason)
+        return await self._run_execution(cmd, job, recipe, generated)
 
     async def _notify(self, cmd: StartApplication, kind: str, message: str) -> None:
         await workflow.execute_activity(

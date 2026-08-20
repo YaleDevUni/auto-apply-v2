@@ -343,43 +343,65 @@ flowchart TB
 ```
 
 - **AI가 만든 Recipe는 절대 바로 `active`가 되지 않는다.** `draft → candidate → active → deprecated`.
-- `candidate`의 첫 실전 실행은 **supervised mode**: 최종 submit 직전 스크린샷을 Telegram으로 보내 확인받는다.
-  성공 1회 후 자동으로 `active` 승격.
-- Sandbox dry-run은 `stop_before_submit=True`로 실제 제출 없이 전 단계를 검증한다.
+- Sandbox dry-run은 새 실행 모드가 필요 없다 — 기존 `ExecutionMode.DRY_RUN`(submit 직전까지만)을
+  그대로 쓴다(§9.5, `_execution.resolve_mode`가 이미 이 의미로 쓰고 있었다).
+- 승격(node I→J)은 `AutomationRepairWorkflow` 자기 자신이 Telegram 승인을 받아 그 자리에서
+  끝낸다 — "candidate의 첫 실전 실행이 supervised mode로 돌다가 성공하면 자동 승격"이라는
+  이전 초안의 대안 경로는 채택하지 않았다: `ExecutionMode.SUPERVISED`가 실제 실행 중 사람이
+  submit 직전 스크린샷을 보고 멈춰 세우는 메커니즘이 아직 실행기(PlaywrightExecutor)에 없고
+  (지금은 `SUPERVISED`가 `LIVE`와 동일하게 그냥 진행된다 — 별도 갭), 있다 해도 승격 여부가
+  임의의 미래 지원 건 실행 결과에 걸리는 건 `RepairResult`를 동기적으로 기다리는
+  `ApplicationWorkflow` 쪽 흐름과 안 맞는다. 대신 샌드박스 dry-run 결과(actions 개수/
+  success_signals)를 요약해 그 자리에서 승인받는다.
 
-**진행 상황 — M4 phase 1(버전관리 write path + 정책 검증) 구현 완료, 나머지는 여전히 0%.**
-이 다이어그램의 B(LLM diff 제안)~J(active 승격) 전 구간은 아직 코드가 없다 — 실제로
-`AutomationRepairWorkflow` 클래스도, LLM diff 스키마도, 샌드박스 dry-run 실행도, child
-workflow dedupe(`repair-{platform}-{form_hash}`)도, `ApplicationWorkflow` 연동도 없다.
-phase 1은 그 앞에 필요한 두 기반만 만들었다:
+**진행 상황 — M4 phase 1(버전관리 write path + 정책 검증) + phase 2(이 다이어그램 B~J 전
+구간, `ApplicationWorkflow` 연동) 구현 완료.** phase 1(`RecipeSource` write path,
+`{platform}/{version}.json` 파일 레이아웃, `domain/recipe_policy.py`)은 이전 절 그대로다.
+phase 2에서 추가한 것:
 
-- **`RecipeSource` write path** — 지금까지 `active(platform)` 조회 하나뿐이던 Protocol에
-  `versions`/`save`/`promote`를 추가했다(`ports/recipe_source.py`). `save()`는 `status="active"`
-  로 저장하는 걸 거부하고, `promote()`는 대상이 `candidate`가 아니면 거부하면서 승격 시
-  기존 active를 자동으로 `deprecated`로 내린다 — "AI가 만든 Recipe를 active로 바로 안
-  올린다"는 지금까지 사람이 파일을 손으로 고쳐서 지키던 invariant를 이제 port 레벨에서도
-  강제한다. `active()`는 "status가 candidate|active인 버전 중 version이 가장 큰 것"으로
-  일반화했다 — repair가 candidate v+1을 만들면 자동으로 그게 "지금 실행 대상"이 되어 위
-  다이어그램의 "candidate의 첫 실전 실행은 supervised mode"가 실제로 성립한다(단, 아직
-  candidate를 만드는 코드가 없어 지금 당장 동작 변화는 없다).
-- **파일 레이아웃 변경** — `JsonFileRecipeSource`가 `{platform}.json`(파일 하나, 버전 이력
-  없음) 대신 `{platform}/{version}.json`(버전마다 파일, append-only 이력)을 쓴다. 기존
-  flat 파일은 `scripts/migrate_recipes_to_versioned.py`(1회성, `migrate_file_to_postgres.py`와
-  같은 스타일 — Makefile 타겟 없이 직접 실행, 여러 번 돌려도 안전)로 옮긴다. 실제
-  `var/recipes/wanted.json`도 이 스크립트로 `var/recipes/wanted/1.json`으로 옮겨졌다(원본
-  flat 파일은 백업 겸 그대로 둠).
-- **`domain/recipe_policy.py`**(신규) — §3 정책 체크리스트 중 코드화 안 돼 있던 부분을
-  `job_applicability.py`와 같은 스타일(순수 함수, verdict 반환)로 채웠다. `credential 필드
-  금지`/`domain drift 금지`/`submit 셀렉터 변경 플래그` 3개만 구현 — action 개수·timeout
-  상한은 이미 `Action`/`AutomationRecipe`의 Pydantic `Field` bound가 스키마 검증 단계(다이어그램
-  노드 C)에서 처리하고 있어서 정책 검증(노드 D)에서 다시 볼 필요가 없었다. `platform_policies`
-  같은 별도 도메인 allowlist config는 아직 없어서(§4 ERD에만 있고 미구현) domain drift 체크는
-  "이전 recipe 자신의 goto 도메인"을 기준선으로 삼는다.
-
-다음 단계(별도 세션): `ai/schemas.py`의 LLM diff 스키마 + 재프롬프트 활동, 실제
-`AutomationRepairWorkflow`(샌드박스 dry-run, 승격 2차 승인 — `_guide_decision`/`_guide_nonce`
-패턴 재사용, child workflow dedupe id), `ApplicationWorkflow`가 `RecipeExecutionError`를 잡아
-이 워크플로우를 부르도록 연동.
+- **`ai/schemas.RecipeDiffSchema`**(node B/C) — `actions: list[Action]`가 `contracts.recipe.Action`을
+  그대로 재사용한다. `Action`의 model_validator(selector 필요 여부 등)가
+  `LLMClient.structured()`의 `model_validate()` 경유로 이미 실행되므로, node C "Pydantic 스키마
+  검증"이 `activities/repair.py`의 재프롬프트 루프(`SimpleResumeGenerator._structured_with_reprompt`와
+  같은 패턴, `max_reprompts=2`) 안에서 공짜로 딸려온다 — 조립된 `AutomationRecipe` 전체가
+  무효(예: submit이 마지막이 아님)여도 같은 루프에서 재프롬프트한다. `expected_elements`/
+  `validation_rules`는 LLM이 안 건드리고 `domain/recipe_repair.build_candidate_recipe`(순수
+  함수, "AI는 생성만, 조합은 코드")가 이전 recipe에서 그대로 물려받는다. `propose_recipe_diff`
+  activity가 `previous`도 같이 돌려줘서(`RecipeDiffResult`) node D(정책 검증)를 workflow가
+  activity 없이 순수 함수로 직접 부를 수 있게 했다(§11.3 "모든 I/O는 activity 안에서만" —
+  정책 검증엔 I/O가 없다).
+- **`workflows/repair.AutomationRepairWorkflow`** — 위 다이어그램을 그대로 코드화했다.
+  `MAX_SANDBOX_ATTEMPTS=2`로 "재시도 < 2?" 루프를 구현하고(실패한 샌드박스 시도의 새
+  snapshot_key로 다음 LLM 호출을 다시 프롬프팅한다), 통과하면 `status="candidate"`로
+  `save_recipe_candidate` 한 뒤 Telegram 승인을 기다려(자체 `approve`/`reject` signal + nonce,
+  `ApplicationWorkflow`의 승인 패턴과 동일) `promote_recipe`를 부른다. 실패 지점 어디서든
+  `RepairResult(promoted=False, reason=...)`로 정상 종료하며 그때마다 `notify` activity로
+  사람에게 알린다.
+- **샌드박스 dry-run의 실행 컨텍스트** — `RepairInput.ctx: ExecutionContext`에 그 실패를 만든
+  실제 지원 건의 profile/upload_keys를 그대로 담아 온다(`workflows/_execution.build_context`를
+  `run_execution`과 공유). "이 selector 수정이 실제로 값을 채울 수 있는가"는 데이터와 무관한
+  질문이라, dedupe로 다른 지원 건의 실패가 이 워크플로우를 트리거했어도 상관없다 — 먼저
+  도착한 실행의 컨텍스트로 검증하면 충분하다.
+- **child workflow dedupe(`repair-{platform}-{form_hash}`)** — phase 1에서 "전례 없는 새
+  패턴"으로 미해결로 남겼던 지점. `workflow.execute_child_workflow`가 이미 도는 실행과 같은
+  id로 시작하면 `WorkflowAlreadyStartedError`가 나는데, **"이미 도는 수선에 붙어서 결과를
+  같이 기다리기"는 채택하지 않았다** — Temporal 워크플로우 코드 안에서 child가 아닌 임의
+  워크플로우의 완료를 기다릴 표준 API가 없다(activity로 Client를 새로 만들어 폴링하는 방법은
+  있지만, 이 정도 이득에 비해 컨테이너에 Temporal Client를 추가로 흘려보내는 배선 비용이
+  크다고 판단했다). 대신 `workflows/_repair.run_repair`가 이 예외를 잡아 그 지원 건만
+  포기시키고 사람에게 넘긴다 — 진행 중인 수선이 끝나 recipe가 승격되면 다음 지원 시도가
+  `load_active_recipe`로 그 결과를 자연히 집어간다.
+- **`ApplicationWorkflow` 연동** — `_execution.ExecutionOutcome`에 `repair: RepairTrigger | None`을
+  추가해 `_handle_execution_failure`가 RecipeExecutionError일 때만 채운다(§2.2 pseudocode의
+  `for attempt in (1, 2)`를 그대로 구현 — `application.py._execute`가 첫 실행 실패 시 딱 한
+  번 `_repair.run_repair`를 부르고 recipe를 재조회해 두 번째 실행을 시도한다, 그 이상은
+  없다). `ApplicationState.REPAIRING`(이미 §2.2 상태 기계에 있던 값)을 이 구간에 persist한다.
+- **Telegram 승격 승인 라우팅** — `DecisionRequest.repair_promotion`(신규 bool)이 True면
+  `TelegramNotifier`가 승인/보류 2버튼(`_repair_keyboard`, REVISE/코멘트 없음)을 보낸다.
+  이때 `application_id` 필드는 실제 지원 건이 아니라 `f"{platform}-{form_hash}"`를 담는다 —
+  `telegram/bridge.py`가 `pa`/`pr` 콜백을 받으면 이 값으로 `wf_id = f"repair-{...}"`를
+  복원해 `AutomationRepairWorkflow.approve`/`.reject`를 부른다(`application-*`로 조립하는
+  기존 액션들과 분기).
 
 ### 2.4b ATS/자체구축 실행 — `WebAgentExecutor`(Aside)
 

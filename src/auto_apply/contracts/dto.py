@@ -72,6 +72,12 @@ class DecisionRequest(_Frozen):
     # (dry-run-indicator-backlog). None 이면 조회 실패로 승인 요청 시점엔 확정 못 한 것이다
     # (workflows/application.py `_peek_mode` 참고) — guide_patch 요청은 실행과 무관해 항상 None.
     mode: ExecutionMode | None = None
+    # True 면 AutomationRepairWorkflow 의 recipe 승격 승인 요청이다(§2.4) — guide_patch 처럼
+    # 중첩 승인이라 승인/거절 2버튼만 보여준다(REVISE 는 없다). 이 경우 `application_id`는
+    # 실제 지원 건이 아니라 `f"{platform}-{form_hash}"`를 담는다 — 그래야
+    # `wf_id = f"repair-{application_id}"`로 그대로 워크플로우 id 를 복원할 수 있다
+    # (telegram/bridge.py).
+    repair_promotion: bool = False
 
 
 class DecisionTicket(_Frozen):
@@ -178,12 +184,34 @@ class ExecutionResult(_Frozen):
     detail: str = ""
 
 
-# ── Repair ───────────────────────────────────────────────────────────────
+# ── Repair (§2.4) ────────────────────────────────────────────────────────
 class RepairInput(_Frozen):
     platform: str
     form_hash: str
     snapshot_key: str
     failed_version: int
+    # 샌드박스 dry-run 이 실제로 값을 채워 넣을 수 있어야 selector 수정이 진짜 통하는지
+    # 검증된다 — 이 필드가 없으면 실행 계층까지 안 가고 "그럴듯한 diff"만 만드는 셈이라
+    # `AutomationRepairWorkflow`를 부르는 쪽(그 시점의 실패한 지원)이 자신의 컨텍스트를
+    # 그대로 넘긴다. dedupe(동시에 같은 폼이 실패한 다른 지원)로 다른 실행 컨텍스트가
+    # 있었어도 먼저 도착한 실행의 컨텍스트로 검증한다 — 셀렉터가 맞는지는 데이터와 무관하다.
+    ctx: ExecutionContext
+
+
+class RecipeDiffResult(_Frozen):
+    """propose_recipe_diff activity 의 반환값. `previous`도 같이 돌려줘야 워크플로우가
+
+    (§11.3 "모든 I/O는 activity 안에서만") 다시 조회하지 않고 순수 함수
+    `domain.recipe_policy.check_recipe_policy(candidate, previous=...)`를 직접 부를 수 있다.
+    """
+
+    candidate: AutomationRecipe
+    previous: AutomationRecipe
+
+
+class PromoteRecipeInput(_Frozen):
+    platform: str
+    version: int
 
 
 class RepairResult(_Frozen):

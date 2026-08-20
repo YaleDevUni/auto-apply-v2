@@ -23,6 +23,7 @@ from auto_apply.contracts.dto import (
 from auto_apply.domain.enums import ApplicationState, AttemptOutcome, ExecutionMode, RevisionScope
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_AI, QUEUE_BROWSER, QUEUE_DEFAULT
 from auto_apply.workflows.application import ApplicationWorkflow
+from auto_apply.workflows.repair import AutomationRepairWorkflow
 from auto_apply.workflows.resume import ResumeWorkflow
 from tests.conftest import JOB_URL, Harness
 
@@ -64,7 +65,7 @@ class _Workers:
     async def __aenter__(self) -> "_Workers":
         specs = [
             (QUEUE_DEFAULT, [ApplicationWorkflow]),
-            (QUEUE_AI, [ResumeWorkflow]),
+            (QUEUE_AI, [ResumeWorkflow, AutomationRepairWorkflow]),
             (QUEUE_BROWSER, []),
         ]
         for queue, wfs in specs:
@@ -633,7 +634,12 @@ async def test_no_active_recipe_goes_to_needs_human_not_silent_crash(env: Workfl
 
 
 async def test_recipe_failure_goes_to_needs_human(env: WorkflowEnvironment):
-    """DOM 변경 상황. M4 까지는 사람에게 넘긴다 — 절대 재시도로 밀어붙이지 않는다."""
+    """DOM 변경 상황. RecipeExecutionError 는 repair(§2.4) 를 한 번 시도하지만, 이 테스트는
+
+    `repair_diff_payloads`를 안 채워서 LLM 이 빈 payload 를 받는다 — RecipeDiffSchema 필수
+    필드 누락으로 곧바로 LLMSchemaViolation 이 나 수선이 실패하고, 결국 그대로 사람에게 넘긴다.
+    수선이 실제로 성공하는 경로는 test_repair.py 가 덮는다.
+    """
     h = Harness(fail_selectors=frozenset({"#email"}))
     async with _Workers(env.client, h):
         handle = await _start(env.client, _cmd())
@@ -643,7 +649,9 @@ async def test_recipe_failure_goes_to_needs_human(env: WorkflowEnvironment):
 
     assert result.state is ApplicationState.NEEDS_HUMAN
     assert "RecipeExecutionError" in result.reason
+    assert "수선 실패" in result.reason
     assert h.states(APP_ID)[-1] == "needs_human"
+    assert "repairing" in h.states(APP_ID)
     attempt = h.attempt(APP_ID, 1)
     assert attempt is not None
     assert attempt.outcome is AttemptOutcome.FAILED

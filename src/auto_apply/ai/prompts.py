@@ -2,7 +2,12 @@
 
 from auto_apply.contracts.dto import JobRef
 from auto_apply.contracts.fact import Fact
+from auto_apply.contracts.recipe import AutomationRecipe
 from auto_apply.domain.resume_blocks import FactBlock
+
+# DOM 스냅샷은 실제 페이지 전체 HTML이라 프롬프트 토큰을 순식간에 태운다 — 이 길이로 잘라도
+# selector 후보를 찾기엔 보통 충분하다(폼은 대개 문서 앞쪽 절반 안에 있다, 실측).
+_SNAPSHOT_CHAR_LIMIT = 16_000
 
 
 def build_resume_prompt(
@@ -87,6 +92,36 @@ def build_guide_patch_prompt(guide: str, feedback: str, job: JobRef) -> str:
         f"[공고 맥락 — 이 피드백이 나온 상황]\n{job.company} / {job.title}\n\n"
         f"[현재 가이드]\n{guide or '(비어 있음)'}\n\n"
         f"[사용자 피드백]\n{feedback}"
+    )
+
+
+def build_recipe_diff_prompt(
+    previous: AutomationRecipe, snapshot_html: str, failure_detail: str
+) -> str:
+    """recipe 수선 제안 프롬프트 (§2.4 node B).
+
+    `previous`의 actions 를 JSON 으로 그대로 보여줘 "무엇을 고치는지"를 diff 관점으로 이해하게
+    한다 — 전체를 새로 설계하지 말고 실패한 지점만 고치라고 명시한다(Recipe/가이드 patch와 같은
+    "최소 변경" 철학). `expected_elements`/`validation_rules`는 코드가 그대로 들고 가므로
+    (domain/recipe_repair.py) 프롬프트에 안 보여준다 — LLM이 건드릴 필드가 아니다.
+    """
+    actions_json = previous.model_dump_json(include={"actions", "success_signals"}, indent=2)
+    snapshot = snapshot_html[:_SNAPSHOT_CHAR_LIMIT]
+    truncated_note = (
+        "\n(스냅샷이 길어 앞부분만 잘랐다)" if len(snapshot_html) > _SNAPSHOT_CHAR_LIMIT else ""
+    )
+    return (
+        f"{previous.platform} 지원 폼에서 아래 [실패한 recipe]의 actions 를 실행하다 "
+        f"[실패 사유]로 실패했다. [현재 페이지 DOM]을 보고 실패한 지점의 selector 를 실제 DOM과 "
+        "맞게 고쳐서 actions 전체(성공한 앞부분 포함)를 다시 내라 — 일부만 내면 나머지 단계가 "
+        "빠진 recipe 가 된다. 실패하지 않은 부분은 원본 selector 를 그대로 유지해라(불필요한 "
+        "변경은 다음 실행에서 또 다른 회귀를 만들 수 있다).\n"
+        "value_ref 는 'profile.xxx'/'upload.xxx' 형태의 참조만 허용된다 — 실제 값(이메일 "
+        "주소 등)을 리터럴로 쓰지 마라. success_signals 는 제출 완료를 판정하는 텍스트 목록이다 "
+        "— DOM에서 실제로 보이는 문구가 있으면 그걸 반영하고, 없으면 원본 값을 유지해라.\n\n"
+        f"[실패 사유]\n{failure_detail}\n\n"
+        f"[실패한 recipe]\n{actions_json}\n\n"
+        f"[현재 페이지 DOM]\n{snapshot}{truncated_note}"
     )
 
 

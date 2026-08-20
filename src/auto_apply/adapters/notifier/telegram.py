@@ -78,11 +78,12 @@ class TelegramNotifier:
         ticket = DecisionTicket(
             ticket_id=self._idgen.new_id("tkt"), nonce=self._idgen.new_id("nonce")
         )
-        keyboard = (
-            _guide_patch_keyboard(req, ticket.nonce)
-            if req.guide_patch
-            else _keyboard(req, ticket.nonce)
-        )
+        if req.guide_patch:
+            keyboard = _guide_patch_keyboard(req, ticket.nonce)
+        elif req.repair_promotion:
+            keyboard = _repair_keyboard(req, ticket.nonce)
+        else:
+            keyboard = _keyboard(req, ticket.nonce)
         # 평문으로 보낸다 — title/summary/artifact_url 은 스크래핑된 공고 데이터라 마크다운
         # 특수문자(_ * ` 등)를 언제든 포함할 수 있다. parse_mode 를 쓰면 그런 문자가 섞일 때마다
         # "can't find end of the entity" 로 전송 자체가 실패한다 (라이브 스모크테스트로 확인).
@@ -226,7 +227,7 @@ def _mode_badge(req: DecisionRequest) -> str:
     None 인 건 워크플로우가 승인 요청 시점에 recipe 조회에 실패해 못 정했다는 뜻이라(
     `workflows/application.py` `_peek_mode`) "확인 불가"로 명시해 사람이 안심하지 않게 한다.
     """
-    if req.guide_patch:
+    if req.guide_patch or req.repair_promotion:
         return ""
     labels = {
         ExecutionMode.DRY_RUN: "🧪 DRY RUN — 실제 제출 안 함",
@@ -245,6 +246,22 @@ def _keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("✅ 승인", callback_data=f"a:{req.application_id}:{nonce}"),
                 InlineKeyboardButton("❌ 거절", callback_data=f"r:{req.application_id}:{nonce}"),
                 InlineKeyboardButton("✏️ 수정요청", callback_data=f"v:{req.application_id}:{nonce}"),
+            ]
+        ]
+    )
+
+
+def _repair_keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:
+    """recipe 승격 승인은 REVISE/코멘트가 없다 — 승격하거나 그대로 candidate 로 둔다.
+
+    `req.application_id`가 `f"{platform}-{form_hash}"`를 담고 있다(§2.4,
+    telegram/bridge.py 가 이걸로 `repair-{...}` workflow id 를 복원한다).
+    """
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ 승격", callback_data=f"pa:{req.application_id}:{nonce}"),
+                InlineKeyboardButton("❌ 보류", callback_data=f"pr:{req.application_id}:{nonce}"),
             ]
         ]
     )

@@ -180,8 +180,8 @@ libgobject/pango/cairo 를 찾으려면 `DYLD_FALLBACK_LIBRARY_PATH`가 필요�
 대신 어댑터 모듈 로드 시점에 보정한다. weasyprint 렌더 테스트는 시스템 라이브러리가 있어야 돌아서
 `@pytest.mark.integration`(`make up` 불필요), `PDF_RENDERER` 기본값은 `weasyprint`다.
 
-아직 **없는** 것: S3 어댑터, `AutomationRepairWorkflow`(M4), `/recipes/{platform}` 계열
-엔드포인트(승격은 지금은 손으로 recipe JSON의 `status`를 고쳐서 한다).
+아직 **없는** 것: S3 어댑터, `/recipes/{platform}` 계열 엔드포인트(승격은 여전히 손으로
+recipe JSON의 `status`를 고치거나 M4의 Telegram 승인 흐름으로 한다 — 아래 참고).
 
 **M3 연장 — `ClaudeCodeCliLLM`(API 키 대신 로컬 Claude Code 구독).** `LLMClient`의 세 번째
 구현(`adapters/llm/claude_code_cli.py`)으로, `ANTHROPIC_API_KEY` 종량제 대신 이 머신에
@@ -266,3 +266,25 @@ try/except 픽스(=알고 있는 실패 지점을 워크플로우 안에서 잡�
 `domain/resume_cleanup.select_deletable`(포트폴리오/직접 업로드/원티드 자체 이력서는 이름이
 패턴에 안 맞아 자동 보존) 구현·테스트·커밋 완료(7be2703, main), 라이브로 실제 계정 정리까지
 검증(14→11개). 자세한 설계는 ARCHITECTURE.md §11.2e.
+
+**M4 `AutomationRepairWorkflow`** (§2.4) — phase 1(recipe 버전관리 write path +
+`domain/recipe_policy.py` 정책검증, `e8a2b5f`)에 이어 나머지 전 구간(LLM diff 제안 →
+정책 검증 → 샌드박스 dry-run → candidate 저장 → Telegram 승격 승인 → `ApplicationWorkflow`
+연동)을 구현했다. `ai/schemas.RecipeDiffSchema`가 `actions`에 `contracts.recipe.Action`을
+그대로 재사용해서 Action의 model_validator(selector 필요 여부 등)가 재프롬프트 루프
+(`activities/repair.py`, `SimpleResumeGenerator`와 같은 패턴) 안에서 공짜로 실행된다.
+`workflows/repair.AutomationRepairWorkflow`가 다이어그램을 그대로 구현하고
+(`MAX_SANDBOX_ATTEMPTS=2`), 샌드박스 dry-run은 새 실행 모드 없이 기존
+`ExecutionMode.DRY_RUN`을 그대로 쓴다. 승격은 "supervised 실행이 성공하면 자동 승격"이
+아니라 repair 워크플로우 자신이 그 자리에서 Telegram 승인을 받아 끝낸다 — `SUPERVISED`
+모드가 실행 중 사람을 멈춰 세우는 메커니즘이 실행기에 아직 없어서다(별도 갭으로 남김).
+child workflow dedupe(`repair-{platform}-{form_hash}`)는 phase 1에서 "전례 없는 패턴"으로
+미해결로 남겼던 지점인데, "이미 도는 수선에 붙어서 기다리기"는 채택하지 않고
+`WorkflowAlreadyStartedError`를 잡아 그 지원 건만 포기시키는 쪽으로 결정했다(Temporal
+워크플로우 코드 안에서 child가 아닌 임의 워크플로우의 완료를 기다릴 표준 API가 없어서 —
+`workflows/_repair.py`). `ApplicationWorkflow._execute`가 `RecipeExecutionError`를 만나면
+§2.2 pseudocode의 "attempt in (1, 2)"대로 수선을 한 번 시도하고 recipe를 재조회해 딱 한 번
+더 실행한다. Telegram 승격 승인은 `DecisionRequest.repair_promotion`(신규)으로 갈래를
+타고, `application_id` 필드에 `f"{platform}-{form_hash}"`를 담아 `telegram/bridge.py`가
+`pa`/`pr` 콜백에서 `repair-{...}` workflow id를 복원한다. 구현·유닛/워크플로우/e2e
+테스트·`make check` 통과 완료. 자세한 설계와 결정 근거는 ARCHITECTURE.md §2.4.
