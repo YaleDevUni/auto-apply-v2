@@ -10,7 +10,10 @@ services:
       POSTGRES_PASSWORD: auto_apply
       POSTGRES_DB: auto_apply
     ports: ["5432:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+      # 빈 볼륨 최초 기동 시에만 실행된다 — auto_apply_test DB 생성 (테스트 격리, db-init/ 참고)
+      - "./db-init:/docker-entrypoint-initdb.d"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U auto_apply"]
       interval: 5s

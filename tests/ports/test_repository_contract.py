@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from auto_apply.adapters.repository.file import FileUnitOfWork
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
+from auto_apply.adapters.repository.models import Base
 from auto_apply.adapters.repository.postgres import SqlAlchemyUnitOfWork, build_engine
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import ApplicationAttempt, PersistState
@@ -36,8 +37,20 @@ async def uow_factory(request: pytest.FixtureRequest, tmp_path):
         return
 
     # postgres — 매 테스트 전에 비워서 이전 테스트의 app_1 행과 섞이지 않게 한다.
-    engine = build_engine(Settings().database_url)
+    # 반드시 운영 database_url 과 분리된 DB 를 쓴다 — 섞이면 TRUNCATE 가 실제 데이터를
+    # 지운다 (postgres-integration-test-data-wipe-hazard 로 실측).
+    settings = Settings()
+    test_url = settings.test_database_url
+    assert test_url != settings.database_url, (
+        "TEST_DATABASE_URL 이 DATABASE_URL 과 같다 — 이 fixture 는 매 테스트 전에 TRUNCATE 하므로"
+        " 운영 DB 를 그대로 가리키면 실제 데이터가 지워진다. db-init/01-create-test-db.sql 참고."
+    )
+    engine = build_engine(test_url)
     async with engine.begin() as conn:
+        # alembic 을 별도로 이 DB에 돌리지 않는다 — models.py 가 유일한 스키마 정의라
+        # create_all 이 alembic 마이그레이션과 항상 같은 결과를 낸다 (스키마가 갈리면 그 자체가
+        # models.py 변경 시 놓친 마이그레이션이라는 신호다).
+        await conn.run_sync(Base.metadata.create_all)
         await conn.execute(text(f"TRUNCATE TABLE {_PG_TABLES} RESTART IDENTITY"))
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     yield lambda: SqlAlchemyUnitOfWork(session_factory)

@@ -36,6 +36,11 @@ class Settings(BaseSettings):
 
     # 인프라
     database_url: str = "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply"
+    # postgres contract test 전용 DB — TRUNCATE 로 상태를 비우므로 운영 database_url 과
+    # 반드시 분리한다 (postgres-integration-test-data-wipe-hazard, db-init/ 참고).
+    test_database_url: str = (
+        "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply_test"
+    )
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
     data_dir: Path = Path("./var")
