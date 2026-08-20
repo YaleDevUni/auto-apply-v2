@@ -14,10 +14,17 @@ from temporalio.exceptions import ActivityError, ApplicationError
 
 from auto_apply.contracts.activity_defs import generate_resume, notify, review_resume
 from auto_apply.contracts.dto import GenerateResumeRequest, NotifyEvent, ResumeDraft, ReviewRequest
+from auto_apply.domain.errors import NON_RETRYABLE
 from auto_apply.temporal_config import QUEUE_DEFAULT
 
 MAX_REVIEW_ROUNDS = 3
-_AI_RETRY = RetryPolicy(maximum_attempts=3, initial_interval=timedelta(seconds=2))
+# non_retryable_error_types 를 넘겨야 아래 docstring 이 말하는 "1회만 시도" 가 실제로 맞다 —
+# 이게 빠지면 LLMAuthRequired/LLMQuotaExceeded 도 maximum_attempts 만큼 반복하고서야 끝난다.
+_AI_RETRY = RetryPolicy(
+    maximum_attempts=3,
+    initial_interval=timedelta(seconds=2),
+    non_retryable_error_types=NON_RETRYABLE,
+)
 
 # claude CLI 가 재시도로 저절로 안 풀리는 실패를 이렇게 분류해서 던진다
 # (domain/errors.py LLMAuthRequired/LLMQuotaExceeded, adapters/llm/claude_code_cli.py).

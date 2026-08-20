@@ -38,9 +38,17 @@ from auto_apply.contracts.dto import (
     StateView,
 )
 from auto_apply.domain.enums import ApplicationState, DecisionKind, RevisionScope
+from auto_apply.domain.errors import NON_RETRYABLE
 from auto_apply.workflows import _execution, _revision
 
-_QUICK = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
+# collect_job/evaluate_eligibility 등이 PolicyViolation 같은 non-retryable 도메인 예외를
+# 던지면 여기서 바로 멈춰야 한다 — 안 넘기면 같은 실패를 maximum_attempts 만큼 반복하고서야
+# 끝난다(실측: 등록 안 된 플랫폼 URL로 5회 재시도 후 실패).
+_QUICK = RetryPolicy(
+    maximum_attempts=5,
+    initial_interval=timedelta(seconds=1),
+    non_retryable_error_types=NON_RETRYABLE,
+)
 _PERSIST = RetryPolicy(maximum_attempts=10, initial_interval=timedelta(seconds=1))
 
 
