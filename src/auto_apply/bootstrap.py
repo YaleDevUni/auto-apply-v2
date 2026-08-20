@@ -31,6 +31,7 @@ from auto_apply.adapters.pdf.stub import StubPdfRenderer
 from auto_apply.adapters.pdf.weasyprint import WeasyPrintPdfRenderer
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
 from auto_apply.adapters.platform.registry import StaticPlatformRegistry
+from auto_apply.adapters.platform.wanted import WantedPlatformAdapter
 from auto_apply.adapters.portfolio.static import StaticPortfolioSource
 from auto_apply.adapters.portfolio.yaml_source import YamlPortfolioSource
 from auto_apply.adapters.profile.static import StaticProfileSource
@@ -166,6 +167,18 @@ def _build_recipes(cfg: Settings) -> RecipeSource:
     return InMemoryRecipeSource()
 
 
+def _build_registry(cfg: Settings) -> PlatformRegistry:
+    # JOB_SOURCE 를 그대로 재사용한다 — "오프라인 픽스처 vs 실제 플랫폼" 이라는 같은 축이라
+    # 별도 설정을 하나 더 두지 않았다. fixture.local 은 어차피 실 플랫폼 도메인과 안 겹친다.
+    match cfg.job_source:
+        case "fixture":
+            return StaticPlatformRegistry([FixturePlatformAdapter()])
+        case "live":
+            # saramin/jasoseol 은 job_source(공고 수집) 는 있어도 PlatformAdapter(지원 실행)
+            # 는 아직 없다 — 필요해지면 여기에 추가한다.
+            return StaticPlatformRegistry([WantedPlatformAdapter(ThrottledClient())])
+
+
 def _build_job_sources(cfg: Settings, store: BlobStore) -> Sequence[JobSource]:
     match cfg.job_source:
         case "fixture":
@@ -271,7 +284,7 @@ def build_container(cfg: Settings) -> Container:
         llm=llm,
         notifier=_build_notifier(cfg, idgen, store),
         uow=_build_uow(cfg),
-        registry=StaticPlatformRegistry([FixturePlatformAdapter()]),
+        registry=_build_registry(cfg),
         recipes=_build_recipes(cfg),
         executor=_build_executor(cfg, clock, store),
         generator=SimpleResumeGenerator(
