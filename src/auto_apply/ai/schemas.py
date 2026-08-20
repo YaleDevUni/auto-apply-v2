@@ -34,6 +34,10 @@ class ResumeContentSchema(_Frozen):
     highlights: list[ResumeHighlight] = Field(default_factory=list)
     blocks: list[BlockBullets] = Field(default_factory=list)
     ai_usage: list[ResumeHighlight] = Field(default_factory=list)
+    # 프롬프트가 제시한 카테고리 라벨 중 하나를 그대로 인용해야 한다(새 라벨을 만들지 않는다).
+    # 확신이 없으면 빈 문자열로 둔다 — 포트폴리오 파일명으로 바꾸는 건 코드가 한다
+    # (adapters/resume/_assemble.py, "AI는 생성만, 판정·조합은 코드").
+    job_category: str = ""
 
 
 class GuidePatchItem(_Frozen):

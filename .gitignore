@@ -24,6 +24,7 @@ storage_state*.json
 # 실제 이력 데이터 (개인정보) — config/*.example.yaml 이 대신 형식만 공유한다
 config/facts.yaml
 config/profile.yaml
+config/portfolio_map.yaml
 
 # 플랫폼별 이력서 가이드 (사람이 쓴 커스텀 프롬프트) — config/resume_guide.example.md 가 형식만 공유한다
 config/resume_guide.*.md

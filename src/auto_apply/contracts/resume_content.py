@@ -46,3 +46,7 @@ class AssembledResume(_Frozen):
     education: list[EducationEntry] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     languages: list[LanguageEntry] = Field(default_factory=list)
+    # 문서 내용이 아니라 실행 메타데이터다 — PdfRenderer는 이 필드를 안 쓴다. Recipe 실행
+    # 단계(ExecutionContext.profile)까지 흘러가는 유일한 통로가 ResumeDraft.content 라서
+    # 여기 얹었다(domain/portfolio 같은 새 계약을 따로 만들 만큼 크지 않다).
+    portfolio_filename: str = ""

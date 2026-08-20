@@ -111,7 +111,7 @@ class ApplicationWorkflow:
             return await self._finish(cmd, ApplicationState.CANCELLED, "사용자 취소")
 
         # ── 실행 ──
-        return await self._execute(cmd, job, generated.pdf.blob_key)
+        return await self._execute(cmd, job, generated)
 
     # ─────────────────────── 단계별 헬퍼 ───────────────────────
     async def _generate_resume(
@@ -251,7 +251,7 @@ class ApplicationWorkflow:
         return self._cancelled or self._scheduled_at != target
 
     async def _execute(
-        self, cmd: StartApplication, job: JobRef, resume_pdf_key: str
+        self, cmd: StartApplication, job: JobRef, generated: _revision.GeneratedResume
     ) -> ApplicationResult:
         self._attempts += 1
         await self._persist(cmd, ApplicationState.EXECUTING)
@@ -268,7 +268,8 @@ class ApplicationWorkflow:
             job,
             recipe,
             self._attempts,
-            resume_pdf_key,
+            generated.pdf.blob_key,
+            generated.draft.content,
             persist=lambda state: self._persist(cmd, state),
         )
         return await self._finish(

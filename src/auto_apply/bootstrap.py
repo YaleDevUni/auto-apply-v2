@@ -31,6 +31,8 @@ from auto_apply.adapters.pdf.stub import StubPdfRenderer
 from auto_apply.adapters.pdf.weasyprint import WeasyPrintPdfRenderer
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
 from auto_apply.adapters.platform.registry import StaticPlatformRegistry
+from auto_apply.adapters.portfolio.static import StaticPortfolioSource
+from auto_apply.adapters.portfolio.yaml_source import YamlPortfolioSource
 from auto_apply.adapters.profile.static import StaticProfileSource
 from auto_apply.adapters.profile.yaml_source import YamlProfileSource
 from auto_apply.adapters.recipe.jsonfile import JsonFileRecipeSource
@@ -57,6 +59,7 @@ from auto_apply.ports.matching_config import MatchingConfigSource
 from auto_apply.ports.notifier import Notifier
 from auto_apply.ports.pdf import PdfRenderer
 from auto_apply.ports.platform import PlatformRegistry
+from auto_apply.ports.portfolio import PortfolioSource
 from auto_apply.ports.profile import ProfileSource
 from auto_apply.ports.recipe_source import RecipeSource
 from auto_apply.ports.repository import UnitOfWork
@@ -84,6 +87,7 @@ class Container:
     matching_config: MatchingConfigSource
     facts: FactSource
     profile: ProfileSource
+    portfolio: PortfolioSource
     guide: GuideSource
     credentials: CredentialSource
     web_agent: WebAgentExecutor
@@ -201,6 +205,14 @@ def _build_profile(cfg: Settings) -> ProfileSource:
             return YamlProfileSource(cfg.profile_path)
 
 
+def _build_portfolio(cfg: Settings) -> PortfolioSource:
+    match cfg.portfolio_source:
+        case "static":
+            return StaticPortfolioSource()
+        case "yaml":
+            return YamlPortfolioSource(cfg.portfolio_map_path)
+
+
 def _build_guide(cfg: Settings) -> GuideSource:
     match cfg.guide_source:
         case "static":
@@ -248,6 +260,7 @@ def build_container(cfg: Settings) -> Container:
     llm = _build_llm(cfg)
     facts = _build_facts(cfg)
     profile = _build_profile(cfg)
+    portfolio = _build_portfolio(cfg)
     guide = _build_guide(cfg)
     credentials = _build_credentials(cfg)
     return Container(
@@ -266,6 +279,7 @@ def build_container(cfg: Settings) -> Container:
             idgen,
             facts,
             profile,
+            portfolio,
             guide,
             max_project_blocks=cfg.resume_max_project_blocks,
             max_career_blocks_per_entity=cfg.resume_max_career_blocks_per_entity,
@@ -276,6 +290,7 @@ def build_container(cfg: Settings) -> Container:
         matching_config=_build_matching_config(cfg),
         facts=facts,
         profile=profile,
+        portfolio=portfolio,
         guide=guide,
         credentials=credentials,
         web_agent=_build_web_agent(cfg, clock, store, credentials),

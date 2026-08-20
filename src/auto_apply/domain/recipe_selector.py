@@ -33,5 +33,13 @@ def resolve_selector(action: Action, profile: dict[str, str]) -> str:
             raise ValueError(f"프로필에 값이 없다: {action.value_ref}")
         value = profile[key]
 
+    if not value:
+        # 빈 문자열을 그대로 꽂으면 `:has-text("")` 처럼 의도와 다른(또는 아무거나 매칭되는)
+        # selector 가 만들어진다 — "값이 없다"와 "빈 값으로 아무거나 매칭"을 구분해야 한다.
+        # 이 selector 를 쓰는 액션은 optional=True 로 짜서, 매칭할 값이 없으면 그 스텝을
+        # 통째로 건너뛰게 한다(예: 카테고리 판정이 안 된 경우 포트폴리오 첨부를 생략).
+        source = action.value_ref or action.value_literal
+        raise ValueError(f"selector 치환에 쓸 값이 비어 있다: {source!r}")
+
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return action.selector.replace(SELECTOR_VALUE_PLACEHOLDER, escaped)

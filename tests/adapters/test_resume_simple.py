@@ -6,10 +6,12 @@ from auto_apply.adapters.clock.system import UuidIdGen
 from auto_apply.adapters.facts.static import StaticFactSource
 from auto_apply.adapters.guide.static import StaticGuideSource
 from auto_apply.adapters.llm.stub import StubLLM
+from auto_apply.adapters.portfolio.static import StaticPortfolioSource
 from auto_apply.adapters.profile.static import StaticProfileSource
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
 from auto_apply.contracts.dto import GenerateResumeRequest, JobRef, ResumeDraft, ReviewRequest
 from auto_apply.contracts.fact import Fact
+from auto_apply.contracts.portfolio import PortfolioMap
 from auto_apply.contracts.profile import Profile
 from auto_apply.domain.errors import LLMSchemaViolation
 from auto_apply.ports.guide import GuideSource
@@ -62,6 +64,10 @@ def _profile_source() -> StaticProfileSource:
     return StaticProfileSource([PROFILE])
 
 
+def _portfolio_source(categories: dict[str, str] | None = None) -> StaticPortfolioSource:
+    return StaticPortfolioSource([PortfolioMap(user_id="u1", categories=categories or {})])
+
+
 class _RecordingLLM(StubLLM):
     """StubLLM 을 감싸 마지막 structured() 호출의 실제 전송 내용을 기록한다 — guide/feedback 이
 
@@ -89,6 +95,7 @@ async def test_generate_grounds_used_fact_ids_from_llm_output():
         UuidIdGen(),
         facts,
         _profile_source(),
+        _portfolio_source(),
         StaticGuideSource(),
     )
     draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
@@ -102,7 +109,9 @@ async def test_generate_passes_guide_and_feedback_into_the_prompt():
     facts = StaticFactSource([FACT])
     llm = _RecordingLLM([VALID_PAYLOAD])
     guide: GuideSource = StaticGuideSource("항상 존댓말로 쓴다")
-    gen = SimpleResumeGenerator(llm, UuidIdGen(), facts, _profile_source(), guide)
+    gen = SimpleResumeGenerator(
+        llm, UuidIdGen(), facts, _profile_source(), _portfolio_source(), guide
+    )
     await gen.generate(
         GenerateResumeRequest(
             application_id="a1", user_id="u1", job=JOB, feedback="자기소개를 더 짧게"
@@ -110,6 +119,59 @@ async def test_generate_passes_guide_and_feedback_into_the_prompt():
     )
     assert "항상 존댓말로 쓴다" in llm.last_prompt
     assert "자기소개를 더 짧게" in llm.last_prompt
+
+
+async def test_generate_passes_portfolio_categories_into_the_prompt():
+    """LLM 이 새 라벨을 창작하지 않도록, 실제 매핑에 있는 카테고리 라벨만 프롬프트에 실린다."""
+    facts = StaticFactSource([FACT])
+    llm = _RecordingLLM([VALID_PAYLOAD])
+    portfolio = _portfolio_source(
+        {"개발자": "포트폴리오_풀스택.pdf", "데브옵스": "포트폴리오_데브옵스.pdf"}
+    )
+    gen = SimpleResumeGenerator(
+        llm, UuidIdGen(), facts, _profile_source(), portfolio, StaticGuideSource()
+    )
+    await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
+    assert "개발자" in llm.last_prompt
+    assert "데브옵스" in llm.last_prompt
+
+
+async def test_generate_maps_job_category_to_portfolio_filename():
+    """LLM 이 고른 job_category 라벨을 코드가 실제 첨부파일명으로 바꾼다 — 파일명 자체는
+
+    LLM 이 만들지 않는다("AI는 생성만, 판정·조합은 코드")."""
+    facts = StaticFactSource([FACT])
+    payload = {**VALID_PAYLOAD, "job_category": "개발자"}
+    portfolio = _portfolio_source({"개발자": "박예일_포트폴리오_풀스택.pdf"})
+    gen = SimpleResumeGenerator(
+        StubLLM(payloads=[payload]),
+        UuidIdGen(),
+        facts,
+        _profile_source(),
+        portfolio,
+        StaticGuideSource(),
+    )
+    draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
+    assert draft.content["portfolio_filename"] == "박예일_포트폴리오_풀스택.pdf"
+
+
+async def test_generate_leaves_portfolio_filename_empty_when_category_unmatched():
+    """LLM 이 목록에 없는 카테고리를 창작했거나 비워뒀으면 그냥 포트폴리오를 안 붙인다 —
+
+    재프롬프트하지 않는다(치명적 오류가 아니라 부가 정보 누락일 뿐이라서)."""
+    facts = StaticFactSource([FACT])
+    payload = {**VALID_PAYLOAD, "job_category": "존재하지않는카테고리"}
+    portfolio = _portfolio_source({"개발자": "박예일_포트폴리오_풀스택.pdf"})
+    gen = SimpleResumeGenerator(
+        StubLLM(payloads=[payload]),
+        UuidIdGen(),
+        facts,
+        _profile_source(),
+        portfolio,
+        StaticGuideSource(),
+    )
+    draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
+    assert draft.content["portfolio_filename"] == ""
 
 
 async def test_generate_caps_career_blocks_per_entity():
@@ -136,6 +198,7 @@ async def test_generate_caps_career_blocks_per_entity():
         UuidIdGen(),
         facts,
         _profile_source(),
+        _portfolio_source(),
         StaticGuideSource(),
         max_career_blocks_per_entity=1,
     )
@@ -159,7 +222,12 @@ async def test_generate_assembles_block_bullets_into_career_section():
         ],
     }
     gen = SimpleResumeGenerator(
-        StubLLM(payloads=[payload]), UuidIdGen(), facts, _profile_source(), StaticGuideSource()
+        StubLLM(payloads=[payload]),
+        UuidIdGen(),
+        facts,
+        _profile_source(),
+        _portfolio_source(),
+        StaticGuideSource(),
     )
     draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
     career = draft.content["career"]
@@ -175,7 +243,9 @@ async def test_generate_reprompts_on_schema_violation_then_succeeds():
     facts = StaticFactSource([FACT])
     bad_payload = {**VALID_PAYLOAD, "made_up_field": "LLM이 창작한 필드"}
     llm = StubLLM(payloads=[bad_payload, VALID_PAYLOAD])
-    gen = SimpleResumeGenerator(llm, UuidIdGen(), facts, _profile_source(), StaticGuideSource())
+    gen = SimpleResumeGenerator(
+        llm, UuidIdGen(), facts, _profile_source(), _portfolio_source(), StaticGuideSource()
+    )
     draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
     assert draft.used_fact_ids == ["exp-1"]
 
@@ -185,7 +255,13 @@ async def test_generate_raises_after_exhausting_reprompts():
     bad_payload = {**VALID_PAYLOAD, "made_up_field": "x"}
     llm = StubLLM(payloads=[bad_payload, bad_payload, bad_payload])
     gen = SimpleResumeGenerator(
-        llm, UuidIdGen(), facts, _profile_source(), StaticGuideSource(), max_reprompts=2
+        llm,
+        UuidIdGen(),
+        facts,
+        _profile_source(),
+        _portfolio_source(),
+        StaticGuideSource(),
+        max_reprompts=2,
     )
     with pytest.raises(LLMSchemaViolation):
         await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))

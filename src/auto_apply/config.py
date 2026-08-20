@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     matching_config: Literal["static", "yaml"] = "yaml"
     facts_source: Literal["static", "yaml"] = "yaml"
     profile_source: Literal["static", "yaml"] = "yaml"
+    portfolio_source: Literal["static", "yaml"] = "yaml"
     guide_source: Literal["static", "file"] = "file"
     pdf_renderer: Literal["stub", "weasyprint"] = "weasyprint"
     web_agent: Literal["replay", "aside_cli"] = "replay"
@@ -37,6 +38,7 @@ class Settings(BaseSettings):
     matching_config_path: Path = Path("./config/matching.yaml")
     facts_path: Path = Path("./config/facts.yaml")
     profile_path: Path = Path("./config/profile.yaml")
+    portfolio_map_path: Path = Path("./config/portfolio_map.yaml")
     resume_guide_dir: Path = Path("./config")  # resume_guide.{platform}.md 를 이 안에서 찾는다
     credential_queue_path: Path = Path("./config/credentials.json")
     # WEB_AGENT=aside_cli 일 때만 — 이 머신에 aside CLI가 설치되고 로그인돼 있어야 한다.

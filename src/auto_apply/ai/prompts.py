@@ -12,6 +12,7 @@ def build_resume_prompt(
     *,
     guide: str = "",
     feedback: str = "",
+    portfolio_categories: list[str] | None = None,
 ) -> str:
     """`facts`는 top-level highlights/ai_usage 근거 풀, `blocks`는 경력/프로젝트 하위 블록이다.
 
@@ -21,6 +22,10 @@ def build_resume_prompt(
     `guide`는 REVISE(general)로 사람이 승인한, 앞으로 모든 이력서에 적용할 규칙이다
     (config/resume_guide.{platform}.md, 캐시 없이 매번 새로 읽힌다). `feedback`은 REVISE(specific)로
     이번 재생성 1회에만 반영할 지시다 — 영속 저장되지 않는다.
+
+    `portfolio_categories`는 `config/portfolio_map.yaml`의 카테고리 라벨 목록이다 — LLM은 이
+    목록 중 하나를 `job_category`로 그대로 인용하거나(새 라벨 창작 금지), 안 맞으면 비워둔다.
+    실제 첨부파일명으로 바꾸는 매핑은 코드가 한다(adapters/resume/_assemble.py).
     """
     fact_lines = "\n".join(f"- ({f.id}) {f.content}" for f in facts) or "(등록된 사실 없음)"
 
@@ -49,6 +54,13 @@ def build_resume_prompt(
         prompt += f"\n\n[이력서 작성 가이드 — 항상 지켜라]\n{guide}"
     if feedback:
         prompt += f"\n\n[이번 재생성에 대한 사용자 피드백 — 반드시 반영하라]\n{feedback}"
+    if portfolio_categories:
+        categories_text = ", ".join(portfolio_categories)
+        prompt += (
+            f"\n\n[직무 카테고리]\n다음 중 이 공고와 가장 잘 맞는 카테고리를 job_category 에 "
+            f"그대로 인용하라(새 라벨을 만들지 마라): {categories_text}\n"
+            "확신이 서지 않으면 job_category 를 빈 문자열로 둬라."
+        )
     return prompt
 
 
