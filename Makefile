@@ -56,4 +56,7 @@ telegram-listen: ## 텔레그램 롱폴링 리스너 (NOTIFIER=telegram, 공인 
 watchdog: ## 워크플로우 능동 감시 (FAILED/TERMINATED/TIMED_OUT → 알림, WATCHDOG_* 로 튜닝)
 	uv run python -m auto_apply.watchdog
 
-.PHONY: help setup up down reset migrate fmt lint type arch test test-all check api worker telegram-listen watchdog
+resume-cleanup: ## wanted 이력서 첨부파일 정리 (기본 dry-run, ARGS="--yes" 로 실제 삭제)
+	uv run python -m auto_apply.resume_cleanup $(ARGS)
+
+.PHONY: help setup up down reset migrate fmt lint type arch test test-all check api worker telegram-listen watchdog resume-cleanup

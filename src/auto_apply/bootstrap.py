@@ -6,6 +6,8 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from auto_apply.adapters.attachments.registry import StaticAttachmentRegistry
+from auto_apply.adapters.attachments.wanted import WantedAttachmentManager
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
 from auto_apply.adapters.credentials.json_queue import JsonQueueCredentialSource
 from auto_apply.adapters.credentials.static import StaticCredentialSource
@@ -50,6 +52,7 @@ from auto_apply.adapters.web_agent.replay import ReplayWebAgentExecutor
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import PersistState
 from auto_apply.contracts.job import JobRecord
+from auto_apply.ports.attachments import AttachmentRegistry
 from auto_apply.ports.clock import Clock, IdGen
 from auto_apply.ports.credentials import CredentialSource
 from auto_apply.ports.executor import RecipeExecutor
@@ -93,6 +96,7 @@ class Container:
     guide: GuideSource
     credentials: CredentialSource
     web_agent: WebAgentExecutor
+    attachments: AttachmentRegistry
 
 
 def _build_store(cfg: Settings) -> BlobStore:
@@ -186,6 +190,14 @@ def _build_registry(cfg: Settings) -> PlatformRegistry:
             # saramin/jasoseol 은 job_source(공고 수집) 는 있어도 PlatformAdapter(지원 실행)
             # 는 아직 없다 — 필요해지면 여기에 추가한다.
             return StaticPlatformRegistry([WantedPlatformAdapter(ThrottledClient())])
+
+
+def _build_attachments(cfg: Settings) -> AttachmentRegistry:
+    # JOB_SOURCE 와 달리 fixture 분기를 두지 않는다 — 첨부파일 정리는 항상 사람이 수동으로
+    # 트리거하는 운영 스크립트라(resume_cleanup.py) 등록해 둬도 실제로 호출하기 전엔
+    # storage_state 를 읽지 않는다(AuthRequired 는 list_attachments/delete_attachment 호출
+    # 시점에만 난다).
+    return StaticAttachmentRegistry([WantedAttachmentManager(auth_dir=cfg.data_dir / "auth")])
 
 
 def _build_job_sources(cfg: Settings, store: BlobStore) -> Sequence[JobSource]:
@@ -316,4 +328,5 @@ def build_container(cfg: Settings) -> Container:
         guide=guide,
         credentials=credentials,
         web_agent=_build_web_agent(cfg, clock, store, credentials),
+        attachments=_build_attachments(cfg),
     )

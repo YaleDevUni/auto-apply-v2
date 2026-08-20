@@ -113,6 +113,19 @@ class RenderedPdf(_Frozen):
     bytes_written: int
 
 
+class ResumeAttachment(_Frozen):
+    """플랫폼 계정에 이미 업로드돼 있는 이력서/포트폴리오 파일 1개.
+
+    `AttachmentManager` port (§ wanted-resume-list-cleanup-backlog) 가 다루는 단위 —
+    우리 쪽 blob store 키가 아니라 플랫폼이 매긴 키(wanted 는 `key`)다.
+    """
+
+    key: str
+    title: str
+    content_type: str
+    updated_at: datetime
+
+
 # ── Resume guide patch (REVISE/general, domain/guide_patch.py) ────────────
 class ProposeGuidePatchRequest(_Frozen):
     user_id: str
