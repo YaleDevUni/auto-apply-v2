@@ -27,6 +27,10 @@ from auto_apply.domain.errors import (
 )
 from auto_apply.ports.credentials import Credential
 
+# ATS/자체구축 실행 기반은 최후순위로 미룬다(사용자 지시) — 다른 테스트의 병목이라 스킵해둔다.
+# 재착수할 땐 이 마크만 지우면 된다.
+pytestmark = pytest.mark.skip(reason="ATS/자체구축 실행 기반은 최후순위 — 사용자 지시로 보류")
+
 _SESSION_DIR_NAME = "2026-08-20_testsess"
 _SECRET_PASSWORD = "s3cr3t-p@ss"
 
