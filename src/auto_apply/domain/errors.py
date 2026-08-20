@@ -95,6 +95,35 @@ class GuidePatchAmbiguous(TerminalError):
     """domain/guide_patch.py: `old` 가 가이드 본문에 2번 이상 나타나 어디를 바꿀지 모호하다."""
 
 
+class WebAgentLoginFailed(TerminalError):
+    """WebAgentExecutor: credential 큐에 키가 없거나, 그 계정으로 로그인이 거부됐다.
+
+    사람이 config/credentials.json 을 고쳐야 풀린다 — 재시도해도 같은 자격증명으로는
+    똑같이 실패한다.
+    """
+
+
+class WebAgentTaskFailed(TerminalError):
+    """WebAgentExecutor: 예상 못한 폼 구조 등으로 과제 자체가 실패했다.
+
+    `RecipeExecutionError`처럼 `screenshot_key`를 들고 있어 사람이 원인을 볼 수 있다 — 단
+    `form_hash`/repair 경로는 없다. Recipe 처럼 재사용되는 대상이 없는 1회성 실행이라
+    "수선해서 다음에 또 쓴다"는 개념 자체가 없다.
+    """
+
+    def __init__(self, message: str, *, screenshot_key: str) -> None:
+        super().__init__(message)
+        self.screenshot_key = screenshot_key
+
+
+class WebAgentExecutionError(AutoApplyError):
+    """WebAgentExecutor: 분류되지 않은 subprocess 실패(타임아웃·비정상 종료·출력 파싱 실패).
+
+    `LLMExecutionError`와 같은 이유로 NON_RETRYABLE 에 넣지 않는다 — 대부분 일시적이라
+    재시도로 회복될 수 있다.
+    """
+
+
 NON_RETRYABLE: tuple[str, ...] = (
     RecipeExecutionError.__name__,
     CaptchaEncountered.__name__,
@@ -110,4 +139,6 @@ NON_RETRYABLE: tuple[str, ...] = (
     LLMQuotaExceeded.__name__,
     GuidePatchNotFound.__name__,
     GuidePatchAmbiguous.__name__,
+    WebAgentLoginFailed.__name__,
+    WebAgentTaskFailed.__name__,
 )

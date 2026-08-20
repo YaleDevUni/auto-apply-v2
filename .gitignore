@@ -29,6 +29,9 @@ config/profile.yaml
 config/resume_guide.*.md
 !config/resume_guide.example.md
 
+# ATS/자체구축 로그인 계정 큐 (실제 비밀번호) — config/credentials.example.json 이 형식만 공유한다
+config/credentials.json
+
 # Local data (LocalBlobStore, sqlite, snapshots)
 var/
 data/
