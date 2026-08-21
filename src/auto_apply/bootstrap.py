@@ -87,6 +87,10 @@ class Container:
     idgen: IdGen
     store: BlobStore
     llm: LLMClient
+    # telegram/agent.py 채팅 에이전트 전용 — 이력서 생성용 llm 과 프로바이더는 같지만 모델이
+    # 더 싸다(cfg.telegram_agent_model). 별도 필드로 둔 이유는 config.py 의 telegram_agent_model
+    # 주석 참고.
+    chat_llm: LLMClient
     notifier: Notifier
     uow: Callable[[], UnitOfWork]
     registry: PlatformRegistry
@@ -122,18 +126,23 @@ def _build_store(cfg: Settings) -> BlobStore:
             )
 
 
-def _build_llm(cfg: Settings) -> LLMClient:
+def _build_llm(cfg: Settings, *, model: str | None = None) -> LLMClient:
+    """`model` 을 넘기면 cfg 의 프로바이더별 기본 모델(anthropic_model/claude_cli_model) 대신
+
+    그걸 쓴다 — `chat_llm`(cfg.telegram_agent_model) 처럼 같은 프로바이더로 다른 모델의
+    LLMClient 를 하나 더 만들 때 쓴다. stub 은 모델 개념이 없어 그대로 무시한다.
+    """
     match cfg.llm_provider:
         case "stub":
             return StubLLM(responses=["stub 요약: 공고 요건에 맞춘 경력 정리"] * 10)
         case "anthropic":
             if not cfg.anthropic_api_key:
                 raise ValueError("LLM_PROVIDER=anthropic 이면 ANTHROPIC_API_KEY 가 필요하다")
-            return AnthropicLLM(cfg.anthropic_api_key, model=cfg.anthropic_model)
+            return AnthropicLLM(cfg.anthropic_api_key, model=model or cfg.anthropic_model)
         case "claude_cli":
             return ClaudeCodeCliLLM(
                 binary=cfg.claude_cli_binary,
-                model=cfg.claude_cli_model,
+                model=model or cfg.claude_cli_model,
                 max_budget_usd=cfg.claude_cli_max_budget_usd,
             )
 
@@ -343,6 +352,7 @@ def build_container(cfg: Settings) -> Container:
     clock = SystemClock()
     store = _build_store(cfg)
     llm = _build_llm(cfg)
+    chat_llm = _build_llm(cfg, model=cfg.telegram_agent_model)
     facts = _build_facts(cfg)
     profile = _build_profile(cfg)
     portfolio = _build_portfolio(cfg)
@@ -356,6 +366,7 @@ def build_container(cfg: Settings) -> Container:
         idgen=idgen,
         store=store,
         llm=llm,
+        chat_llm=chat_llm,
         notifier=notifier,
         uow=_build_uow(cfg),
         registry=_build_registry(cfg),

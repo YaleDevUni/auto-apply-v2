@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # 넘길지. 끄면 예전 동작(조용히 무시)으로 정확히 되돌아간다 — LLM 비용/예산
     # (CLAUDE_CLI_MAX_BUDGET_USD)이나 예상 밖 동작이 우려되면 재배포 없이 끌 수 있는 손잡이.
     telegram_chat_agent_enabled: bool = True
+    # 채팅 에이전트의 "도구를 부를지/답할지" 판단은 이력서 생성보다 훨씬 가벼운 분류 작업이라
+    # 별도로 싼 모델을 쓴다(LLMClient 는 인스턴스당 모델 하나 — bootstrap 이 llm 과 별개로
+    # chat_llm 을 이 모델로 한 번 더 만든다). llm_provider=stub 이면 무시된다.
+    telegram_agent_model: str = "claude-haiku-4-5-20251001"
+    # telegram/agent.py 의 start_applications 도구가 새 지원을 시작할 때 쓰는 user_id.
+    # 이 프로젝트는 단일 사용자 전제라 config/profile.yaml 의 user_id 와 맞춰 고정값으로 둔다.
+    default_user_id: str = "u1"
 
     # 인프라
     database_url: str = "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply"

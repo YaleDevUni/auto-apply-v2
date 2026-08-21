@@ -44,6 +44,7 @@ from auto_apply.contracts.dto import (
     PersistState,
 )
 from auto_apply.contracts.fact import Fact
+from auto_apply.contracts.job import JobRecord
 from auto_apply.contracts.profile import Profile
 from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.domain.enums import RevisionScope
@@ -202,6 +203,7 @@ class Harness:
 
     rows: dict[str, list[PersistState]] = field(default_factory=dict)
     attempt_rows: dict[str, list[ApplicationAttempt]] = field(default_factory=dict)
+    job_rows: dict[tuple[str, str], JobRecord] = field(default_factory=dict)
     eligible: bool = True
     reject_reason: str = ""
     verified: bool = True
@@ -304,6 +306,7 @@ class Harness:
         guide = self._shared_guide()
         rows = self.rows
         attempt_rows = self.attempt_rows
+        job_rows = self.job_rows
         resolved_settings = settings or Settings(
             notifier="console", storage="memory", llm_provider="stub"
         )
@@ -313,8 +316,9 @@ class Harness:
             idgen=idgen,
             store=store,
             llm=llm,
+            chat_llm=llm,
             notifier=self._shared_notifier(telegram=resolved_settings.notifier == "telegram"),
-            uow=lambda: InMemoryUnitOfWork(rows, attempt_rows=attempt_rows),
+            uow=lambda: InMemoryUnitOfWork(rows, job_rows, attempt_rows=attempt_rows),
             registry=StaticPlatformRegistry([FixturePlatformAdapter(eligible=self.eligible)]),
             recipes=InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)}),
             executor=ReplayExecutor(clock, fail_selectors=self.fail_selectors),

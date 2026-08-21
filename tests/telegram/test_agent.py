@@ -6,9 +6,11 @@
 
 import dataclasses
 
+from auto_apply.adapters.clock.system import SystemClock
 from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import NotifyEvent, PendingDecisionView, PersistState
+from auto_apply.contracts.job import ApplicabilityVerdict, JobPosting, JobRecord, ScreeningVerdict
 from auto_apply.domain.chat_agent import MAX_STEPS
 from auto_apply.domain.enums import ApplicationState
 from auto_apply.telegram.agent import handle_chat
@@ -44,15 +46,22 @@ class _FakeHandle:
 class _FakeClient:
     def __init__(self, handle: _FakeHandle | None = None) -> None:
         self._handle = handle or _FakeHandle()
+        self.started: list[str] = []
 
     def get_workflow_handle(self, _wf_id: str) -> _FakeHandle:
         return self._handle
 
+    async def start_workflow(self, _fn, _cmd, *, id, task_queue, id_reuse_policy):
+        self.started.append(id)
+
 
 def _container(
-    payloads: list[dict[str, object]], *, notifier: _FakeNotifier | None = None
+    payloads: list[dict[str, object]],
+    *,
+    notifier: _FakeNotifier | None = None,
+    harness: Harness | None = None,
 ) -> object:
-    h = Harness()
+    h = harness or Harness()
     h.rows["app_1"] = [
         PersistState(
             application_id="app_1",
@@ -61,9 +70,10 @@ def _container(
         )
     ]
     base = h.container(settings=Settings(storage="memory", llm_provider="stub"))
-    return dataclasses.replace(
-        base, llm=StubLLM(payloads=payloads), notifier=notifier or _FakeNotifier()
-    )
+    stub = StubLLM(payloads=payloads)
+    # handle_chat 은 c.chat_llm 을 쓴다(c.llm 은 이력서 생성용) — 둘 다 같은 스크립트로 바꿔서
+    # 테스트가 어느 필드를 참조하는지 신경 안 써도 되게 한다.
+    return dataclasses.replace(base, llm=stub, chat_llm=stub, notifier=notifier or _FakeNotifier())
 
 
 async def test_read_tool_call_then_respond_sends_final_answer():
@@ -161,3 +171,54 @@ async def test_llm_schema_violation_does_not_raise_and_apologizes():
 
     assert len(notifier.notified) == 1
     assert "이해하지 못했어요" in notifier.notified[0].message
+
+
+def _actionable_job_rows() -> dict:
+    job = JobPosting(
+        platform="wanted", platform_job_id="1", url="https://x/1", company="A사", title="백엔드"
+    )
+    record = JobRecord(
+        job=job,
+        screening=ScreeningVerdict(verdict="pass", fit_score=80),
+        applicability=ApplicabilityVerdict(
+            actionable=True, channel="platform_form", apply_url=job.url
+        ),
+        collected_at=SystemClock().now(),
+    )
+    return {(job.platform, job.platform_job_id): record}
+
+
+async def test_start_applications_tool_starts_workflow_for_actionable_job():
+    notifier = _FakeNotifier()
+    harness = Harness(job_rows=_actionable_job_rows())
+    c = _container(
+        [
+            {"action": "call_tool", "tool": "start_applications", "tool_args": {"count": "3"}},
+            {"action": "respond", "response": "1건 지원 시작했어요."},
+        ],
+        notifier=notifier,
+        harness=harness,
+    )
+    client = _FakeClient()
+
+    await handle_chat("3건 제출해줘", c, client)
+
+    assert len(client.started) == 1
+    assert [e.message for e in notifier.notified] == ["1건 지원 시작했어요."]
+
+
+async def test_start_applications_tool_reports_when_nothing_actionable():
+    notifier = _FakeNotifier()
+    c = _container(
+        [
+            {"action": "call_tool", "tool": "start_applications", "tool_args": {"count": "3"}},
+            {"action": "respond", "response": "지원 가능한 공고가 없어요."},
+        ],
+        notifier=notifier,
+    )
+    client = _FakeClient()
+
+    await handle_chat("지원해줘", c, client)
+
+    assert client.started == []
+    assert [e.message for e in notifier.notified] == ["지원 가능한 공고가 없어요."]

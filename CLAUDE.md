@@ -379,3 +379,26 @@ list_recent, webhook 라우팅 포함)·`make check` 통과 완료. 자세한 �
 WAF가 headless를 막는다는 기존 실측과 같은 이유)와 분리해 신뢰도를 확보했다.
 `scripts/save_auth_state.py`(사람이 수동 로그인)를 대체하지 않고 보완한다 — CAPTCHA
 감지 시 이 스크립트로 폴백. 구현·`make check` 통과 완료.
+
+**텔레그램 채팅 에이전트 `start_applications` 도구 + `chat_llm` 모델 분리** — "상주 에이전트가
+알아서 몇 건 지원해줘" 요청(2026-08-21)으로, 기존 조회/재전송 도구뿐이던
+`telegram/agent.py`의 `TOOLS`에 실제로 `ApplicationWorkflow`를 시작시키는 첫 행동성 도구를
+추가했다. "제출해줘 N건"은 새 공고를 라이브로 다시 수집하지 않고 `JobCollectionWorkflow`가
+채워둔 `uow.jobs.actionable()` 캐시를 24시간 TTL 안에서만 재사용해 적합도 상위 N건을
+고른다(응답 속도·플랫폼 rate limit 모두를 위한 사용자 결정). `application_id`는
+`domain.job_identity.canonical_key(company, title)`을 그대로 써서 같은 공고로 두 번
+지원을 시작하지 않는다 — Temporal 기본 `WorkflowIDReusePolicy.ALLOW_DUPLICATE`는 이전
+실행이 COMPLETED로 끝난 뒤 같은 id 재시작을 막지 않는다는 걸 확인하고, 이 호출에서만
+`REJECT_DUPLICATE`를 명시해 `WorkflowAlreadyStartedError`를 "이미 지원함" 신호로 쓴다.
+실제 최종 제출은 이 도구가 시작한 워크플로우 안에서도 여전히 사람의 텔레그램 승인 뒤에만
+일어난다 — CLAUDE.md 절대규칙 4의 진짜 불변식은 "워크플로우를 안 건드린다"가 아니라
+"제출은 못 건드린다"임을 문서에 명시했다. 로직은 새 port 없이 `cli.py`/`watchdog.py`와
+같은 운영 진입점 패턴으로 `apply_intake.py`에 뺐고, `telegram/agent.py`는 루프
+오케스트레이션만 남기고 도구 구현(TOOLS 레지스트리 전체)은 `telegram/_agent_tools.py`로
+분리했다(파일이 200줄을 넘어가던 신호). 별개로 도구 선택/응답 판단(`AgentStep`)은 이력서
+생성보다 훨씬 가벼운 분류 작업이라는 사용자 지적으로 `LLMClient`를 하나 더 만들어
+`c.chat_llm`(기본 모델 Haiku, `TELEGRAM_AGENT_MODEL`)으로 분리했다 — `c.llm`(이력서 생성)은
+그대로 둔 채 `bootstrap._build_llm`에 `model` 오버라이드 인자를 추가해 같은 프로바이더로
+다른 모델의 인스턴스를 하나 더 만드는 방식. 구현·유닛 테스트(`apply_intake.py` TTL/정렬/
+dedupe, `telegram/agent.py` 도구 라우팅)·`make check` 통과 완료. 자세한 설계는
+ARCHITECTURE.md §6.

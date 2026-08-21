@@ -784,16 +784,35 @@ DAILY_DIGEST                    /recipes wanted
 - **자유 텍스트 채팅 에이전트**: REVISE/가이드 patch ForceReply 태그에 안 걸리는 자유 텍스트는
   더 이상 무시되지 않고 `telegram/agent.py`의 ReAct 루프로 간다 — 슬래시 커맨드 없이 채팅으로
   물으면 LLM이 매 턴 `LLMClient.structured()`로 `AgentStep`(도구를 부를지 최종 답을 할지) 하나만
-  고르고, 실제 도구 실행은 `TOOLS` 레지스트리(읽기: `list_applications`/`get_application`/
-  `list_recipe_versions`, 행동: `resend_pending_decision`)가 한다. 행동성 도구도 워크플로우를
-  직접 mutate하지 않는다 — `ApplicationWorkflow.pending_decision` query로 nonce를 읽어와
+  고르고, 실제 도구 실행은 `telegram/_agent_tools.py`의 `TOOLS` 레지스트리(읽기:
+  `list_applications`/`get_application`/`list_recipe_versions`, 행동:
+  `resend_pending_decision`/`start_applications`)가 한다(`agent.py`는 루프 오케스트레이션만,
+  도구 구현은 별 파일로 — "한 파일 = 한 책임"). `resend_pending_decision`은 워크플로우를 직접
+  mutate하지 않는다 — `ApplicationWorkflow.pending_decision` query로 nonce를 읽어와
   `TelegramNotifier.resend_decision`으로 **원래 승인/거절/수정요청 버튼과 같은 콜백을 다시
   보낼 뿐**이다. 실제 승인/거절/제출은 여전히 사람이 그 버튼을 누르는 순간에만 일어난다 —
   절대규칙 4를 자연어 오인식 경로로 우회하지 않기 위한 설계(설계 세션에서 확정, 메모리
   telegram-chat-agent-design). `telegram_chat_agent_enabled=false`로 재배포 없이 끌 수 있다
   (LLM 비용/예상 밖 동작 손잡이). 프롬프트 조립(도구 카탈로그 → 문자열)은 `domain/chat_agent.py`
   순수 함수라 포트 없이 테스트되고, `ApplicationRepository.list_recent`(신설, §11.2 포트)가
-  "최근 지원 건 목록" 조회 공백을 메웠다.
+  "최근 지원 건 목록" 조회 공백을 메웠다. 도구 선택/응답 판단은 이력서 생성보다 훨씬 가벼운
+  분류 작업이라 `c.llm`이 아니라 별도 `c.chat_llm`(같은 프로바이더, `TELEGRAM_AGENT_MODEL`
+  기본값 Haiku)을 쓴다 — `bootstrap._build_llm`이 `model` 오버라이드 인자를 받아 프로바이더당
+  모델이 다른 `LLMClient` 인스턴스를 두 개 만든다.
+  **`start_applications`(2026-08-21, "상주 에이전트가 알아서 몇 건 지원해줘" 요청)**는 앞의
+  두 도구와 달리 실제로 `ApplicationWorkflow`를 새로 "시작"한다 — 하지만 그 워크플로우 자체가
+  제출 전 텔레그램 승인을 기다리게 돼 있어 절대규칙 4는 그대로 지켜진다("워크플로우를 안
+  건드린다"가 아니라 "제출은 못 건드린다"가 진짜 불변식). 로직은 `apply_intake.py`(cli.py/
+  watchdog.py처럼 Temporal Client SDK를 직접 쓰는 운영 진입점, 새 port 없음)에 있다:
+  `uow.jobs.actionable()`(`JobCollectionWorkflow`가 Schedule로 채워둔 캐시)을 읽되, 요청마다
+  라이브 재수집을 하면 느리고 rate limit도 갉아먹으므로 24시간 TTL(`JOB_CACHE_TTL`) 안의
+  것만 후보로 삼는다(2026-08-21 사용자 결정) — 적합도(`fit_score`) 상위 N건을 고른다.
+  `application_id`는 `domain.job_identity.canonical_key(company, title)`을 그대로 쓴다 —
+  이 값이 원래 "중복지원 방어선"으로 설계돼 있어서(그 모듈 docstring), 같은 공고로 지원을
+  이미 시작했으면 워크플로우 시작 자체가 막힌다. 다만 Temporal 기본
+  `WorkflowIDReusePolicy.ALLOW_DUPLICATE`는 이전 실행이 COMPLETED로 끝난 뒤엔 같은 id 재시작을
+  막지 않으므로, 이 호출에서만 명시적으로 `REJECT_DUPLICATE`를 줘서 "한 번이라도 시작한 공고는
+  다시 시작 안 한다"를 강제하고 `WorkflowAlreadyStartedError`를 건너뛰기 신호로 쓴다.
 
 ---
 
