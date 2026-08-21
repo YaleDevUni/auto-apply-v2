@@ -50,3 +50,7 @@ class AssembledResume(_Frozen):
     # 단계(ExecutionContext.profile)까지 흘러가는 유일한 통로가 ResumeDraft.content 라서
     # 여기 얹었다(domain/portfolio 같은 새 계약을 따로 만들 만큼 크지 않다).
     portfolio_filename: str = ""
+    # 문서 내용이 아니라 승인 메타데이터다(§ wanted-application-caution-indicators-backlog) —
+    # PdfRenderer 는 안 쓰고 workflows/application.py 가 DecisionRequest.caution_notes 로
+    # 그대로 옮긴다. portfolio_filename 과 같은 이유로 여기 얹었다.
+    caution_notes: list[str] = Field(default_factory=list)

@@ -777,6 +777,22 @@ DAILY_DIGEST                    /recipes wanted
   이 배지는 승인 요청 시점의 스냅샷이라 그 뒤 recipe 상태가 바뀌면(드묾) 실제 실행 때와
   달라질 수 있다는 한계는 남는다. 가이드 patch 2차 승인(`guide_patch=True`)은 실행과 무관해
   배지를 안 붙인다.
+- **주의사항 인디케이터(M3 연장)**: dry-run 배지와 같은 동기 — 승인 버튼을 누르기 전 정보
+  비대칭을 줄인다(메모리 wanted-application-caution-indicators-backlog). `DecisionRequest`에
+  세 필드를 추가로 실어 `_await_decision`이 채운다. (1) `caution_documents` — 성적증명서·
+  경력증명서처럼 자동화가 절대 못 채우는 첨부서류 힌트(`domain/job_applicability.
+  caution_documents`, `job.title`+`job.description`을 정규식으로 스캔하는 순수 함수라
+  workflow 안에서 I/O 없이 바로 부른다). 포트폴리오는 이미 자동 첨부되므로 제외한다 — 지원
+  가능 여부를 막는 `evaluate_applicability`의 `requires["documents"]`/`DOC_MISSING`
+  blocker 판정과는 기준이 다르다(그쪽은 보유 여부와 대조해 막을지 말지를 정한다, 이건 보유
+  여부와 무관하게 "폼엔 어차피 못 채운다"는 사실 자체를 알린다). (2) `portfolio_filename` —
+  이번 지원에 실제로 첨부될 포트폴리오 파일명. `adapters/resume/_assemble.py`가 이미 계산해
+  `ResumeDraft.content`에 실어둔 값을 그대로 옮긴다(새 계산 없음). (3) `caution_notes` — LLM이
+  이력서 생성 콜에서 같이 내는 주관적 주의사항 자유 서술(`ai/schemas.ResumeContentSchema.
+  caution_notes`, [[portfolio-category-llm-step]]과 같은 패턴 — 같은 콜에 필드 하나 얹는 쪽이
+  별도 LLM 콜보다 싸다). 근거 fact_id가 필요한 서술이 아니라 공고에 대한 메타 코멘트라
+  `ground_check`가 검증하지 않는다. 셋 다 본 승인 요청에만 채워지고, 가이드 patch/repair
+  승격/체크포인트 같은 중첩 승인은 실행과 무관해 안 붙는다(`_mode_badge`와 같은 조건).
 - **체크포인트 승인(§2.4c)**: SUPERVISED 실행 중 페이지 경계마다 스크린샷 + "✅ 계속/❌ 중단"
   2버튼(`ca`/`cr`)을 보낸다. 다른 콜백과 달리 워크플로우 signal이 아니라
   `checkpoint_store.record_decision`을 직접 호출한다 — 기다리는 게 워크플로우가 아니라

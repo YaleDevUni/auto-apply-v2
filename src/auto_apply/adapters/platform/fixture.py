@@ -17,12 +17,14 @@ class FixturePlatformAdapter:
         eligible: bool = True,
         reject_reason: str = "",
         verified: bool = True,
+        description: str = "",
     ) -> None:
         self._platform = platform
         self._hosts = hosts
         self._eligible = eligible
         self._reject_reason = reject_reason
         self._verified = verified
+        self._description = description
 
     @property
     def platform(self) -> str:
@@ -39,6 +41,7 @@ class FixturePlatformAdapter:
             url=url,
             title="백엔드 엔지니어",
             company="Fixture Inc.",
+            description=self._description,
         )
 
     async def evaluate(self, job: JobRef) -> Eligibility:

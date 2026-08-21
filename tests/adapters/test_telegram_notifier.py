@@ -156,6 +156,64 @@ async def test_request_decision_prefixes_unknown_badge_when_mode_missing() -> No
     assert bot.sent[0]["text"].startswith("❓ 모드 확인 불가")
 
 
+async def test_request_decision_shows_caution_documents_portfolio_and_notes() -> None:
+    """wanted-application-caution-indicators-backlog: 승인 전 정보 비대칭 해소 배지 셋."""
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="Wanted / 백엔드 엔지니어 지원 승인",
+        summary="https://wanted.co.kr/jobs/1",
+        mode=ExecutionMode.DRY_RUN,
+        caution_documents=["성적증명서", "경력증명서"],
+        portfolio_filename="박예일_포트폴리오.pdf",
+        caution_notes=["경력 요건 대비 근거가 빠듯함"],
+    )
+
+    await notifier.request_decision(req)
+
+    text = bot.sent[0]["text"]
+    assert "📎 준비 필요 서류: 성적증명서, 경력증명서" in text
+    assert "🗂 첨부 포트폴리오: 박예일_포트폴리오.pdf" in text
+    assert "⚠️ 경력 요건 대비 근거가 빠듯함" in text
+
+
+async def test_request_decision_omits_caution_section_when_empty() -> None:
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+
+    await notifier.request_decision(_req())
+
+    text = bot.sent[0]["text"]
+    assert "📎" not in text
+    assert "🗂" not in text
+    assert "⚠️" not in text
+
+
+async def test_guide_patch_decision_has_no_caution_section() -> None:
+    """중첩 승인(가이드 patch)은 실행과 무관해 caution 배지도 안 붙는다."""
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="가이드 수정 제안",
+        summary="diff",
+        guide_patch=True,
+        caution_documents=["성적증명서"],
+        portfolio_filename="x.pdf",
+        caution_notes=["note"],
+    )
+
+    await notifier.request_decision(req)
+
+    text = bot.sent[0]["text"]
+    assert "📎" not in text
+    assert "🗂" not in text
+    assert "⚠️" not in text
+
+
 async def test_guide_patch_decision_has_no_mode_badge() -> None:
     """가이드 patch 승인은 실행과 무관해 배지를 안 붙인다."""
     bot = FakeBot()

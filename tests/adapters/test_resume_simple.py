@@ -174,6 +174,24 @@ async def test_generate_leaves_portfolio_filename_empty_when_category_unmatched(
     assert draft.content["portfolio_filename"] == ""
 
 
+async def test_generate_passes_through_llm_caution_notes():
+    """LLM 이 낸 caution_notes 가 그대로 draft.content 로 흘러 DecisionRequest 까지 이어진다
+
+    (§ wanted-application-caution-indicators-backlog)."""
+    facts = StaticFactSource([FACT])
+    payload = {**VALID_PAYLOAD, "caution_notes": ["경력 요건 대비 근거가 빠듯함"]}
+    gen = SimpleResumeGenerator(
+        StubLLM(payloads=[payload]),
+        UuidIdGen(),
+        facts,
+        _profile_source(),
+        _portfolio_source(),
+        StaticGuideSource(),
+    )
+    draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
+    assert draft.content["caution_notes"] == ["경력 요건 대비 근거가 빠듯함"]
+
+
 async def test_generate_caps_career_blocks_per_entity():
     """회귀 테스트: 가이드 patch(자연어)로는 블록 개수를 못 줄인다 — 이 상한이 유일한 레버다
 

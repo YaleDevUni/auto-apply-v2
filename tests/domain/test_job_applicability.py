@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from auto_apply.contracts.job import JobPosting, ScreeningVerdict
 from auto_apply.contracts.matching_config import ApplicabilityRules, EssayConfig
 from auto_apply.domain.enums import BlockerCode
-from auto_apply.domain.job_applicability import evaluate_applicability
+from auto_apply.domain.job_applicability import caution_documents, evaluate_applicability
 
 
 def _job(**kw) -> JobPosting:
@@ -139,6 +139,16 @@ def test_available_document_does_not_block():
     cfg = _cfg(available_documents=["졸업증명서"])
     v = evaluate_applicability(job, _screening(), cfg, recipe_exists=True, session_ok=True)
     assert BlockerCode.DOC_MISSING not in _codes(v)
+
+
+# ── caution_documents (§ wanted-application-caution-indicators-backlog) ─────
+def test_caution_documents_detects_markers_excluding_portfolio():
+    text = "성적증명서 제출 필수. 포트폴리오 첨부 요망."
+    assert caution_documents(text) == ["성적증명서"]
+
+
+def test_caution_documents_empty_when_no_markers():
+    assert caution_documents("충분히 긴 본문입니다. " * 20) == []
 
 
 def test_short_description_blocks_and_lowers_confidence():

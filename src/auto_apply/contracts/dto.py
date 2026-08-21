@@ -108,6 +108,19 @@ class DecisionRequest(_Frozen):
     # (§ supervised-checkpoint-design) — guide_patch/repair_promotion 처럼 승인/거절 2버튼만.
     # `artifact_url`엔 체크포인트 스크린샷의 blob 키가 실린다.
     checkpoint: bool = False
+    # 아래 셋은 본 승인 요청(guide_patch=False 등 중첩 승인이 아닌 경우)에만 채워진다 —
+    # 승인 버튼을 누르기 전 정보 비대칭을 줄이려는 목적(§ mode 와 같은 동기,
+    # wanted-application-caution-indicators-backlog).
+    # 자동화가 못 채우는 첨부서류 힌트(domain/job_applicability.caution_documents) — 사람이
+    # 따로 준비/제출해야 한다.
+    caution_documents: list[str] = Field(default_factory=list)
+    # 이번 지원에 실제로 첨부될 포트폴리오 파일명(비어 있으면 첨부 없음). 이미
+    # adapters/resume/_assemble.py 가 계산해 ResumeDraft.content 에 실어둔 값을 그대로 옮긴다.
+    portfolio_filename: str = ""
+    # LLM 이 이 공고/이 지원 건에 대해 주관적으로 판단한 주의사항(ai/schemas.ResumeContentSchema
+    # 의 caution_notes) — 근거 fact_id 가 필요한 서술이 아니라 공고 본문에 대한 메타 코멘트라
+    # ground_check 검증 대상이 아니다.
+    caution_notes: list[str] = Field(default_factory=list)
 
 
 class DecisionTicket(_Frozen):

@@ -210,6 +210,9 @@ class Harness:
     verified: bool = True
     fail_selectors: frozenset[str] = frozenset()
     recipe_status: str = "active"
+    # wanted-application-caution-indicators-backlog: caution_documents 배지가 job.description
+    # 을 그대로 스캔하므로, 그 감지를 워크플로우 테스트에서 검증하려면 채워야 한다.
+    job_description: str = ""
     # activities() 와 container() 가 같은 인스턴스를 써야 GET 이 workers 쪽 persist 결과를
     # 그대로 읽는다(rows 공유) — nonce 검증 자체는 더 이상 여기 있지 않다(워크플로우가 한다).
     notifier: _NonceSpy | None = None
@@ -260,6 +263,7 @@ class Harness:
             eligible=self.eligible,
             reject_reason=self.reject_reason,
             verified=self.verified,
+            description=self.job_description,
         )
         recipes = InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)})
         rows = self.rows

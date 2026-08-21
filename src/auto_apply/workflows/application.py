@@ -43,6 +43,7 @@ from auto_apply.contracts.dto import (
 from auto_apply.contracts.recipe import AutomationRecipe
 from auto_apply.domain.enums import ApplicationState, DecisionKind, ExecutionMode, RevisionScope
 from auto_apply.domain.errors import NON_RETRYABLE
+from auto_apply.domain.job_applicability import caution_documents as _caution_documents
 from auto_apply.workflows import _execution, _repair, _revision
 from auto_apply.workflows._errors import activity_failure
 
@@ -151,7 +152,7 @@ class ApplicationWorkflow:
         """
         revisions = 0
         while True:
-            decision = await self._await_decision(cmd, job, generated.pdf.blob_key)
+            decision = await self._await_decision(cmd, job, generated)
             if decision is None or decision.kind is not DecisionKind.REVISE:
                 return decision, generated
 
@@ -228,10 +229,13 @@ class ApplicationWorkflow:
         return _execution.resolve_mode(cmd, recipe.status)
 
     async def _await_decision(
-        self, cmd: StartApplication, job: JobRef, pdf_key: str
+        self, cmd: StartApplication, job: JobRef, generated: _revision.GeneratedResume
     ) -> Decision | None:
         await self._persist(cmd, ApplicationState.AWAITING_APPROVAL)
         mode = await self._peek_mode(cmd, job)
+        content = generated.draft.content
+        raw_notes = content.get("caution_notes", [])
+        notes = [str(n) for n in raw_notes] if isinstance(raw_notes, list) else []
         ticket = await workflow.execute_activity(
             request_approval,
             DecisionRequest(
@@ -239,8 +243,13 @@ class ApplicationWorkflow:
                 workflow_id=workflow.info().workflow_id,
                 title=f"{job.company} / {job.title} 지원 승인",
                 summary=job.url,
-                artifact_url=pdf_key,
+                artifact_url=generated.pdf.blob_key,
                 mode=mode,
+                # 승인 버튼을 누르기 전 정보 비대칭을 줄이는 배지 셋(§ wanted-application-
+                # caution-indicators-backlog) — mode 배지와 같은 동기.
+                caution_documents=_caution_documents(f"{job.title}\n{job.description}"),
+                portfolio_filename=str(content.get("portfolio_filename", "")),
+                caution_notes=notes,
             ),
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_QUICK,

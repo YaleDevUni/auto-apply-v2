@@ -91,7 +91,7 @@ class TelegramNotifier:
         # "can't find end of the entity" 로 전송 자체가 실패한다 (라이브 스모크테스트로 확인).
         # summary 에는 공고 링크(job.url)가 이미 실려 온다(workflows/application.py 참고) —
         # 승인 여부를 판단하려면 원본 공고를 다시 확인할 수 있어야 해서다.
-        text = f"{_mode_badge(req)}{req.title}\n{req.summary}"
+        text = f"{_mode_badge(req)}{req.title}\n{req.summary}{_caution_section(req)}"
         filename = (
             f"checkpoint_{req.application_id}.png"
             if req.checkpoint
@@ -261,6 +261,23 @@ def _mode_badge(req: DecisionRequest) -> str:
     fallback = "❓ 모드 확인 불가 — 승인 전 recipe 상태를 확인하세요"
     label = labels.get(req.mode, fallback) if req.mode is not None else fallback
     return f"{label}\n"
+
+
+def _caution_section(req: DecisionRequest) -> str:
+    """준비 필요 서류/포트폴리오/주관적 주의사항을 승인 전에 보여준다
+
+    (wanted-application-caution-indicators-backlog). 중첩 승인(guide_patch/repair_promotion/
+    checkpoint)은 실제 지원 실행과 무관해 붙이지 않는다 — `_mode_badge`와 같은 이유.
+    """
+    if req.guide_patch or req.repair_promotion or req.checkpoint:
+        return ""
+    lines = []
+    if req.caution_documents:
+        lines.append(f"📎 준비 필요 서류: {', '.join(req.caution_documents)}")
+    if req.portfolio_filename:
+        lines.append(f"🗂 첨부 포트폴리오: {req.portfolio_filename}")
+    lines.extend(f"⚠️ {note}" for note in req.caution_notes)
+    return ("\n" + "\n".join(lines)) if lines else ""
 
 
 def _keyboard(application_id: str, nonce: str) -> InlineKeyboardMarkup:

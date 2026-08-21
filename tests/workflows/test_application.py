@@ -166,6 +166,23 @@ async def test_decision_request_mode_is_none_when_recipe_lookup_fails(env: Workf
     assert h.notifier.requests[0].mode is None
 
 
+async def test_decision_request_carries_caution_documents_from_job_description(
+    env: WorkflowEnvironment,
+):
+    """wanted-application-caution-indicators-backlog: 자동화가 못 채우는 첨부서류 힌트를
+
+    승인 전 배지로 미리 보여준다 — 포트폴리오는 이미 자동 첨부라 여기 안 낀다."""
+    h = Harness(job_description="성적증명서 제출 필수. 포트폴리오도 첨부해주세요.")
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        await handle.signal(ApplicationWorkflow.reject, RejectSignal())
+        await handle.result()
+
+    assert h.notifier is not None
+    assert h.notifier.requests[0].caution_documents == ["성적증명서"]
+
+
 async def test_reject_signal_ends_as_rejected(env: WorkflowEnvironment):
     h = Harness()
     async with _Workers(env.client, h):

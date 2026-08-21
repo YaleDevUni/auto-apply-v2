@@ -42,6 +42,10 @@ class ResumeContentSchema(_Frozen):
     # 확신이 없으면 빈 문자열로 둔다 — 포트폴리오 파일명으로 바꾸는 건 코드가 한다
     # (adapters/resume/_assemble.py, "AI는 생성만, 판정·조합은 코드").
     job_category: str = ""
+    # 이 공고/이 지원 건에 대해 주관적으로 판단한 주의사항(§ wanted-application-caution-
+    # indicators-backlog) — 승인 전 텔레그램 메시지에 그대로 노출된다. 근거 fact_id 가 필요한
+    # 서술이 아니라 공고 본문에 대한 메타 코멘트라 ground_check 가 검증하지 않는다.
+    caution_notes: list[str] = Field(default_factory=list)
 
 
 class GuidePatchItem(_Frozen):

@@ -54,6 +54,17 @@ _DOC_MARKERS = {
 }
 
 
+def caution_documents(text: str) -> list[str]:
+    """자동화가 절대 못 채우는 첨부서류 힌트(성적증명서 등) — 포트폴리오는 이미 자동
+    첨부되므로 제외한다(§ wanted-application-caution-indicators-backlog). 사람이 그 서류를
+    가지고 있는지(`cfg.available_documents`)와 무관하게 "이 폼은 사람이 직접 챙겨야 하는
+    항목이 있다"는 사실 자체를 승인 전에 알려주는 목적이라, 지원 가능 여부를 막는
+    `evaluate_applicability`의 `requires["documents"]`/`DOC_MISSING` blocker 판정과는 기준이
+    다르다(그쪽은 보유 여부와 대조해 막을지 말지를 정한다).
+    """
+    return [name for name, pat in _DOC_MARKERS.items() if name != "포트폴리오" and pat.search(text)]
+
+
 def _block(code: BlockerCode, label: str, detail: str = "") -> Blocker:
     return Blocker(code=code, label=label, detail=detail)
 

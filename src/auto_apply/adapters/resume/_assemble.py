@@ -89,6 +89,7 @@ def assemble_resume(
         # 안 골랐거나, 목록에 없는 걸 창작했으면) 그냥 비워둔다. Recipe 쪽 selector 는 이
         # 값이 비면 그 액션을 건너뛰도록 optional 로 짠다(domain/recipe_selector.py).
         portfolio_filename=portfolio.categories.get(content.job_category, ""),
+        caution_notes=content.caution_notes,
     )
 
 
