@@ -129,7 +129,7 @@ Notifier 어댑터 메모리에 뒀더니 발급 프로세스(worker)와 검증 
 `TELEGRAM_ALLOWED_CHAT_IDS`로 켠다. 로컬 개발은 공인 URL이 없으므로 웹훅 대신
 `make telegram-listen`(getUpdates 롱폴링)을 쓴다.
 
-**M2 진행 중** — Playwright executor(`adapters/executor/playwright.py`, `EXECUTOR=playwright`),
+**M2 완료** — Playwright executor(`adapters/executor/playwright.py`, `EXECUTOR=playwright`),
 `RecipeSource`(JSON 파일 기반), `_resolve_mode`(dry_run/supervised/live 분기)에 이어
 `application_attempts` 감사 로그를 얹었다. `AttemptRepository` port(파일 + in-memory,
 `tests/ports/test_repository_contract.py`) + `record_attempt` activity로 실행 1회 = 1행을
@@ -146,7 +146,7 @@ test에 `postgres` 파라미터를 추가했고(`@pytest.mark.integration`, `mak
 `alembic/versions/`의 초기 마이그레이션은 실제 DB에 대고 autogenerate + upgrade/downgrade
 왕복까지 검증했다. 기본값은 여전히 `REPOSITORY=file`이다 — 바꾸는 결정은 사용자 몫으로 남긴다.
 
-**M3 진행 중** — `SimpleResumeGenerator`/`SimpleResumeReviewer`가 자리만 잡아둔 상태였던 걸
+**M3 완료** — `SimpleResumeGenerator`/`SimpleResumeReviewer`가 자리만 잡아둔 상태였던 걸
 Fact 기반으로 채웠다. `Fact`(§4)는 `FactSource` port(`config/facts.yaml`이 원본, `MatchingConfigSource`와
 동일 패턴 — 캐시 없이 매번 새로 읽음) + `YamlFactSource`/`StaticFactSource` 두 대역. 생성 흐름은
 `retrieve_facts` → `select_relevant_facts`(`domain/resume_matching.py`, keyword 겹침 랭킹 —
@@ -161,8 +161,7 @@ match_skills/select_projects를 한 단계로 합침, 0건 매칭이면 필터�
 파이프라인이 여전히 분기·병렬 없는 선형 체인이라 도입 기준을 못 채운다. LangGraph로 못박지도
 않았다 — 소규모 프로젝트엔 PydanticAI가 더 맞을 수 있어 그쪽도 검토 중이라, `ai/`를 어느
 프레임워크 타입에도 묶지 않고(순수 Pydantic + 문자열 함수) 나중에 어느 쪽으로든 같은 포트
-뒤에서 갈아끼울 수 있게만 열어뒀다. `ResumeGenerator`/`ResumeReviewer`는 아직 구현이
-`SimpleResume*` 하나뿐이라 §11.1의 "구현 2개" 원칙을 완전히 채우지는 못한 상태다.
+뒤에서 갈아끼울 수 있게만 열어뒀다.
 
 **M3 연장 — 경력/프로젝트 블록 구조 + 실제 PDF 출력.** `summary`+`highlights` 뿐이던 스키마로는
 원티드 PDF 내보내기 같은 실제 이력서 문서(회사 헤더 + 하위 블록별 불릿·기술스택, 개인 프로젝트,

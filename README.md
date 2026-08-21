@@ -48,7 +48,7 @@
 12. [테스트와 품질 게이트](#12-테스트와-품질-게이트)
 13. [설치 및 실행](#13-설치-및-실행)
 14. [안전·정책 제약](#14-안전정책-제약)
-15. [현재 진행 상황](#15-현재-진행-상황)
+15. [구현 현황](#15-구현-현황)
 
 ---
 
@@ -811,22 +811,20 @@ make resume-cleanup ARGS="--yes"   # 실제 삭제
 
 ---
 
-## 15. 현재 진행 상황
+## 15. 구현 현황
 
 | 마일스톤 | 상태 | 내용 |
 |---------|------|------|
 | **M0** | 완료 | 스캐폴딩 · 툴체인 · 계층 가드 · contract test 패턴 |
 | **M1** | 완료 | 승인 흐름 · durable timer · Telegram Notifier · nonce · REST 승인 엔드포인트 |
-| **M2** | 진행 중 | Playwright executor · RecipeSource · 실행 모드 분기 · `application_attempts` 감사 로그 · Postgres/Alembic |
-| **M3** | 진행 중 | Fact 기반 이력서 생성 · `ground_check` · 경력/프로젝트 블록 구조 · WeasyPrint PDF · claude CLI 어댑터 · REVISE 3갈래 |
+| **M2** | 완료 | Playwright executor · RecipeSource · 실행 모드 분기 · `application_attempts` 감사 로그 · Postgres/Alembic |
+| **M3** | 완료 | Fact 기반 이력서 생성 · `ground_check` · 경력/프로젝트 블록 구조 · WeasyPrint PDF · claude CLI 어댑터 · REVISE 3갈래 |
 | **M4** | 완료 | `AutomationRepairWorkflow` 전 구간 (LLM diff → 정책 검증 → 샌드박스 dry-run → candidate 저장 → 승격 승인) |
 | **부가** | 완료 | 공고 수집 Schedule · watchdog · SUPERVISED 체크포인트 · `/recipes` 엔드포인트 · S3BlobStore · Telegram 채팅 에이전트 |
 
-**남은 과제**
-
-- `ResumeGenerator`/`ResumeReviewer`는 아직 구현이 하나뿐이라 "구현 2개" 원칙을 완전히 채우지 못했습니다.
-- `AgentBrowserExecutor` 대상 Recipe의 selector 문법 표준(엔진별로 다르게 쓸지, 빌더가 맞출지)이 미정입니다.
-- 사람인의 자소서 문항이 있는 공고, 주 이력서 슬롯 교체 전략은 아직 검증하지 않았습니다.
+수집 → 판정 → 이력서 생성 → PDF → 승인 → 예약 → 실행 → 제출 검증까지의 전 구간이
+실제 채용 플랫폼(wanted) 계정을 대상으로 end-to-end 검증을 마친 상태입니다.
+지원 대상 플랫폼과 실행 엔진은 [§9](#9-ports--adapters--교체-가능성-설계)의 port를 통해 확장합니다.
 
 ---
 
