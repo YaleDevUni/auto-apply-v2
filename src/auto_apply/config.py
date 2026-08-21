@@ -104,11 +104,15 @@ class Settings(BaseSettings):
     # 가이드 patch 제안 자체에 대한 💬 코멘트 재시도 한도
     max_guide_revisions: int = Field(default=5, ge=1)
 
-    # 이력서 블록 개수 상한 (domain/resume_blocks.select_relevant_blocks) — 자연어 가이드
-    # patch 로는 못 바꾸는 숫자값이라 여기 둔다. 사람이 config/facts.yaml 을 고치지 않고도
-    # "회사 하나에 세부 항목이 너무 많다" 같은 피드백을 반영할 수 있는 유일한 통로다.
-    resume_max_project_blocks: int = Field(default=3, ge=1)
-    resume_max_career_blocks_per_entity: int = Field(default=4, ge=1)
+    # 이력서 블록 개수 안전 상한 (domain/resume_blocks.select_relevant_blocks). 실제 "몇 개
+    # 보여줄지"는 더 이상 이 값이 아니라 config/resume_guide.{platform}.md + LLM 판단이 정한다
+    # (2026-08-21, 사용자 결정 — 예전엔 이 값 자체가 UX 레버였는데, 가이드 patch로 개수를 못
+    # 바꾼다는 걸 실측하고 여기로 뺐었다[resume-block-count-cap]. 다시 가이드로 옮기면서 이
+    # 값은 "프롬프트 폭주 방지용 안전판"으로만 남긴다 — 한 회사/개인 프로젝트에 fact가 비정상
+    # 적으로 많이 쌓였을 때(config/facts.yaml 오타 등)를 대비한 상한이라 실사용 범위보다
+    # 넉넉하게 잡는다.
+    resume_max_project_blocks: int = Field(default=20, ge=1)
+    resume_max_career_blocks_per_entity: int = Field(default=20, ge=1)
 
     # SUPERVISED 체크포인트 대기 한도 — "사람이 실시간으로 지켜보고 있다"는 전제라 짧게 잡는다
     # (§ supervised-checkpoint-design). 넘기거나 거절되면 CheckpointDeclined → needs_human.

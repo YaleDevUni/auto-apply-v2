@@ -36,8 +36,8 @@ class SimpleResumeGenerator:
         guide: GuideSource,
         *,
         max_reprompts: int = 2,
-        max_project_blocks: int = 3,
-        max_career_blocks_per_entity: int = 4,
+        max_project_blocks: int = 20,  # 안전 상한 — 실제 개수는 guide + LLM 판단이 정한다
+        max_career_blocks_per_entity: int = 20,
     ) -> None:
         self._llm = llm
         self._idgen = idgen

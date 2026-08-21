@@ -304,10 +304,22 @@ flowchart LR
   안에서 fact를 세분화한 `block`이 많아지면(실측 — 한 회사에 세부 이니셔티브 5개) 그 회사만
   압도적으로 길어지는 문제가 나왔다. REVISE(수정요청)로 "최대 4개로 줄여줘" 피드백이 왔을 때
   이게 가이드 patch(자연어, `resume_guide.{platform}.md`)로는 원천적으로 안 고쳐진다는 것도 같이 확인했다 —
-  몇 개 블록이 나오는지는 LLM이 아니라 `select_relevant_blocks`가 결정하기 때문이다. 그래서 상한
-  값 자체를 `Settings`(`RESUME_MAX_PROJECT_BLOCKS`/`RESUME_MAX_CAREER_BLOCKS_PER_ENTITY`, 기본
-  3/4)로 빼서 사람이 `.env`로 조정하게 했다 — 자연어로는 못 바꾸는 숫자 레버라 안전장치 계열
-  (`MAX_REVISIONS` 등)과 같은 자리에 둔다. `ground_check`는 `career[].blocks[].bullets`/
+  몇 개 블록이 나오는지는 LLM이 아니라 `select_relevant_blocks`가 결정하기 때문이다. 그래서 그때는
+  상한 값 자체를 `Settings`(`RESUME_MAX_PROJECT_BLOCKS`/`RESUME_MAX_CAREER_BLOCKS_PER_ENTITY`, 기본
+  3/4)로 빼서 사람이 `.env`로 조정하게 했다.
+
+  **2026-08-21 되돌림**: 같은 세션에서 불릿 개수 버그(아래)를 진단하다가 이 결정 자체를
+  재검토했다 — 사용자 판단은 "개수(불릿·블록 모두)는 LLM이 guide 지시를 따라 충분히 잘
+  판단한다"였다. `select_relevant_blocks`는 relevance 랭킹 로직만 남기고 `RESUME_MAX_*` 기본값을
+  20(사실상 무제한, fact가 비정상적으로 많이 쌓였을 때만 걸리는 안전판)으로 올렸다 — 실제
+  "몇 개 보여줄지"는 다시 `resume_guide.{platform}.md` + LLM 판단으로 되돌아갔다. 불릿 개수도
+  같은 결정을 따른다: `ai/prompts.build_resume_prompt`가 예전엔 "각 블록마다 1~3개의 불릿을
+  써라"를 무조건 강제해서, REVISE(specific)로 "3~4개로 제한해줘"를 줘도 그 하드코딩과 매번
+  충돌해 4개를 낸 적이 없었다(라이브 실측) — 이 하드코딩을 "가이드/피드백 지시가 없을 때만
+  쓰는 fallback"으로 낮췄다. `resume_guide.wanted.md`에 경력 블록 불릿 개수 규칙(프로젝트엔
+  이미 있었는데 경력엔 없었다)도 추가했다. 이 되돌림으로 개수 정확도는 다시 LLM 신뢰도에
+  기댄다 — resume-block-count-cap 메모리에 남아있던 "자연어로는 개수를 못 바꾼다"는 결론은
+  이제 유효하지 않다. `ground_check`는 `career[].blocks[].bullets`/
   `projects[].bullets`/`ai_usage`까지 재귀적으로
   검사하도록 확장했다. 이름·연락처·학력 상세·스킬 태그·언어처럼 **서술이 필요 없는 정형 정보**는
   Fact(LLM 근거)가 아니라 별도 `ProfileSource` port(`config/profile.yaml`, `FactSource`와 동일
