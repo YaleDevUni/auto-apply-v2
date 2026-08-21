@@ -41,3 +41,16 @@ def test_prompt_defers_block_bullet_count_to_guide_and_feedback() -> None:
 
     assert "가이드]/[사용자 피드백]의 지시를 최우선으로 따르라" in prompt
     assert "각 블록 불릿포인트를 3~4개로 제한해줘" in prompt
+
+
+def test_prompt_defaults_summary_to_no_motivation_statement() -> None:
+    prompt = build_resume_prompt(JOB, [], [BLOCK])
+
+    assert "지원동기·자기소개 같은 문구를 새로 지어내지 않는다" in prompt
+
+
+def test_prompt_asks_summary_to_reflect_job_requested_short_intro() -> None:
+    prompt = build_resume_prompt(JOB, [], [BLOCK])
+
+    assert "간단한 자기소개/지원동기를 적어주세요" in prompt
+    assert "포트폴리오 제출 요청은 이미 별도로 자동 첨부되니 summary 에서 언급하지 마라" in prompt
