@@ -786,7 +786,7 @@ DAILY_DIGEST                    /recipes wanted
   물으면 LLM이 매 턴 `LLMClient.structured()`로 `AgentStep`(도구를 부를지 최종 답을 할지) 하나만
   고르고, 실제 도구 실행은 `telegram/_agent_tools.py`의 `TOOLS` 레지스트리(읽기:
   `list_applications`/`get_application`/`list_recipe_versions`, 행동:
-  `resend_pending_decision`/`start_applications`)가 한다(`agent.py`는 루프 오케스트레이션만,
+  `resend_pending_decision`/`start_applications`/`apply_by_url`)가 한다(`agent.py`는 루프 오케스트레이션만,
   도구 구현은 별 파일로 — "한 파일 = 한 책임"). `resend_pending_decision`은 워크플로우를 직접
   mutate하지 않는다 — `ApplicationWorkflow.pending_decision` query로 nonce를 읽어와
   `TelegramNotifier.resend_decision`으로 **원래 승인/거절/수정요청 버튼과 같은 콜백을 다시
@@ -818,6 +818,22 @@ DAILY_DIGEST                    /recipes wanted
   제출 여부)와는 다른 레벨의 "dry run"이라 헷갈리지 않게 문서에 명시했다. 이 경로는 Temporal을
   안 건드리므로 `WorkflowAlreadyStartedError` 기반 중복지원 dedupe도 작동하지 않는다는 한계가
   있다(후보만 보여줄 뿐, 실제로 이미 지원했는지는 안 걸러진다) — 테스트/확인용이라는 전제.
+  **`apply_by_url`(2026-08-21, "wanted 링크 보내면 지원 프로세스 도는 기능 있냐"는 질문에서
+  이어진 요청)**은 `start_applications`와 반대 방향이다 — 적합도로 자동 선정하는 대신 사람이
+  URL을 직접 지정("이 링크 지원해줘")한다. `uow.jobs.actionable()` 캐시를 안 거친다(사람이
+  이미 골랐으니 다시 스크리닝할 이유가 없다) — 대신 `c.registry.for_url(url)` +
+  `adapter.fetch_job(url)`(둘 다 `PlatformAdapter` port, `ApplicationWorkflow`의
+  `collect_job` activity가 쓰는 것과 같은 어댑터)로 즉석에서 `company`/`title`을 얻어
+  `canonical_key`를 계산하고, 기존 이력(REJECTED 제외)이 있으면 시작하지 않는다 —
+  `start_actionable_applications`의 사전 상태 필터와 같은 판정을 1건짜리로 반복한다.
+  플랫폼은 wanted로만 한정한다(`apply_intake._APPLY_BY_URL_PLATFORMS`) — registry 자체엔
+  saramin도 등록돼 있지만(`bootstrap._build_registry`), saramin은 자소서 문항 있는 공고가
+  아직 라이브 검증이 안 끝나서(메모리 saramin-recipe-progress.md) 임의 링크를 사람 개입 없이
+  실행 트리거하기엔 이르다는 판단(사용자 요청으로 명시적 제한). 워크플로우 조립(`StartApplication`
+  구성 + `REJECT_DUPLICATE` dedupe) 자체는 `start_actionable_applications`의 루프와
+  `_start_workflow` 헬퍼로 공유한다. 사람이 붙여넣은 원본 `url`을 그대로 워크플로우에 넘기고
+  (`fetch_job`이 리다이렉트 등으로 정규화한 값이 아니라) — 나중에 워크플로우 상태를 봤을 때
+  "이 링크로 시작했다"가 그대로 남게 하려는 선택이다.
 
 ---
 

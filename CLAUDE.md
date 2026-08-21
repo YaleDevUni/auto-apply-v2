@@ -406,3 +406,18 @@ WAF가 headless를 막는다는 기존 실측과 같은 이유)와 분리해 신
 않는다는 한계도 남겼다(후보만 보여줄 뿐). 구현·유닛 테스트(`apply_intake.py` TTL/정렬/
 dedupe/dry_run, `telegram/agent.py` 도구 라우팅)·`make check` 통과 완료. 자세한 설계는
 ARCHITECTURE.md §6.
+
+**텔레그램 채팅 에이전트 `apply_by_url` 도구** — "wanted 링크 보내면 지원 프로세스 도는
+기능 있냐"는 질문(2026-08-21)에 이어진 요청. `start_applications`가 캐시에서 자동 선정하는
+것과 반대로, 사람이 URL을 직접 지정("이 링크 지원해줘")하면 그 공고 하나에 대해
+`ApplicationWorkflow`를 시작한다. `uow.jobs.actionable()` 캐시를 안 거친다 — 사람이 이미
+골랐으니 다시 스크리닝하지 않는다. 대신 `c.registry.for_url(url)` + `adapter.fetch_job(url)`
+(`ApplicationWorkflow`의 `collect_job` activity가 쓰는 것과 같은 `PlatformAdapter` port)로
+즉석에서 company/title을 얻어 `canonical_key`를 계산하고, `start_actionable_applications`와
+같은 판정(REJECTED 제외 기존 이력이 있으면 시작 안 함)을 1건짜리로 적용한다. 플랫폼은 wanted로만
+한정했다 — registry엔 saramin도 등록돼 있지만, 자소서 문항 있는 공고가 아직 라이브 검증이 안
+끝나서(메모리 saramin-recipe-progress.md) 임의 링크를 사람 개입 없이 실행 트리거하기엔 이르다는
+판단(사용자 요청으로 명시적 제한). 워크플로우 조립(`StartApplication` 구성 +
+`REJECT_DUPLICATE` dedupe)은 `start_actionable_applications`의 루프와 `_start_workflow`
+헬퍼로 공유해서 뺐다. 구현·유닛 테스트(`apply_intake.py`의 wanted 한정/dedupe/REJECTED 재시도,
+`telegram/agent.py` 도구 라우팅)·`make check` 통과 완료. 자세한 설계는 ARCHITECTURE.md §6.
