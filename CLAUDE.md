@@ -104,8 +104,11 @@ api         라우터는 컨테이너에서 꺼내 쓴다
 
 ## 하지 말 것
 
-- CAPTCHA 우회/자동 해결 — `CaptchaEncountered`를 던지고 사람에게 넘긴다.
-- 비밀번호를 코드가 타이핑하지 않는다. 사용자가 수동 로그인한 `storage_state`를 재사용한다.
+- CAPTCHA/추가 인증(SMS 등) 우회·자동 해결 — 절대 하지 않는다. Recipe 실행 중이면
+  `CaptchaEncountered`를 던지고, 로그인 중이면(`scripts/auto_login.py`)
+  `domain/login_flow.detect_login_outcome`이 감지해 실패시킨다. 두 경우 다 사람에게 넘긴다.
+- 새 플랫폼 계정을 대신 만들지 않는다 — 본인인증(SMS 등)이 필요해 사람만 할 수 있다. 자동
+  로그인(`scripts/auto_login.py`)은 항상 **본인이 이미 가진 계정**의 자격증명(`.env`)만 쓴다.
 - `DRY_RUN_ONLY`를 사용자 확인 없이 끄지 않는다.
 - AI가 만든 Recipe를 `active`로 바로 올리지 않는다 (`draft → candidate → active`, 사람 승격).
 - `applications.status`를 `persist_state` 밖에서 UPDATE하지 않는다.
@@ -361,3 +364,18 @@ call_tool/respond를 가른다)를 강제해 "도구를 부를지 답할지"만 
 마무리한다(webhook 라우트가 500을 내지 않는 전제). `telegram_chat_agent_enabled=false`로
 재배포 없이 끌 수 있다(기본 true). 구현·유닛/통합 테스트(workflow query, postgres
 list_recent, webhook 라우팅 포함)·`make check` 통과 완료. 자세한 설계는 ARCHITECTURE.md §6.
+
+**자동 로그인 정책 변경 + `scripts/auto_login.py`** — saramin `verify_submission` 재탐색
+중(2026-08-21) `var/auth/saramin.json`이 예상보다 훨씬 빨리 만료돼(로그인 뒤 페이지 이동
+몇 번 만에 재로그인 필요) 사람을 계속 불러야 했던 게 계기. 이 세션에서 사용자가 직접
+정책 완화를 결정했다: "비밀번호를 코드가 타이핑하지 않는다"를 삭제하고, 대신 (1) 새 계정을
+대신 만들지 않고 **본인이 이미 가진 계정**의 자격증명만 `.env`(`SARAMIN_USERNAME`/
+`SARAMIN_PASSWORD`)에 두고, (2) CAPTCHA/추가 인증은 여전히 우회하지 않는다는 두 제약으로
+대체했다(§ "하지 말 것"). credential vault 연동(agent-browser plugin 등)은 이번엔 보류하고
+`.env` 평문으로 시작하기로 확정(나중에 바꿀 수 있는 결정으로 남김). CAPTCHA/추가인증/오타
+판정은 `domain/login_flow.detect_login_outcome` 순수 함수로 분리해 실제 사이트 없이
+테스트했다(`tests/domain/test_login_flow.py`) — 이 판정이 곧 "우회 안 한다" 안전장치라
+글루 코드(`scripts/auto_login.py`, Playwright 직접 구동, headless=False 고정 — 사람인
+WAF가 headless를 막는다는 기존 실측과 같은 이유)와 분리해 신뢰도를 확보했다.
+`scripts/save_auth_state.py`(사람이 수동 로그인)를 대체하지 않고 보완한다 — CAPTCHA
+감지 시 이 스크립트로 폴백. 구현·`make check` 통과 완료.

@@ -609,9 +609,18 @@ class AutomationRecipe(BaseModel):
   `{name, mimeType, buffer}`를 직접 넘긴다 — blob key의 마지막 경로 요소를 그대로 파일명으로
   써서, 플랫폼이 화면에 보여주는 이름과 맞춘다(예전엔 랜덤 임시파일명이 그대로 노출됐다).
 
-**세션/로그인**: 비밀번호를 시스템이 타이핑하지 않는다. 사용자가 최초 1회 수동 로그인한
-Playwright `storage_state`를 암호화 저장하고 만료 시 재요청한다. CAPTCHA를 만나면
+**세션/로그인**: 기본은 사용자가 최초 1회 수동 로그인한 Playwright `storage_state`를 저장하고
+만료 시 재요청하는 것이다(`scripts/save_auth_state.py`). CAPTCHA를 만나면
 `CaptchaEncountered`(non-retryable)로 즉시 중단하고 사람에게 넘긴다 — 우회 시도는 하지 않는다.
+**2026-08-21 정책 완화**: 세션이 유난히 빨리 만료되는 플랫폼(사람인 — `career.saramin.co.kr`
+신규 도메인으로 계정이 마이그레이션되며 세션 TTL이 비정상적으로 짧아진 것으로 추정, 라이브
+탐색으로 실측)은 매번 사람을 부르는 비용이 너무 커서, 본인 계정 자격증명을 `.env`에 두고
+`scripts/auto_login.py`가 자동 재로그인하는 경로를 추가했다. 지켜지는 제약은 그대로다 — (1)
+새 계정을 대신 만들지 않는다(본인인증이 필요해 사람만 가능), (2) CAPTCHA/추가 인증은 여전히
+우회하지 않고 즉시 실패시켜 사람에게 넘긴다. 이 판정(`domain/login_flow.detect_login_outcome`)
+을 Playwright 글루 코드에서 분리해 고정 HTML로 테스트한 게 "우회 안 한다" 안전장치의 실제
+근거다. credential vault(1Password 등, agent-browser plugin) 연동은 검토했지만 이번엔 보류
+— `.env` 평문으로 시작하고 필요해지면 바꾼다.
 
 **실행 엔진 2번째 선택지 — `AgentBrowserExecutor`(`EXECUTOR=agent_browser`).** Playwright를
 대체하지 않는다 — 같은 `RecipeExecutor` 계약을 지키는 대역이 하나 더 생긴 것뿐이고,

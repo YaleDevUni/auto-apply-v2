@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     claude_cli_max_budget_usd: float = 0.5
     telegram_bot_token: str = ""
     telegram_allowed_chat_ids: str = ""
+    # scripts/auto_login.py 전용 — 2026-08-21 정책 변경(CLAUDE.md "자동 로그인 정책" 참고).
+    # var/auth/{platform}.json 세션이 만료됐을 때 사람이 매번 수동 로그인하는 대신 이 계정으로
+    # 자동 재로그인한다. CAPTCHA/추가 인증은 여전히 우회하지 않고 사람에게 넘긴다
+    # (domain/login_flow.detect_login_outcome).
+    saramin_username: str = ""
+    saramin_password: str = ""
 
     # 안전장치 (§9.5)
     dry_run_only: bool = True
