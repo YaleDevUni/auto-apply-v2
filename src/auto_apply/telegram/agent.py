@@ -23,7 +23,7 @@ from auto_apply.ai.schemas import AgentStep
 from auto_apply.bootstrap import Container
 from auto_apply.contracts.dto import NotifyEvent
 from auto_apply.domain.chat_agent import MAX_STEPS, build_prompt, catalog_prefix
-from auto_apply.telegram._agent_tools import TOOLS, catalog
+from auto_apply.telegram._agent_tools import SINGLE_SHOT_TOOLS, TOOLS, catalog
 
 log = structlog.get_logger(__name__)
 
@@ -48,6 +48,13 @@ async def handle_chat(text: str, c: Container, client: Client) -> None:
     """
     prefix = catalog_prefix(catalog())
     transcript: list[tuple[AgentStep, str]] = []
+    # 실측(2026-08-21, telegram-chat-agent-loop-duplicate-start-incident): "2건정도"라고
+    # 했는데도 모델이 성공 관찰 결과를 보고 respond로 안 끝내고 같은 도구를 계속 다시 불러
+    # start_applications가 한 턴에 여러 번(=요청보다 훨씬 많이) 실제 실행된 적이 있다.
+    # 프롬프트로 "한 번만 불러라"를 타이르는 대신, 이미 부른 (도구, 인자) 완전 일치 호출과
+    # SINGLE_SHOT_TOOLS(인자가 달라도 한 턴 1회만)는 코드로 재실행을 막는다.
+    called_signatures: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+    called_tool_names: set[str] = set()
     try:
         for _ in range(MAX_STEPS):
             prompt = build_prompt(text, transcript)
@@ -57,7 +64,21 @@ async def handle_chat(text: str, c: Container, client: Client) -> None:
             if step.action == "respond":
                 await c.notifier.notify(NotifyEvent(kind="CHAT", message=step.response))
                 return
-            observation = await _run_tool(step.tool, step.tool_args, c, client)
+            signature = (step.tool, tuple(sorted(step.tool_args.items())))
+            if signature in called_signatures:
+                observation = (
+                    f"{step.tool}({step.tool_args})는 이번 턴에 이미 같은 인자로 호출했습니다"
+                    " — 다시 부르지 말고 위 결과로 답하세요."
+                )
+            elif step.tool in SINGLE_SHOT_TOOLS and step.tool in called_tool_names:
+                observation = (
+                    f"{step.tool}는 이번 턴에 이미 실행했습니다 — 추가로 부르지 말고 위 결과를"
+                    " 바탕으로 사용자에게 바로 답하세요."
+                )
+            else:
+                observation = await _run_tool(step.tool, step.tool_args, c, client)
+                called_signatures.add(signature)
+                called_tool_names.add(step.tool)
             transcript.append((step, observation))
         await c.notifier.notify(
             NotifyEvent(

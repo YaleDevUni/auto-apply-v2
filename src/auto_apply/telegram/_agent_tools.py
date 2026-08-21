@@ -212,6 +212,21 @@ TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
     ),
 }
 
+# 실측(2026-08-21): "지원시작 2건정도" 한 턴에서 chat_llm(Haiku, 저렴한 분류 모델)이
+# start_applications(count=2)의 성공 관찰 결과("2건 시작했습니다: ...")를 보고도 respond로
+# 안 끝내고 같은 도구를 계속 다시 불러 MAX_STEPS(4)를 다 채우고서야 "요청을 다 처리하지
+# 못했다"는 사과로 끝났다 — 그런데 그 사이 도구는 실제로 4번 다 실행돼서(매번 count=2, 직전
+# 시작분은 이미 이력이 생겨 자동으로 건너뛰므로 다음 순위 공고를 골라) 요청한 2건이 아니라
+# 8건이 실제로 시작돼버렸다(같은 일이 두 턴 걸쳐 총 16건). count 로 이미 상한을 걸어도
+# "그 도구를 몇 번 부르는지"는 안 막고 있었던 게 진짜 구멍이다 — 프롬프트 문구로 "한 번만
+# 불러라"를 타이르는 대신(모델이 안 지킬 수 있다), 한 턴에 이 도구는 인자(count)가 뭐든
+# 최대 1번만 실제로 실행되게 telegram/agent.py의 루프에서 코드로 막는다(또 부르면 관찰
+# 결과만 "이미 실행했다"로 돌려주고 실제 실행은 스킵) — Recipe/가이드 patch와 같은 "AI는
+# 생성만, 반복·중복 방지는 코드" 철학의 연장. apply_by_url은 안 넣는다 — url 인자가 매번
+# 달라 "링크 두 개 지원해줘" 처럼 같은 턴에서 여러 번 부르는 게 정상 사용이다(agent.py 의
+# 일반 (도구, 인자) 완전 일치 중복 방지가 그쪽은 대신 막는다).
+SINGLE_SHOT_TOOLS: frozenset[str] = frozenset({"start_applications"})
+
 
 def catalog() -> list[ToolCatalogEntry]:
     return [ToolCatalogEntry(name, desc, args) for name, (desc, args, _) in TOOLS.items()]

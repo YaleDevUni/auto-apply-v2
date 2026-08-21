@@ -226,6 +226,83 @@ async def test_start_applications_tool_reports_when_nothing_actionable():
     assert [e.message for e in notifier.notified] == ["지원 가능한 공고가 없어요."]
 
 
+async def test_start_applications_is_single_shot_per_turn():
+    """실측(2026-08-21): 모델이 성공 관찰 결과를 보고도 respond 안 하고 같은 도구를 또 불러서
+
+    "2건정도"라는 요청이 실제로는 여러 번 실행돼버린 적이 있다 — 두 번째 호출은 코드가
+    막고(관찰 결과만 돌려주고 실제 실행은 스킵) 실행 횟수가 1번을 넘지 않아야 한다.
+    """
+    notifier = _FakeNotifier()
+    harness = Harness(job_rows=_actionable_job_rows())
+    c = _container(
+        [
+            {"action": "call_tool", "tool": "start_applications", "tool_args": {"count": "2"}},
+            {"action": "call_tool", "tool": "start_applications", "tool_args": {"count": "2"}},
+            {"action": "respond", "response": "다 처리했어요."},
+        ],
+        notifier=notifier,
+        harness=harness,
+    )
+    client = _FakeClient()
+
+    await handle_chat("지원시작 2건정도", c, client)
+
+    assert len(client.started) == 1  # 두 번째 call_tool 은 실제로 실행되지 않았다
+    assert [e.message for e in notifier.notified] == ["다 처리했어요."]
+
+
+async def test_identical_tool_call_is_deduped_within_a_turn():
+    """SINGLE_SHOT_TOOLS 가 아니어도, 완전히 같은 (도구, 인자) 반복 호출은 실제로 재실행하지
+
+    않는다 — resend_pending_decision 같은 부작용 있는 도구를 실수로 두 번 부르는 것도 막는다.
+    """
+    notifier = _FakeNotifier()
+    c = _container(
+        [
+            {
+                "action": "call_tool",
+                "tool": "resend_pending_decision",
+                "tool_args": {"application_id": "app_1"},
+            },
+            {
+                "action": "call_tool",
+                "tool": "resend_pending_decision",
+                "tool_args": {"application_id": "app_1"},
+            },
+            {"action": "respond", "response": "다시 보냈어요."},
+        ],
+        notifier=notifier,
+    )
+    client = _FakeClient(_FakeHandle(view=PendingDecisionView(has_pending=True, nonce="nonce_1")))
+
+    await handle_chat("app_1 버튼 다시 보내줘", c, client)
+
+    assert notifier.resent == [("app_1", "nonce_1")]  # 한 번만 실제로 재전송됐다
+
+
+async def test_start_applications_different_args_are_still_single_shot():
+    """SINGLE_SHOT_TOOLS 는 인자가 달라도(count 를 바꿔서 재시도해도) 한 턴 1회로 막는다 —
+
+    (도구, 인자) 완전 일치 dedup 만으로는 count 를 슬쩍 바꾼 재호출을 못 잡는다.
+    """
+    notifier = _FakeNotifier()
+    harness = Harness(job_rows=_actionable_job_rows())
+    c = _container(
+        [
+            {"action": "call_tool", "tool": "start_applications", "tool_args": {"count": "2"}},
+            {"action": "call_tool", "tool": "start_applications", "tool_args": {"count": "5"}},
+            {"action": "respond", "response": "다 처리했어요."},
+        ],
+        notifier=notifier,
+        harness=harness,
+    )
+    client = _FakeClient()
+
+    await handle_chat("지원시작 2건정도", c, client)
+
+    assert len(client.started) == 1
+
+
 async def test_start_applications_dry_run_previews_without_starting_workflow():
     notifier = _FakeNotifier()
     harness = Harness(job_rows=_actionable_job_rows())
