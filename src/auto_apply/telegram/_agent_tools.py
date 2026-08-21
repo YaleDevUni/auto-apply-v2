@@ -64,6 +64,10 @@ def _parse_apply_count(raw: str) -> int:
     return max(_MIN_APPLY_COUNT, min(_MAX_APPLY_COUNT, count))
 
 
+def _parse_bool(raw: str) -> bool:
+    return raw.strip().lower() in {"true", "1", "yes", "y", "on"}
+
+
 async def _list_applications(args: dict[str, str], c: Container, _client: Client) -> str:
     limit = _parse_limit(args.get("limit", ""))
     async with c.uow() as uow:
@@ -125,14 +129,17 @@ async def _resend_pending_decision(args: dict[str, str], c: Container, client: C
 
 async def _start_applications(args: dict[str, str], c: Container, client: Client) -> str:
     count = _parse_apply_count(args.get("count", ""))
-    result = await start_actionable_applications(count, c, client)
+    dry_run = _parse_bool(args.get("dry_run", ""))
+    result = await start_actionable_applications(count, c, client, dry_run=dry_run)
     if result.candidates == 0:
         return "최근 24시간 내 수집된 지원 가능 공고가 없습니다 (공고 수집부터 필요합니다)."
     if not result.started and not result.skipped:
         return "지원 가능한 공고는 있지만 하나도 시작하지 못했습니다."
-    lines = [
-        f"{len(result.started)}건 지원 워크플로우를 시작했습니다 (제출 전 승인 요청이 옵니다):"
-    ]
+    if result.dry_run:
+        verb = "선택됐을 겁니다 (dry run — 실제로 워크플로우를 시작하지 않았습니다)"
+    else:
+        verb = "지원 워크플로우를 시작했습니다 (제출 전 승인 요청이 옵니다)"
+    lines = [f"{len(result.started)}건 {verb}:"]
     lines += [f"  - {label}" for label in result.started]
     if result.skipped:
         lines.append(
@@ -170,8 +177,10 @@ TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
         "최근 24시간 내 수집된 지원 가능 공고 중 적합도 상위 N건에 대해 지원 워크플로우를 새로"
         " 시작한다(이미 시작했던 공고는 자동으로 건너뜀). '3건 지원해줘', '제출해줘 5개' 같은"
         " 요청에 쓴다. 실제 제출은 여전히 사람이 텔레그램 승인 버튼을 눌러야 일어난다 — 이"
-        " 도구는 워크플로우 시작(=이력서 생성·승인 대기 진입)까지만 한다",
-        ("count",),
+        " 도구는 워크플로우 시작(=이력서 생성·승인 대기 진입)까지만 한다. dry_run을 true로"
+        " 주면 실제로 아무것도 시작하지 않고 어떤 공고가 선택될지만 보여준다(테스트/확인용,"
+        " '일단 뭐가 뽑히는지만 보여줘', '테스트로 해봐' 같은 요청에 쓴다)",
+        ("count", "dry_run"),
         _start_applications,
     ),
 }

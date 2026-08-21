@@ -222,3 +222,26 @@ async def test_start_applications_tool_reports_when_nothing_actionable():
 
     assert client.started == []
     assert [e.message for e in notifier.notified] == ["지원 가능한 공고가 없어요."]
+
+
+async def test_start_applications_dry_run_previews_without_starting_workflow():
+    notifier = _FakeNotifier()
+    harness = Harness(job_rows=_actionable_job_rows())
+    c = _container(
+        [
+            {
+                "action": "call_tool",
+                "tool": "start_applications",
+                "tool_args": {"count": "3", "dry_run": "true"},
+            },
+            {"action": "respond", "response": "미리보기 결과예요."},
+        ],
+        notifier=notifier,
+        harness=harness,
+    )
+    client = _FakeClient()
+
+    await handle_chat("일단 테스트로 뭐가 뽑히는지만 보여줘", c, client)
+
+    assert client.started == []  # dry_run 이면 실제로 워크플로우를 시작하지 않는다
+    assert [e.message for e in notifier.notified] == ["미리보기 결과예요."]

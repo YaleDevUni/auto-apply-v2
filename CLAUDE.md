@@ -399,6 +399,11 @@ WAF가 headless를 막는다는 기존 실측과 같은 이유)와 분리해 신
 생성보다 훨씬 가벼운 분류 작업이라는 사용자 지적으로 `LLMClient`를 하나 더 만들어
 `c.chat_llm`(기본 모델 Haiku, `TELEGRAM_AGENT_MODEL`)으로 분리했다 — `c.llm`(이력서 생성)은
 그대로 둔 채 `bootstrap._build_llm`에 `model` 오버라이드 인자를 추가해 같은 프로바이더로
-다른 모델의 인스턴스를 하나 더 만드는 방식. 구현·유닛 테스트(`apply_intake.py` TTL/정렬/
-dedupe, `telegram/agent.py` 도구 라우팅)·`make check` 통과 완료. 자세한 설계는
+다른 모델의 인스턴스를 하나 더 만드는 방식. `start_applications`는 `dry_run` 인자도 받는다
+(같은 세션, 사용자 요청 — "테스트용으로도 가능하게") — true면 `client.start_workflow`를
+아예 안 부르고 선정 로직(TTL/정렬/count)이 뭘 골랐을지만 보여준다. `DRY_RUN_ONLY`(§9.5,
+실행 단계의 제출 여부)와는 다른 레벨이라 이름이 겹치는 걸 문서에 명시했고, Temporal을 안
+건드리는 경로라 `WorkflowAlreadyStartedError` 기반 중복지원 dedupe는 이 경로에서 작동하지
+않는다는 한계도 남겼다(후보만 보여줄 뿐). 구현·유닛 테스트(`apply_intake.py` TTL/정렬/
+dedupe/dry_run, `telegram/agent.py` 도구 라우팅)·`make check` 통과 완료. 자세한 설계는
 ARCHITECTURE.md §6.

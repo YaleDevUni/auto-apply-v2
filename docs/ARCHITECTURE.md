@@ -813,6 +813,11 @@ DAILY_DIGEST                    /recipes wanted
   `WorkflowIDReusePolicy.ALLOW_DUPLICATE`는 이전 실행이 COMPLETED로 끝난 뒤엔 같은 id 재시작을
   막지 않으므로, 이 호출에서만 명시적으로 `REJECT_DUPLICATE`를 줘서 "한 번이라도 시작한 공고는
   다시 시작 안 한다"를 강제하고 `WorkflowAlreadyStartedError`를 건너뛰기 신호로 쓴다.
+  `dry_run` 인자(사용자 요청, 같은 날 추가)를 true로 주면 `client.start_workflow` 자체를 안
+  부르고 선정 로직(TTL/정렬/count)이 뭘 골랐을지만 보여준다 — `DRY_RUN_ONLY`(§9.5, 실행 단계의
+  제출 여부)와는 다른 레벨의 "dry run"이라 헷갈리지 않게 문서에 명시했다. 이 경로는 Temporal을
+  안 건드리므로 `WorkflowAlreadyStartedError` 기반 중복지원 dedupe도 작동하지 않는다는 한계가
+  있다(후보만 보여줄 뿐, 실제로 이미 지원했는지는 안 걸러진다) — 테스트/확인용이라는 전제.
 
 ---
 

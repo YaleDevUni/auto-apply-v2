@@ -123,3 +123,34 @@ async def test_uses_reject_duplicate_reuse_policy_as_the_dedup_guard():
     await start_actionable_applications(1, c, client, now=_NOW)
 
     assert client.started[0]["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
+
+
+async def test_dry_run_selects_candidates_without_calling_temporal():
+    a = _record(platform_job_id="1", company="A사", title="백엔드", fit_score=60)
+    b = _record(platform_job_id="2", company="B사", title="프론트", fit_score=90)
+    job_rows = {(r.job.platform, r.job.platform_job_id): r for r in (a, b)}
+    c = _container(job_rows)
+    client = _FakeClient()
+
+    result = await start_actionable_applications(1, c, client, now=_NOW, dry_run=True)
+
+    assert result.dry_run is True
+    assert result.started == ["B사 - 프론트"]  # 같은 선정 로직(TTL/정렬/count)이 그대로 적용됨
+    assert client.started == []  # start_workflow 자체가 안 불렸다
+
+
+async def test_dry_run_does_not_dedupe_against_already_started_workflows():
+    """dry_run 은 Temporal 을 안 건드리므로 WorkflowAlreadyStartedError 로 거르는 dedupe가
+
+    이 경로에선 작동하지 않는다 — 후보 선정만 보여준다는 게 계약이다(모듈 docstring 참고).
+    """
+    record = _record(platform_job_id="1", company="A사", title="백엔드")
+    job_rows = {(record.job.platform, record.job.platform_job_id): record}
+    c = _container(job_rows)
+    wf_id = f"application-{canonical_key('A사', '백엔드')}"
+    client = _FakeClient(already_started={wf_id})
+
+    result = await start_actionable_applications(3, c, client, now=_NOW, dry_run=True)
+
+    assert result.started == ["A사 - 백엔드"]
+    assert result.skipped == []
