@@ -1,7 +1,10 @@
-"""apply_intake.start_actionable_applications — TTL 필터링, 적합도 정렬, count 상한,
+"""apply_intake — 공고 → `ApplicationWorkflow` 시작.
 
-canonical_key 기반 중복지원 방어(WorkflowAlreadyStartedError → skip), 그리고
-application_state_history 기반 사전 상태 필터(REJECTED 는 후순위, 그 외 기존 이력은 제외).
+`start_actionable_applications`: TTL 필터링, 적합도 정렬, count 상한, canonical_key 기반
+중복지원 방어(WorkflowAlreadyStartedError → skip), application_state_history 기반 사전
+상태 필터(REJECTED 는 후순위, 그 외 기존 이력은 제외).
+`apply_by_url`: 사용자가 직접 지정한 URL 1건 → 플랫폼 확인(wanted 한정) → fetch_job →
+canonical_key dedupe → 워크플로우 시작.
 실제 Temporal 없이 `_FakeClient.start_workflow` 로 어떤 id/정책으로 불렸는지만 본다.
 """
 
@@ -9,7 +12,9 @@ from datetime import UTC, datetime, timedelta
 
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from auto_apply.apply_intake import JOB_CACHE_TTL, start_actionable_applications
+from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
+from auto_apply.adapters.platform.registry import StaticPlatformRegistry
+from auto_apply.apply_intake import JOB_CACHE_TTL, apply_by_url, start_actionable_applications
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import PersistState
 from auto_apply.contracts.job import ApplicabilityVerdict, JobPosting, JobRecord, ScreeningVerdict
@@ -60,8 +65,8 @@ class _FakeClient:
         )
 
 
-def _container(job_rows: dict, *, state_rows: dict | None = None) -> object:
-    h = Harness(job_rows=job_rows, rows=state_rows or {})
+def _container(job_rows: dict, *, state_rows: dict | None = None, registry=None) -> object:
+    h = Harness(job_rows=job_rows, rows=state_rows or {}, registry=registry)
     return h.container(settings=Settings(storage="memory", llm_provider="stub"))
 
 
@@ -202,3 +207,80 @@ async def test_rejected_jobs_are_deprioritized_not_excluded():
     client2 = _FakeClient()
     result2 = await start_actionable_applications(2, c, client2, now=_NOW)
     assert result2.started == ["B사 - 프론트", "A사 - 백엔드"]
+
+
+_WANTED_URL = "https://www.wanted.co.kr/wd/12345"
+# FixturePlatformAdapter.fetch_job 이 항상 내주는 값 — apply_by_url 은 job_rows(수집 캐시)를
+# 안 거치고 이 platform 어댑터 호출 결과만으로 canonical_key 를 계산한다.
+_WANTED_COMPANY = "Fixture Inc."
+_WANTED_TITLE = "백엔드 엔지니어"
+
+
+def _wanted_registry() -> StaticPlatformRegistry:
+    return StaticPlatformRegistry(
+        [FixturePlatformAdapter(platform="wanted", hosts=("www.wanted.co.kr",))]
+    )
+
+
+async def test_apply_by_url_starts_workflow_for_wanted_link():
+    from temporalio.common import WorkflowIDReusePolicy
+
+    c = _container({}, registry=_wanted_registry())
+    client = _FakeClient()
+
+    result = await apply_by_url(_WANTED_URL, c, client)
+
+    assert result.outcome == "started"
+    assert result.label == f"{_WANTED_COMPANY} - {_WANTED_TITLE}"
+    assert len(client.started) == 1
+    started = client.started[0]
+    assert started["id"] == f"application-{canonical_key(_WANTED_COMPANY, _WANTED_TITLE)}"
+    assert started["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
+    # 사람이 붙여넣은 원본 URL을 그대로 워크플로우에 넘긴다(job.url 이 아니라).
+    assert started["cmd"].job_url == _WANTED_URL
+
+
+async def test_apply_by_url_rejects_non_wanted_platform():
+    """registry 자체엔 다른 플랫폼도 등록돼 있을 수 있지만, apply_by_url 은 wanted 로 한정한다."""
+    other = StaticPlatformRegistry([FixturePlatformAdapter(platform="saramin", hosts=("x.local",))])
+    c = _container({}, registry=other)
+    client = _FakeClient()
+
+    result = await apply_by_url("https://x.local/job/1", c, client)
+
+    assert result.outcome == "unsupported_platform"
+    assert client.started == []
+
+
+async def test_apply_by_url_rejects_unregistered_domain():
+    c = _container({}, registry=_wanted_registry())
+    client = _FakeClient()
+
+    result = await apply_by_url("https://example.com/job/1", c, client)
+
+    assert result.outcome == "unsupported_platform"
+    assert client.started == []
+
+
+async def test_apply_by_url_skips_when_already_applied():
+    state_rows = _state(canonical_key(_WANTED_COMPANY, _WANTED_TITLE), ApplicationState.EXECUTING)
+    c = _container({}, state_rows=state_rows, registry=_wanted_registry())
+    client = _FakeClient()
+
+    result = await apply_by_url(_WANTED_URL, c, client)
+
+    assert result.outcome == "duplicate"
+    assert result.label == f"{_WANTED_COMPANY} - {_WANTED_TITLE}"
+    assert client.started == []
+
+
+async def test_apply_by_url_allows_retry_after_rejected():
+    """REJECTED 이력은 자동 후보 선정과 마찬가지로 재지원을 막지 않는다."""
+    state_rows = _state(canonical_key(_WANTED_COMPANY, _WANTED_TITLE), ApplicationState.REJECTED)
+    c = _container({}, state_rows=state_rows, registry=_wanted_registry())
+    client = _FakeClient()
+
+    result = await apply_by_url(_WANTED_URL, c, client)
+
+    assert result.outcome == "started"
+    assert len(client.started) == 1

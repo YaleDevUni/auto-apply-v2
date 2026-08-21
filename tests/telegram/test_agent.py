@@ -8,6 +8,8 @@ import dataclasses
 
 from auto_apply.adapters.clock.system import SystemClock
 from auto_apply.adapters.llm.stub import StubLLM
+from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
+from auto_apply.adapters.platform.registry import StaticPlatformRegistry
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import NotifyEvent, PendingDecisionView, PersistState
 from auto_apply.contracts.job import ApplicabilityVerdict, JobPosting, JobRecord, ScreeningVerdict
@@ -245,3 +247,54 @@ async def test_start_applications_dry_run_previews_without_starting_workflow():
 
     assert client.started == []  # dry_run 이면 실제로 워크플로우를 시작하지 않는다
     assert [e.message for e in notifier.notified] == ["미리보기 결과예요."]
+
+
+_WANTED_URL = "https://www.wanted.co.kr/wd/12345"
+
+
+def _wanted_harness() -> Harness:
+    registry = StaticPlatformRegistry(
+        [FixturePlatformAdapter(platform="wanted", hosts=("www.wanted.co.kr",))]
+    )
+    return Harness(registry=registry)
+
+
+async def test_apply_by_url_tool_starts_workflow_for_wanted_link():
+    notifier = _FakeNotifier()
+    c = _container(
+        [
+            {"action": "call_tool", "tool": "apply_by_url", "tool_args": {"url": _WANTED_URL}},
+            {"action": "respond", "response": "지원 시작했어요."},
+        ],
+        notifier=notifier,
+        harness=_wanted_harness(),
+    )
+    client = _FakeClient()
+
+    await handle_chat(f"이 링크 지원해줘 {_WANTED_URL}", c, client)
+
+    assert len(client.started) == 1
+    assert [e.message for e in notifier.notified] == ["지원 시작했어요."]
+
+
+async def test_apply_by_url_tool_rejects_non_wanted_link():
+    notifier = _FakeNotifier()
+    c = _container(
+        [
+            {
+                "action": "call_tool",
+                "tool": "apply_by_url",
+                "tool_args": {"url": "https://example.com/job/1"},
+            },
+            {"action": "respond", "response": "원티드 링크만 지원해요."},
+        ],
+        notifier=notifier,
+        # 기본 harness = FixturePlatformAdapter(platform="fixture") 뿐이라 example.com 은
+        # registry.for_url 부터 걸린다.
+    )
+    client = _FakeClient()
+
+    await handle_chat("이거 지원해줘 https://example.com/job/1", c, client)
+
+    assert client.started == []
+    assert [e.message for e in notifier.notified] == ["원티드 링크만 지원해요."]

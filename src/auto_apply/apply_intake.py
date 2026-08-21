@@ -1,8 +1,10 @@
-"""actionable 공고 → `ApplicationWorkflow` 시작. 텔레그램 채팅 에이전트의 `start_applications`
+"""공고 → `ApplicationWorkflow` 시작. 텔레그램 채팅 에이전트의 `start_applications`/
 
-도구(`telegram/agent.py`)가 쓰는 진입점이다 — "제출해줘 N건" 요청을 사람이 매번
-`POST /applications`/`auto-apply start`로 공고 URL을 손으로 골라 넣는 대신 자동화하려는
-설계(2026-08-21 세션에서 사용자와 확정).
+`apply_by_url` 도구(`telegram/agent.py`)가 쓰는 진입점이다. `start_actionable_applications`는
+"제출해줘 N건" 요청을 사람이 매번 `POST /applications`/`auto-apply start`로 공고 URL을 손으로
+골라 넣는 대신 자동화하려는 설계(2026-08-21 세션에서 사용자와 확정)이고, `apply_by_url`은
+반대로 사람이 URL을 직접 지정하는("이 링크 지원해줘") 경로다 — 같은 "워크플로우 시작"을
+공유해서 여기 같이 둔다.
 
 `cli.py`/`watchdog.py`처럼 Temporal Client SDK를 직접 쓰는 운영 진입점이다(§11.3 대상 아님,
 workflow 파일이 아니다) — 새 port를 만들지 않는다. `uow.jobs.actionable()`은
@@ -39,6 +41,7 @@ dedupe와 같은 패턴). `WorkflowAlreadyStartedError`로 걸러 조용히 건�
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
@@ -48,11 +51,18 @@ from auto_apply.bootstrap import Container
 from auto_apply.contracts.dto import StartApplication
 from auto_apply.contracts.job import JobRecord
 from auto_apply.domain.enums import ApplicationState
+from auto_apply.domain.errors import PolicyViolation
 from auto_apply.domain.job_identity import canonical_key
 from auto_apply.temporal_config import QUEUE_DEFAULT
 from auto_apply.workflows.application import ApplicationWorkflow
 
 JOB_CACHE_TTL = timedelta(hours=24)
+
+# apply_by_url 도구는 wanted 로만 한정한다(2026-08-21 사용자 요청) — saramin 은 recipe/실행이
+# 아직 라이브 검증이 안 끝나서(자소서 문항 있는 공고 미검증, 메모리 saramin-recipe-progress.md)
+# 임의 링크로 사람 개입 없이 실행을 트리거하기엔 이르다는 판단. registry 자체엔 이미
+# saramin 도 등록돼 있어(bootstrap._build_registry) for_url 만으로는 못 막는다.
+_APPLY_BY_URL_PLATFORMS = frozenset({"wanted"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +75,13 @@ class ApplyIntakeResult:
     # WorkflowAlreadyStartedError 둘 다 여기로 모인다.
     candidates: int = 0  # TTL 창 안에서 발견된 actionable 후보 총 수(상태 필터 전, count와 무관)
     dry_run: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyByUrlResult:
+    outcome: Literal["started", "duplicate", "unsupported_platform", "not_found"]
+    label: str | None = None  # "회사 - 직무" — started/duplicate 일 때만 채워짐
+    detail: str | None = None  # unsupported_platform/not_found 사유(사람이 읽을 문구)
 
 
 def _fresh_actionable(records: list[JobRecord], *, now: datetime) -> list[JobRecord]:
@@ -96,6 +113,77 @@ def _partition_by_state(
             job = record.job
             skipped.append(f"{job.company} - {job.title}")
     return new + rejected
+
+
+async def _start_workflow(application_id: str, job_url: str, c: Container, client: Client) -> bool:
+    """워크플로우 시작 1건(REJECT_DUPLICATE dedupe 포함) — `start_actionable_applications`의
+
+    루프와 `apply_by_url` 이 공유한다. 이미 시작돼 있으면(경합 등) False, 새로 시작했으면 True.
+    """
+    try:
+        await client.start_workflow(
+            ApplicationWorkflow.run,
+            StartApplication(
+                application_id=application_id,
+                user_id=c.settings.default_user_id,
+                job_url=job_url,
+                approval_timeout_hours=c.settings.approval_timeout_hours,
+                dry_run_only=c.settings.dry_run_only,
+                max_revisions=c.settings.max_revisions,
+                max_guide_revisions=c.settings.max_guide_revisions,
+            ),
+            id=f"application-{application_id}",
+            task_queue=QUEUE_DEFAULT,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+        )
+        return True
+    except WorkflowAlreadyStartedError:
+        return False
+
+
+async def apply_by_url(url: str, c: Container, client: Client) -> ApplyByUrlResult:
+    """공고 링크 1건 → `ApplicationWorkflow` 시작. 텔레그램 채팅 에이전트의 `apply_by_url`
+
+    도구(`telegram/_agent_tools.py`)가 쓰는 진입점 — "이 링크 지원해줘"처럼 사용자가 공고를
+    직접 지정하는 경로다(2026-08-21, "wanted 링크 보내면 지원 프로세스 도는 기능 있냐"는
+    질문에서 시작해 신설). `start_actionable_applications`(자동 후보 선정)와 달리 적합도
+    랭킹/count/TTL 캐시가 없다 — 사용자가 이미 골랐으니 다시 스크리닝하지 않는다. `job.url`이
+    아니라 호출자가 준 `url`을 그대로 워크플로우에 넘긴다 — 사람이 붙여넣은 원본 링크를
+    보존해야 나중에 워크플로우 상태를 봤을 때 "이 링크로 시작했다"가 그대로 남는다(리다이렉트
+    등으로 값이 갈리면 `fetch_job`이 잡아낸 `job.company`/`job.title`과의 canonical_key 계산엔
+    영향 없다 — 그건 API 응답에서 나온다).
+    """
+    try:
+        adapter = c.registry.for_url(url)
+    except PolicyViolation as e:
+        return ApplyByUrlResult(outcome="unsupported_platform", detail=str(e))
+    if adapter.platform not in _APPLY_BY_URL_PLATFORMS:
+        return ApplyByUrlResult(
+            outcome="unsupported_platform",
+            detail=f"'{adapter.platform}' 링크는 아직 지원하지 않습니다(원티드만 가능).",
+        )
+
+    try:
+        job = await adapter.fetch_job(url)
+    except PolicyViolation as e:
+        return ApplyByUrlResult(outcome="not_found", detail=str(e))
+
+    application_id = canonical_key(job.company, job.title)
+    if not application_id:
+        return ApplyByUrlResult(
+            outcome="not_found", detail="공고에서 회사명/직무를 확인할 수 없습니다."
+        )
+    label = f"{job.company} - {job.title}"
+
+    async with c.uow() as uow:
+        states = await uow.applications.latest_states([application_id])
+    state = states.get(application_id)
+    if state is not None and state is not ApplicationState.REJECTED:
+        return ApplyByUrlResult(outcome="duplicate", label=label)
+
+    if await _start_workflow(application_id, url, c, client):
+        return ApplyByUrlResult(outcome="started", label=label)
+    return ApplyByUrlResult(outcome="duplicate", label=label)
 
 
 async def start_actionable_applications(
@@ -138,23 +226,8 @@ async def start_actionable_applications(
         if dry_run:
             result.started.append(label)
             continue
-        try:
-            await client.start_workflow(
-                ApplicationWorkflow.run,
-                StartApplication(
-                    application_id=application_id,
-                    user_id=c.settings.default_user_id,
-                    job_url=job.url,
-                    approval_timeout_hours=c.settings.approval_timeout_hours,
-                    dry_run_only=c.settings.dry_run_only,
-                    max_revisions=c.settings.max_revisions,
-                    max_guide_revisions=c.settings.max_guide_revisions,
-                ),
-                id=f"application-{application_id}",
-                task_queue=QUEUE_DEFAULT,
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-            )
+        if await _start_workflow(application_id, job.url, c, client):
             result.started.append(label)
-        except WorkflowAlreadyStartedError:
+        else:
             result.skipped.append(label)
     return result

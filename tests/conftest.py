@@ -49,6 +49,7 @@ from auto_apply.contracts.profile import Profile
 from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.domain.enums import RevisionScope
 from auto_apply.ports.notifier import Notifier
+from auto_apply.ports.platform import PlatformRegistry
 
 JOB_URL = "https://fixture.local/jobs/1"
 
@@ -227,6 +228,9 @@ class Harness:
     # 의 ca/cr(§ supervised-checkpoint-design) 콜백을 container() 로 테스트할 때만 관찰용으로
     # 공유한다.
     checkpoint_store: InMemoryCheckpointStore = field(default_factory=InMemoryCheckpointStore)
+    # container() 의 기본 registry(FixturePlatformAdapter 하나)를 덮어쓸 때만 채운다 — apply_by_url
+    # 처럼 platform 이 "wanted" 인 어댑터가 필요한 테스트용(apply_intake.py 의 wanted 한정 체크).
+    registry: PlatformRegistry | None = None
 
     def _shared_notifier(self, *, telegram: bool = False) -> _NonceSpy:
         """첫 호출이 종류를 정한다(이후는 메모이즈) — REVISE 텔레그램 흐름 테스트는
@@ -319,7 +323,8 @@ class Harness:
             chat_llm=llm,
             notifier=self._shared_notifier(telegram=resolved_settings.notifier == "telegram"),
             uow=lambda: InMemoryUnitOfWork(rows, job_rows, attempt_rows=attempt_rows),
-            registry=StaticPlatformRegistry([FixturePlatformAdapter(eligible=self.eligible)]),
+            registry=self.registry
+            or StaticPlatformRegistry([FixturePlatformAdapter(eligible=self.eligible)]),
             recipes=InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)}),
             executor=ReplayExecutor(clock, fail_selectors=self.fail_selectors),
             generator=SimpleResumeGenerator(llm, idgen, facts, profile, portfolio, guide),

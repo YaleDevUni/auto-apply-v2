@@ -5,13 +5,16 @@
 
 행동성 도구 중 `resend_pending_decision`은 워크플로우를 직접 mutate 하지 않는다 — 기존 승인
 버튼의 nonce(`ApplicationWorkflow.pending_decision` query)를 그대로 실어 원래 버튼과 동일하게
-동작하는 메시지를 다시 보낼 뿐이다. `start_applications`는 실제로 `ApplicationWorkflow`를
-새로 "시작"한다(2026-08-21, "상주 에이전트가 알아서 몇 건 지원해줘" 요청으로 설계·구현,
-`apply_intake.py`) — 하지만 그 워크플로우 자체가 실제 제출 전 텔레그램 승인을 기다리게
-돼 있어서 최종 submit은 여전히 사람이 버튼을 누르는 순간에만 일어난다. 즉 CLAUDE.md
-절대규칙 4("되돌릴 수 없는 행위는 사람 승인 뒤에서만")를 자연어 오인식 경로로 우회하지
-않는다는 불변식은 두 도구 모두 지킨다 — "워크플로우를 안 건드린다"가 아니라 "제출은 못
-건드린다"가 진짜 불변식이다.
+동작하는 메시지를 다시 보낼 뿐이다. `start_applications`/`apply_by_url`은 실제로
+`ApplicationWorkflow`를 새로 "시작"한다(전자는 2026-08-21 "상주 에이전트가 알아서 몇 건
+지원해줘" 요청, 후자는 같은 날 "링크 보내면 지원 프로세스 도는 기능 있냐"는 질문에서 이어진
+요청으로 설계·구현, `apply_intake.py`) — 하지만 그 워크플로우 자체가 실제 제출 전 텔레그램
+승인을 기다리게 돼 있어서 최종 submit은 여전히 사람이 버튼을 누르는 순간에만 일어난다. 즉
+CLAUDE.md 절대규칙 4("되돌릴 수 없는 행위는 사람 승인 뒤에서만")를 자연어 오인식 경로로
+우회하지 않는다는 불변식은 세 도구 모두 지킨다 — "워크플로우를 안 건드린다"가 아니라 "제출은
+못 건드린다"가 진짜 불변식이다. `apply_by_url`은 추가로 플랫폼을 wanted 로만 한정한다
+(`apply_intake._APPLY_BY_URL_PLATFORMS` 참고 — saramin 은 아직 임의 링크를 사람 개입 없이
+실행 트리거하기엔 라이브 검증이 부족하다는 판단).
 """
 
 from collections.abc import Awaitable, Callable
@@ -20,7 +23,7 @@ from typing import Protocol, runtime_checkable
 from temporalio.client import Client
 from temporalio.service import RPCError
 
-from auto_apply.apply_intake import start_actionable_applications
+from auto_apply.apply_intake import apply_by_url, start_actionable_applications
 from auto_apply.bootstrap import Container
 from auto_apply.domain.chat_agent import ToolCatalogEntry
 from auto_apply.workflows.application import ApplicationWorkflow
@@ -149,6 +152,21 @@ async def _start_applications(args: dict[str, str], c: Container, client: Client
     return "\n".join(lines)
 
 
+async def _apply_by_url(args: dict[str, str], c: Container, client: Client) -> str:
+    url = args.get("url", "").strip()
+    if not url:
+        return "url이 필요합니다."
+    result = await apply_by_url(url, c, client)
+    match result.outcome:
+        case "unsupported_platform" | "not_found":
+            return result.detail or "처리할 수 없습니다."
+        case "duplicate":
+            return f"{result.label}: 이미 지원 이력이 있거나 진행 중입니다."
+        case "started":
+            return f"{result.label}: 지원 워크플로우를 시작했습니다 (제출 전 승인 요청이 옵니다)."
+    raise AssertionError(f"unreachable outcome: {result.outcome}")
+
+
 # name -> (description, arg 이름들, handler). 늘어날 걸 전제로 한 레지스트리 — 새 도구는
 # 여기 항목 하나 추가로 끝난다.
 TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
@@ -182,6 +200,15 @@ TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
         " '일단 뭐가 뽑히는지만 보여줘', '테스트로 해봐' 같은 요청에 쓴다)",
         ("count", "dry_run"),
         _start_applications,
+    ),
+    "apply_by_url": (
+        "특정 원티드(wanted.co.kr) 공고 링크 하나에 대해 지원 워크플로우를 새로 시작한다"
+        " (이미 지원했거나 진행 중이면 건너뛴다). '이 링크 지원해줘', '이거 지원해줘 <url>'"
+        " 처럼 사용자가 공고를 직접 지정할 때 쓴다 — start_applications 와 달리 적합도로"
+        " 자동 선정하지 않고 사용자가 준 URL 하나만 처리한다. 원티드 링크가 아니면 처리하지"
+        " 않는다. 실제 제출은 여전히 사람이 텔레그램 승인 버튼을 눌러야 일어난다.",
+        ("url",),
+        _apply_by_url,
     ),
 }
 
