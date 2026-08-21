@@ -238,7 +238,7 @@ def _build_registry(cfg: Settings) -> PlatformRegistry:
             return StaticPlatformRegistry(
                 [
                     WantedPlatformAdapter(ThrottledClient(), auth_dir=cfg.data_dir / "auth"),
-                    SaraminPlatformAdapter(ThrottledClient()),
+                    SaraminPlatformAdapter(ThrottledClient(), auth_dir=cfg.data_dir / "auth"),
                 ]
             )
 

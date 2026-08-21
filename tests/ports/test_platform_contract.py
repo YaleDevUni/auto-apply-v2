@@ -264,12 +264,56 @@ def _saramin_adapter(
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(status_code, text=html)
 
-    return SaraminPlatformAdapter(_mock_client(handler))
+    return SaraminPlatformAdapter(_mock_client(handler), auth_dir=_DUMMY_AUTH_DIR)
+
+
+def _saramin_auth_dir(tmp_path: Path) -> Path:
+    auth_dir = tmp_path / "auth"
+    auth_dir.mkdir()
+    state = {
+        "cookies": [{"name": "PHPSESSID", "value": "x", "domain": ".saramin.co.kr", "path": "/"}],
+        "origins": [],
+    }
+    (auth_dir / "saramin.json").write_text(json.dumps(state))
+    return auth_dir
+
+
+def _saramin_apply_status_html(*, rec_idx: str, date_text: str) -> str:
+    # 실측(2026-08-21) 구조 — 서버사이드 렌더링, 지원 항목마다 data-rec_idx/.col_date 를 가진다.
+    return (
+        '<html><body><form name="list_form">'
+        f'<div class="row _apply_list" data-rec_idx="{rec_idx}">'
+        f'<div class="col_date">{date_text}</div>'
+        "</div>"
+        "</form></body></html>"
+    )
+
+
+_SARAMIN_LOGIN_URL = "https://www.saramin.co.kr/zf_user/auth?ut=p"
+
+
+def _saramin_verify_handler(html: str, *, session_expired: bool = False):
+    """세션 만료 시나리오는 실제 사이트처럼 302 로 로그인 페이지로 리다이렉트시킨다 —
+
+    `saramin_cookie_client` 가 `follow_redirects=True` 라 최종 `resp.url` 이 로그인 페이지가
+    되고, 어댑터는 그걸로 만료를 판별한다.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if session_expired and "apply-status-list" in str(request.url):
+            return httpx.Response(302, headers={"Location": _SARAMIN_LOGIN_URL})
+        if session_expired:
+            return httpx.Response(200, text="<html>로그인이 필요한 서비스입니다.</html>")
+        return httpx.Response(200, text=html)
+
+    return handler
 
 
 class TestSaraminPlatformAdapter:
     def test_matches_saramin_host_only(self):
-        adapter = SaraminPlatformAdapter(_mock_client(lambda r: httpx.Response(200)))
+        adapter = SaraminPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200)), auth_dir=_DUMMY_AUTH_DIR
+        )
         assert adapter.matches("https://www.saramin.co.kr/zf_user/member/apply?rec_idx=1") is True
         assert adapter.matches("https://www.wanted.co.kr/wd/1") is False
 
@@ -321,13 +365,114 @@ class TestSaraminPlatformAdapter:
         assert verdict.eligible is False
         assert "마감" in verdict.reason
 
-    async def test_verify_submission_is_always_unverified(self):
-        """미구현 — 로그인 세션 확보 방식이 아직 실측 검증 안 됨 (거짓 확인보다 안전)."""
-        adapter = _saramin_adapter()
+    async def test_verify_submission_without_job_id_or_since_is_unverified(self):
+        """job_id/since 가 없으면 뭘 대조할지 모른다 — 네트워크도 안 타고 안전하게 떨어진다."""
+        adapter = _saramin_adapter()  # auth_dir 도 더미라 인증 클라이언트를 만들면 즉시 실패한다
         result = await adapter.verify_submission(
             VerifyInput(application_id="a1", platform="saramin")
         )
         assert result.verified is False
+
+    async def test_verify_submission_matches_recent_application(self, tmp_path: Path):
+        since = datetime(2026, 8, 21, tzinfo=ZoneInfo("Asia/Seoul"))
+        html = _saramin_apply_status_html(rec_idx="54646145", date_text="2026.08.21 00:24")
+        adapter = SaraminPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200)),
+            auth_dir=_saramin_auth_dir(tmp_path),
+            auth_transport=httpx.MockTransport(_saramin_verify_handler(html)),
+        )
+        result = await adapter.verify_submission(
+            VerifyInput(
+                application_id="a1", platform="saramin", job_id="saramin:54646145", since=since
+            )
+        )
+        assert result.verified is True
+
+    async def test_verify_submission_tolerates_clock_skew(self, tmp_path: Path):
+        since = datetime(2026, 8, 21, 0, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+        # since 보다 3분 이르지만 _CLOCK_SKEW(5분) 안쪽.
+        html = _saramin_apply_status_html(rec_idx="54646145", date_text="2026.08.21 00:07")
+        adapter = SaraminPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200)),
+            auth_dir=_saramin_auth_dir(tmp_path),
+            auth_transport=httpx.MockTransport(_saramin_verify_handler(html)),
+        )
+        result = await adapter.verify_submission(
+            VerifyInput(
+                application_id="a1", platform="saramin", job_id="saramin:54646145", since=since
+            )
+        )
+        assert result.verified is True
+
+    async def test_verify_submission_ignores_unrelated_job(self, tmp_path: Path):
+        """같은 계정의 다른 공고 지원 이력으로 오탐하지 않는다."""
+        since = datetime(2026, 8, 21, tzinfo=ZoneInfo("Asia/Seoul"))
+        html = _saramin_apply_status_html(rec_idx="99999999", date_text="2026.08.21 00:24")
+        adapter = SaraminPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200)),
+            auth_dir=_saramin_auth_dir(tmp_path),
+            auth_transport=httpx.MockTransport(_saramin_verify_handler(html)),
+        )
+        result = await adapter.verify_submission(
+            VerifyInput(
+                application_id="a1", platform="saramin", job_id="saramin:54646145", since=since
+            )
+        )
+        assert result.verified is False
+
+    async def test_verify_submission_ignores_stale_application(self, tmp_path: Path):
+        """같은 공고에 과거(이번 시도 전)에 지원한 이력이 있어도 그걸로 오탐하지 않는다."""
+        since = datetime(2026, 8, 21, 12, 0, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+        html = _saramin_apply_status_html(rec_idx="54646145", date_text="2026.08.20 09:00")
+        adapter = SaraminPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200)),
+            auth_dir=_saramin_auth_dir(tmp_path),
+            auth_transport=httpx.MockTransport(_saramin_verify_handler(html)),
+        )
+        result = await adapter.verify_submission(
+            VerifyInput(
+                application_id="a1", platform="saramin", job_id="saramin:54646145", since=since
+            )
+        )
+        assert result.verified is False
+
+    async def test_verify_submission_raises_auth_required_when_session_expired(
+        self, tmp_path: Path
+    ):
+        """세션이 만료돼 로그인 페이지로 리다이렉트되면 AuthRequired — `_execution.py`가
+
+        이걸 안전하게 unverified 로 떨어뜨린다.
+        """
+        since = datetime(2026, 8, 21, tzinfo=ZoneInfo("Asia/Seoul"))
+        adapter = SaraminPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200)),
+            auth_dir=_saramin_auth_dir(tmp_path),
+            auth_transport=httpx.MockTransport(_saramin_verify_handler("", session_expired=True)),
+        )
+        with pytest.raises(AuthRequired):
+            await adapter.verify_submission(
+                VerifyInput(
+                    application_id="a1",
+                    platform="saramin",
+                    job_id="saramin:54646145",
+                    since=since,
+                )
+            )
+
+    async def test_verify_submission_raises_auth_required_without_state_file(self, tmp_path: Path):
+        adapter = SaraminPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200)),
+            auth_dir=tmp_path / "no-such-dir",
+        )
+        with pytest.raises(AuthRequired):
+            await adapter.verify_submission(
+                VerifyInput(
+                    application_id="a1",
+                    platform="saramin",
+                    job_id="saramin:54646145",
+                    since=datetime(2026, 8, 21, tzinfo=ZoneInfo("Asia/Seoul")),
+                )
+            )
 
 
 class TestStaticPlatformRegistry:
