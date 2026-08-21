@@ -68,6 +68,18 @@ class AutomationRepairWorkflow:
         snapshot_key = req.snapshot_key
         candidate: AutomationRecipe | None = None
 
+        await workflow.execute_activity(
+            notify,
+            NotifyEvent(
+                kind="RECIPE_REPAIR_STARTED",
+                application_id=f"{req.platform}-{req.form_hash}",
+                message=f"{req.platform} recipe v{req.failed_version} 수선 시작",
+            ),
+            task_queue=QUEUE_DEFAULT,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=_QUICK,
+        )
+
         for attempt in range(1, MAX_SANDBOX_ATTEMPTS + 1):
             try:
                 diff = await workflow.execute_activity(

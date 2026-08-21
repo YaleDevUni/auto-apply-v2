@@ -111,6 +111,7 @@ async def test_schema_violation_exhausted_gives_up(env: WorkflowEnvironment):
     assert result.promoted is False
     assert "LLM diff 제안 실패" in result.reason
     assert h.notifier is not None
+    assert any(e.kind == "RECIPE_REPAIR_STARTED" for e in h.notifier.notified)
     assert any(e.kind == "RECIPE_REPAIR_FAILED" for e in h.notifier.notified)
 
 
