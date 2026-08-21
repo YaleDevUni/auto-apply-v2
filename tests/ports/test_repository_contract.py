@@ -171,6 +171,42 @@ async def test_list_recent_respects_limit(uow_factory):
         assert len(await uow.applications.list_recent(limit=2)) == 2
 
 
+async def test_latest_states_returns_only_the_latest_per_requested_id(uow_factory):
+    """apply_intake.py 의 사전 필터가 쓰는 배치 조회 — 요청한 id 중 이력이 있는 것만, 그마저도
+
+    최신 상태 하나씩만 돌려준다.
+    """
+    async with uow_factory() as uow:
+        await uow.applications.upsert_state(
+            PersistState(
+                application_id="app_1", workflow_run_id="run_1", state=ApplicationState.EVALUATING
+            )
+        )
+        await uow.applications.upsert_state(
+            PersistState(
+                application_id="app_1", workflow_run_id="run_1", state=ApplicationState.COMPLETED
+            )
+        )
+        await uow.applications.upsert_state(
+            PersistState(
+                application_id="app_2", workflow_run_id="run_1", state=ApplicationState.REJECTED
+            )
+        )
+        await uow.commit()
+    async with uow_factory() as uow:
+        states = await uow.applications.latest_states(["app_1", "app_2", "app_unknown"])
+
+    assert states == {
+        "app_1": ApplicationState.COMPLETED,
+        "app_2": ApplicationState.REJECTED,
+    }
+
+
+async def test_latest_states_empty_ids_returns_empty_dict(uow_factory):
+    async with uow_factory() as uow:
+        assert await uow.applications.latest_states([]) == {}
+
+
 async def test_satisfies_protocol(uow_factory):
     uow: UnitOfWork = uow_factory()
     assert hasattr(uow.applications, "upsert_state")

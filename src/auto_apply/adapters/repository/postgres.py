@@ -25,6 +25,7 @@ from auto_apply.adapters.repository.models import (
 )
 from auto_apply.contracts.dto import ApplicationAttempt, ApplicationSummary, PersistState
 from auto_apply.contracts.job import JobRecord
+from auto_apply.domain.enums import ApplicationState
 
 SessionFactory = async_sessionmaker[AsyncSession]
 
@@ -79,6 +80,20 @@ class SqlAlchemyApplicationRepository:
             .limit(limit)
         )
         return [_summary(PersistState.model_validate(r.payload)) for r in rows]
+
+    async def latest_states(self, application_ids: list[str]) -> dict[str, ApplicationState]:
+        if not application_ids:
+            return {}
+        latest_id = (
+            select(func.max(ApplicationStateRow.id))
+            .where(ApplicationStateRow.application_id.in_(application_ids))
+            .group_by(ApplicationStateRow.application_id)
+            .scalar_subquery()
+        )
+        rows = await self._session.scalars(
+            select(ApplicationStateRow).where(ApplicationStateRow.id.in_(latest_id))
+        )
+        return {r.application_id: PersistState.model_validate(r.payload).state for r in rows}
 
 
 class SqlAlchemyJobRepository:

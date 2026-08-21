@@ -13,6 +13,7 @@ from typing import Self
 
 from auto_apply.contracts.dto import ApplicationAttempt, ApplicationSummary, PersistState
 from auto_apply.contracts.job import JobRecord
+from auto_apply.domain.enums import ApplicationState
 
 
 def _summary(application_id: str, latest: PersistState) -> ApplicationSummary:
@@ -76,6 +77,17 @@ class FileApplicationRepository:
                 history = self._read(path)
                 if history:
                     out.append(_summary(history[-1].application_id, history[-1]))
+            return out
+
+        return await asyncio.to_thread(_scan)
+
+    async def latest_states(self, application_ids: list[str]) -> dict[str, ApplicationState]:
+        def _scan() -> dict[str, ApplicationState]:
+            out: dict[str, ApplicationState] = {}
+            for application_id in application_ids:
+                history = self._read(self._path(application_id))
+                if history:
+                    out[application_id] = history[-1].state
             return out
 
         return await asyncio.to_thread(_scan)

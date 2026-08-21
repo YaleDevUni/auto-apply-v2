@@ -3,6 +3,7 @@ from typing import Self
 
 from auto_apply.contracts.dto import ApplicationAttempt, ApplicationSummary, PersistState
 from auto_apply.contracts.job import JobRecord
+from auto_apply.domain.enums import ApplicationState
 
 Rows = dict[str, list[PersistState]]
 JobRows = dict[tuple[str, str], JobRecord]
@@ -42,6 +43,9 @@ class InMemoryApplicationRepository:
         return [
             _summary(app_id, self._rows[app_id][-1]) for app_id in app_ids if self._rows[app_id]
         ]
+
+    async def latest_states(self, application_ids: list[str]) -> dict[str, ApplicationState]:
+        return {aid: self._rows[aid][-1].state for aid in application_ids if self._rows.get(aid)}
 
 
 class InMemoryJobRepository:
