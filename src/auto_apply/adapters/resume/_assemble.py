@@ -35,17 +35,31 @@ def assemble_resume(
     projects: list[ResumeBlockView] = []
 
     for block in blocks:
+        if block.kind == "career" and block.entity not in career_blocks:
+            # 회사(entity) 헤더는 그 회사의 첫 블록이 불릿을 하나도 못 냈어도 항상 등록한다 —
+            # "어느 회사에서 일했는지"는 사실이라 그 자체는 항상 보여준다(§ resume-block-count-cap
+            # 되돌림에서도 유지한 부분).
+            career_order.append(block.entity)
+            career_blocks[block.entity] = []
+            career_meta[block.entity] = (block.entity_label, block.entity_period)
+
+        bullets = _to_bullets(bullets_by_block.get(block.id, []))
+        if not bullets:
+            # LLM 이 이 블록을 "건너뛰기"로 판단했다는 뜻(ai/prompts.py 가 그렇게 허용한다) —
+            # 빈 제목·기간·사용기술 태그만 남은 껍데기 블록을 렌더링하면 안 된다. 코드 상한이
+            # 3/4개였을 때는(2026-08-21 이전) 후보 자체가 적어 이 문제가 잘 안 드러났는데, 상한을
+            # 안전판(20)으로 올려 LLM 판단에 맡기게 되면서 스킵이 잦아져 실제로 라이브에서
+            # 관측됐다 — 실측(DevOps/클라우드마이그레이션/yt-sub-mcp 등 불릿 0개 블록이 빈
+            # 헤더로 남던 문제).
+            continue
+
         view = ResumeBlockView(
             title=block.title,
             period=block.period,
-            bullets=_to_bullets(bullets_by_block.get(block.id, [])),
+            bullets=bullets,
             tech_stack=block.tech_stack,
         )
         if block.kind == "career":
-            if block.entity not in career_blocks:
-                career_order.append(block.entity)
-                career_blocks[block.entity] = []
-                career_meta[block.entity] = (block.entity_label, block.entity_period)
             career_blocks[block.entity].append(view)
         else:
             projects.append(view)

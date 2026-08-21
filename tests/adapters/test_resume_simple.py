@@ -238,6 +238,54 @@ async def test_generate_assembles_block_bullets_into_career_section():
     assert draft.used_fact_ids == ["exp-block-1"]
 
 
+async def test_generate_excludes_block_llm_skipped_from_career_section():
+    """LLM 이 블록을 건너뛰면(bullets 0개) 빈 헤더로 남기지 않고 아예 뺀다.
+
+    라이브 실측(2026-08-21): RESUME_MAX_* 상한을 안전판(20)으로 올려 LLM 판단에 맡기게
+    되면서, LLM 이 "이 블록은 스킵"이라고 판단한 블록이 제목·기간·사용기술 태그만 남은 빈
+    껍데기로 계속 렌더링되는 문제가 나왔다(adapters/resume/_assemble.py).
+    """
+    facts = StaticFactSource(
+        [
+            FACT_BLOCK,
+            Fact(
+                id="exp-block-2",
+                user_id="u1",
+                kind="experience",
+                content="Acme 에서 배포 자동화를 구축했다.",
+                keywords=["Docker"],
+                entity="acme",
+                entity_label="Acme(백엔드 인턴)",
+                entity_period="2023.01 - 2023.12",
+                block="devops",
+                block_label="배포 자동화",
+            ),
+        ]
+    )
+    payload = {
+        "summary": "충분히 긴 요약 문장입니다",
+        "blocks": [
+            {
+                "block_id": "acme:payment-api",
+                "bullets": [{"text": "결제 API 를 설계했다", "fact_ids": ["exp-block-1"]}],
+            }
+            # acme:devops 는 LLM 출력에서 아예 빠졌다(건너뛰기) — ai/prompts.py 가 허용한다.
+        ],
+    }
+    gen = SimpleResumeGenerator(
+        StubLLM(payloads=[payload]),
+        UuidIdGen(),
+        facts,
+        _profile_source(),
+        _portfolio_source(),
+        StaticGuideSource(),
+    )
+    draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
+    career = draft.content["career"]
+    assert career[0]["company"] == "Acme(백엔드 인턴)"  # 회사 헤더는 그대로 남는다
+    assert [b["title"] for b in career[0]["blocks"]] == ["결제 API 개발"]  # devops 는 안 보인다
+
+
 async def test_generate_reprompts_on_schema_violation_then_succeeds():
     """첫 응답이 스키마를 위반(창작 필드)해도 재프롬프트로 회복한다 (§5)."""
     facts = StaticFactSource([FACT])
