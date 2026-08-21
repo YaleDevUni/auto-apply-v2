@@ -222,6 +222,61 @@ async def test_cache_prefix_becomes_a_separate_breakpointed_block():
     assert "cache_control" not in blocks[1]
 
 
+async def test_cache_control_overflow_retries_once_without_cache_control():
+    """실측(2026-08-21): 큰 프롬프트에서 CLI 가 "maximum of 4 blocks with cache_control"
+    400 을 낼 때가 있다 — cache_control 없이 한 번 더 시도해서 정확성을 지켜야 한다."""
+    llm = ClaudeCodeCliLLM()
+    captured_stdin: list[bytes] = []
+    overflow = _result_line(
+        is_error=True,
+        result="API Error: 400 A maximum of 4 blocks with cache_control may be provided. Found 5.",
+    )
+    ok = _result_line(result="성공")
+    responses = [overflow, ok]
+
+    async def fake_exec(*_args: str, **_kwargs: object) -> AsyncMock:
+        stdout = responses.pop(0)
+        proc = _mock_proc(stdout)
+
+        async def fake_communicate(input: bytes) -> tuple[bytes, bytes]:
+            captured_stdin.append(input)
+            return stdout, b""
+
+        proc.communicate = fake_communicate
+        return proc
+
+    with patch.object(module.asyncio, "create_subprocess_exec", fake_exec):
+        result = await llm.complete("변하는 접미어", cache_prefix="안정적인 접두어")
+
+    assert result == "성공"
+    assert len(captured_stdin) == 2
+    first_blocks = json.loads(captured_stdin[0])["message"]["content"]
+    assert first_blocks[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    second_blocks = json.loads(captured_stdin[1])["message"]["content"]
+    assert "cache_control" not in second_blocks[0]
+    assert second_blocks[0]["text"] == "안정적인 접두어"
+
+
+async def test_cache_control_overflow_persisting_still_raises_execution_error():
+    """폴백 시도까지 실패하면(다른 원인) 정상적으로 분류된 에러를 낸다 — 무한 재시도는 안 한다."""
+    llm = ClaudeCodeCliLLM()
+    overflow = _result_line(
+        is_error=True,
+        result="API Error: 400 A maximum of 4 blocks with cache_control may be provided. Found 5.",
+    )
+    other = _result_line(is_error=True, result="다른 이유로 여전히 실패")
+    responses = [overflow, other]
+
+    async def fake_exec(*_args: str, **_kwargs: object) -> AsyncMock:
+        return _mock_proc(responses.pop(0))
+
+    with (
+        patch.object(module.asyncio, "create_subprocess_exec", fake_exec),
+        pytest.raises(LLMExecutionError, match="다른 이유"),
+    ):
+        await llm.complete("변하는 접미어", cache_prefix="안정적인 접두어")
+
+
 async def test_empty_prompt_with_cache_prefix_omits_the_second_block():
     """재프롬프트 루프 1번째 시도 — addition 이 빈 문자열이면 빈 텍스트 블록을 안 보낸다."""
     llm = ClaudeCodeCliLLM()

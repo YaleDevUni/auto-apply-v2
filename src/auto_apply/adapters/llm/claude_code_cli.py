@@ -32,6 +32,15 @@ stream-json` 으로 안정적인 부분과 매번 바뀌는 부분을 **별도 �
 전제: 이 프로세스를 실행하는 머신에 `claude` CLI 가 설치되고 `claude login`(또는
 `claude setup-token`)으로 이미 로그인돼 있어야 한다 — 이 어댑터는 로그인을 대신 해주지
 않는다.
+
+cache_control 4개 초과 폴백: 위 캐싱을 라이브 배치로 돌리다(2026-08-21) CLI 가 큰 프롬프트에서
+"A maximum of 4 blocks with cache_control may be provided. Found 5." 400 을 내는 걸 재현했다
+— CLI 가 이미 내부적으로 몇 개의 브레이크포인트를 쓰고 있어서 우리가 붙이는 것까지 합치면
+한도를 넘는 것으로 보이는데, 어떤 프롬프트에서 재현되는지는 CLI 내부 구현에 달려 있어 우리
+쪽에서 미리 피할 수 없다. 같은 activity 를 Temporal 이 재시도해도 프롬프트 크기가 그대로면
+매번 다시 걸려 재시도 예산을 태울 뿐이라(`_AI_RETRY`, `workflows/resume.py`), `_run`이 이
+시그니처(`_CACHE_OVERFLOW_PATTERN`)를 만나면 그 자리에서 `cache_control` 없이 한 번 더
+호출한다 — 캐싱은 최적화일 뿐 정확성엔 필요 없다.
 """
 
 import asyncio
@@ -72,6 +81,15 @@ _QUOTA_PATTERN = re.compile(r"usage limit reached|credit balance.*too low", re.I
 _QUOTA_TERMINAL_REASONS = {"budget_exhausted"}
 _QUOTA_SUBTYPES = {"error_max_budget_usd"}
 
+# 실측(2026-08-21, 라이브 배치 실행 중 재현): CLI 가 큰 프롬프트에서 자체적으로 이미 몇 개의
+# cache_control 브레이크포인트를 쓰고 있어서, 우리가 cache_prefix 에 붙이는 것까지 합치면
+# Anthropic API 의 "요청당 최대 4개" 한도를 넘는 경우가 있다("A maximum of 4 blocks with
+# cache_control may be provided. Found 5." 400 응답). 재현 조건이 불명확하고(같은 크기의
+# 다른 요청은 통과) CLI 내부 구현에 달려 있어 우리 쪽에서 예측/회피할 수 없다 — 캐싱은
+# 최적화일 뿐 정확성에 필요하지 않으므로, 이 패턴이 뜨면 cache_control 없이 한 번 더 시도해
+# 정확성을 지킨다(`_run`).
+_CACHE_OVERFLOW_PATTERN = re.compile(r"maximum of \d+ blocks with cache_control", re.IGNORECASE)
+
 
 def _classify_error(envelope: dict[str, Any]) -> LLMExecutionError:
     """`is_error` 응답을 CLI 의 실패 시그니처로 분류한다.
@@ -94,23 +112,23 @@ def _classify_error(envelope: dict[str, Any]) -> LLMExecutionError:
     return LLMExecutionError(f"claude CLI 에러 응답: {envelope}")
 
 
-def _build_stdin_payload(prompt: str, cache_prefix: str) -> bytes:
+def _build_stdin_payload(
+    prompt: str, cache_prefix: str, *, use_cache_control: bool = True
+) -> bytes:
     """`--input-format stream-json` 이 기대하는 한 줄짜리 사용자 메시지를 만든다.
 
     `cache_prefix`(안정적인 부분)가 있으면 별도 블록으로 떼어 그 블록에만 `cache_control`을
     찍는다 — 매번 바뀌는 `prompt`와 같은 블록에 이어붙이면 부분 매칭이 안 된다(모듈 docstring
     참고). `prompt`가 빈 문자열인데 `cache_prefix`만 있는 경우(재프롬프트 루프의 1번째 시도)는
-    빈 텍스트 블록을 추가하지 않는다.
+    빈 텍스트 블록을 추가하지 않는다. `use_cache_control=False`는 `_CACHE_OVERFLOW_PATTERN`
+    재시도 전용 — 블록은 그대로 나누되 `cache_control`만 뺀다.
     """
     content: list[dict[str, Any]] = []
     if cache_prefix:
-        content.append(
-            {
-                "type": "text",
-                "text": cache_prefix,
-                "cache_control": {"type": "ephemeral", "ttl": "1h"},
-            }
-        )
+        block: dict[str, Any] = {"type": "text", "text": cache_prefix}
+        if use_cache_control:
+            block["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+        content.append(block)
     if prompt or not content:
         content.append({"type": "text", "text": prompt})
     envelope = {"type": "user", "message": {"role": "user", "content": content}}
@@ -179,8 +197,44 @@ class ClaudeCodeCliLLM:
         cache_prefix: str,
         json_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        envelope = await self._invoke(
+            prompt, cache_prefix=cache_prefix, json_schema=json_schema, use_cache_control=True
+        )
+        if envelope.get("is_error") and _CACHE_OVERFLOW_PATTERN.search(
+            str(envelope.get("result") or "")
+        ):
+            logger.warning(
+                "claude_code_cli_cache_overflow_fallback", cache_prefix_len=len(cache_prefix)
+            )
+            envelope = await self._invoke(
+                prompt, cache_prefix=cache_prefix, json_schema=json_schema, use_cache_control=False
+            )
+
+        if envelope.get("is_error"):
+            raise _classify_error(envelope)
+
+        usage = envelope.get("usage", {})
+        logger.info(
+            "claude_code_cli_call",
+            cache_prefix_len=len(cache_prefix),
+            cost_usd=envelope.get("total_cost_usd"),
+            cache_read_tokens=usage.get("cache_read_input_tokens"),
+            cache_creation_tokens=usage.get("cache_creation_input_tokens"),
+        )
+        return envelope
+
+    async def _invoke(
+        self,
+        prompt: str,
+        *,
+        cache_prefix: str,
+        json_schema: dict[str, Any] | None,
+        use_cache_control: bool,
+    ) -> dict[str, Any]:
         args = self._build_args(json_schema=json_schema)
-        stdin_payload = _build_stdin_payload(prompt, cache_prefix)
+        stdin_payload = _build_stdin_payload(
+            prompt, cache_prefix, use_cache_control=use_cache_control
+        )
 
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -206,21 +260,10 @@ class ClaudeCodeCliLLM:
                 )
             raise LLMExecutionError(f"claude CLI 출력에 결과 라인이 없다: {stdout[:500]!r}")
 
-        if envelope.get("is_error"):
-            raise _classify_error(envelope)
-        if proc.returncode != 0:
+        if not envelope.get("is_error") and proc.returncode != 0:
             raise LLMExecutionError(
                 f"claude CLI 종료 코드 {proc.returncode}: {stderr.decode(errors='replace')[:500]}"
             )
-
-        usage = envelope.get("usage", {})
-        logger.info(
-            "claude_code_cli_call",
-            cache_prefix_len=len(cache_prefix),
-            cost_usd=envelope.get("total_cost_usd"),
-            cache_read_tokens=usage.get("cache_read_input_tokens"),
-            cache_creation_tokens=usage.get("cache_creation_input_tokens"),
-        )
         return envelope
 
     def _build_args(self, *, json_schema: dict[str, Any] | None) -> list[str]:
