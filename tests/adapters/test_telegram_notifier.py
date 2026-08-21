@@ -84,6 +84,34 @@ async def test_request_decision_callback_data_encodes_app_id_and_nonce() -> None
     assert revise.callback_data == f"v:app_1:{ticket.nonce}"
 
 
+async def test_scope_picker_callback_data_fits_telegram_limit() -> None:
+    """실측 회귀: application_id 30자(예: CLI `start` 로 사람이 고른 id) + nonce 조합이
+
+    "vs:{id}:specific:{nonce}" 에서 65바이트로 Telegram 의 64바이트 callback_data 한계를
+    넘어 BUTTON_DATA_INVALID 로 메시지 전송 자체가 실패했다(라이브에서 실측). 이후
+    `StartApplication.application_id` 에 24자 상한을 걸었다(contracts/dto.py) — 그 상한에서
+    가장 빠듯한 버튼도 64바이트를 넘지 않는지 여기서 고정한다.
+    """
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    max_len_app_id = "a" * 24  # StartApplication.application_id 의 상한과 일치시킨다
+
+    ticket = await notifier.request_decision(
+        DecisionRequest(
+            application_id=max_len_app_id,
+            workflow_id=f"application-{max_len_app_id}",
+            title="t",
+            summary="s",
+        )
+    )
+    await notifier.send_scope_picker(max_len_app_id, ticket.nonce)
+
+    markup = bot.sent[-1]["reply_markup"]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    for button in markup.inline_keyboard[0]:
+        assert len(button.callback_data.encode()) <= 64, button.callback_data
+
+
 async def test_request_decision_prefixes_dry_run_badge() -> None:
     """dry-run-indicator-backlog: dry-run 인지 실제 제출인지 메시지만 보고 구분할 수 있어야 한다."""
     bot = FakeBot()

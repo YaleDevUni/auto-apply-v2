@@ -20,7 +20,12 @@ class _Frozen(BaseModel):
 
 # ── Application ──────────────────────────────────────────────────────────
 class StartApplication(_Frozen):
-    application_id: str
+    # 텔레그램 callback_data 는 64바이트 한계가 있다(adapters/notifier/telegram.py). 가장
+    # 빠듯한 조합("vs:{application_id}:specific:{nonce}", nonce 는 `nonce_`+16hex=22바이트
+    # 고정)이 64바이트를 넘지 않으려면 application_id ≤ 29 여야 한다 — 24로 여유를 둔다.
+    # API(`POST /applications`)는 idgen("app_"+16hex=20)이라 항상 안전하고, CLI `start` 의
+    # 사람이 고르는 id 만 이 상한에 걸릴 수 있다(라이브로 65바이트 BUTTON_DATA_INVALID 실측).
+    application_id: str = Field(max_length=24)
     user_id: str
     job_url: str
     # 워크플로우는 설정을 직접 읽지 않는다 (결정성). 시작 시점에 주입한다.
