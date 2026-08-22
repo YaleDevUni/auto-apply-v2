@@ -134,6 +134,26 @@ def _telegram(c: Container) -> _RevisableNotifier:
     return c.notifier
 
 
+async def _notify_signal_failed(c: Container, application_id: str, action_label: str) -> None:
+    """signal 이 워크플로우에 안 닿았을 때(주로 이미 종료된 워크플로우) 누른 사람에게 알린다.
+
+    이전엔 `CallbackOutcome(handled=False)`만 반환하고 끝나서 버튼을 누른 사람 입장에선
+    "응답이 없다"로 보였다(실측, telegram-approval-silent-failure). signal 은 fire-and-forget
+    이라 워크플로우가 실제로 받아들였는지는 여전히 알 수 없지만, 최소한 "안 닿았다"는
+    확실한 실패는 사람에게 보여야 한다.
+    """
+    await c.notifier.notify(
+        NotifyEvent(
+            kind="DECISION_FAILED",
+            application_id=application_id,
+            message=(
+                f"{action_label} 처리에 실패했습니다 — 이미 종료됐거나 존재하지 않는 지원 건"
+                "입니다. 오래된 메시지의 버튼을 누른 건 아닌지 확인해주세요."
+            ),
+        )
+    )
+
+
 async def handle_callback_query(
     callback: dict[str, Any], c: Container, client: Client
 ) -> CallbackOutcome:
@@ -239,6 +259,7 @@ async def handle_callback_query(
                     RejectSignal(decided_by=decided_by, nonce=nonce),
                 )
     except RPCError as e:
+        await _notify_signal_failed(c, application_id, _ACTIONS[action])
         return CallbackOutcome(handled=False, reason=f"workflow not found: {e.message}")
 
     await c.notifier.notify(
@@ -280,6 +301,7 @@ async def handle_message(message: dict[str, Any], c: Container, client: Client) 
                 GuidePatchReviseSignal(feedback=feedback, decided_by=str(from_id), nonce=nonce),
             )
         except RPCError as e:
+            await _notify_signal_failed(c, application_id, "가이드 patch 코멘트")
             return CallbackOutcome(handled=False, reason=f"workflow not found: {e.message}")
         await c.notifier.notify(
             NotifyEvent(
@@ -308,6 +330,7 @@ async def handle_message(message: dict[str, Any], c: Container, client: Client) 
                 ),
             )
         except RPCError as e:
+            await _notify_signal_failed(c, application_id, "수정요청")
             return CallbackOutcome(handled=False, reason=f"workflow not found: {e.message}")
 
         await c.notifier.notify(

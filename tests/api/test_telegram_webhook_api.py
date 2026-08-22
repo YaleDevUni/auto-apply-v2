@@ -128,6 +128,26 @@ async def test_replayed_callback_is_ignored(client):
     assert result.state is ApplicationState.COMPLETED
 
 
+async def test_approve_callback_for_finished_workflow_notifies_failure(client):
+    """회귀 테스트: 이미 종료된(또는 존재하지 않는) 워크플로우를 겨눈 버튼을 누르면
+
+    signal 자체가 RPCError 로 실패하는데, 예전엔 `handled=False`만 반환하고 끝나서 버튼을
+    누른 사람 입장에선 "응답이 없다"로 보였다(실측, 2026-08-22). 지금은 그 경우에도
+    사람에게 실패를 알려야 한다.
+    """
+    ac, _env, h = client
+    resp = await ac.post(
+        "/telegram/webhook",
+        json=_callback_body("a", "already-finished-app", "whatever-nonce", ALLOWED_CHAT_ID),
+    )
+    assert resp.status_code == 200
+
+    assert h.notifier is not None
+    failures = [e for e in h.notifier.notified if e.kind == "DECISION_FAILED"]
+    assert len(failures) == 1
+    assert failures[0].application_id == "already-finished-app"
+
+
 async def test_stale_nonce_from_different_process_is_rejected(client):
     """회귀 테스트: nonce 검증을 어댑터 메모리에 뒀을 때, 발급 프로세스(worker)와 검증
 
