@@ -13,7 +13,7 @@ from auto_apply.adapters.platform.registry import StaticPlatformRegistry
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import NotifyEvent, PendingDecisionView, PersistState
 from auto_apply.contracts.job import ApplicabilityVerdict, JobPosting, JobRecord, ScreeningVerdict
-from auto_apply.domain.chat_agent import MAX_STEPS
+from auto_apply.domain.chat_agent import MAX_BLOCKED_STEPS, MAX_STEPS
 from auto_apply.domain.enums import ApplicationState
 from auto_apply.telegram.agent import handle_chat
 from tests.conftest import Harness
@@ -157,9 +157,10 @@ async def test_step_budget_exhausted_reports_tools_that_already_ran():
     못했어요"만 보내서, 사용자가 기능이 실패한 줄 알고 같은 요청을 반복했다.
     """
     notifier = _FakeNotifier()
+    # 같은 도구를 같은 인자로 계속 부른다 → 첫 1회만 실행되고 나머지는 blocked 예산을 태운다
     payloads = [
         {"action": "call_tool", "tool": "list_applications", "tool_args": {}}
-        for _ in range(MAX_STEPS)
+        for _ in range(MAX_STEPS + MAX_BLOCKED_STEPS + 2)
     ]
     c = _container(payloads, notifier=notifier)
 
@@ -169,11 +170,48 @@ async def test_step_budget_exhausted_reports_tools_that_already_ran():
     assert "list_applications" in notifier.notified[0].message
 
 
+async def test_blocked_duplicate_calls_do_not_eat_the_progress_budget():
+    """중복 호출은 아무 일도 안 하므로 MAX_STEPS 를 소모하면 안 된다.
+
+    실측(2026-08-22): 모델이 성공한 도구를 한 번씩 더 부르는 습성 때문에 도구 2개짜리
+    요청에 중복 시도가 4번 붙었다. 같이 세면 도구 3개짜리 요청이 다시 소진된다.
+    """
+    notifier = _FakeNotifier()
+    # 매 도구 호출마다 같은 호출을 한 번씩 중복해서 끼워넣는다 — 두 예산을 각각 거의
+    # 끝까지 쓰되 넘기지는 않는 개수로.
+    pairs = min(MAX_STEPS, MAX_BLOCKED_STEPS) - 1
+    assert 2 * pairs >= MAX_STEPS, "예산을 하나로 세던 시절엔 소진됐을 길이여야 의미가 있다"
+    payloads: list[dict] = []
+    for i in range(pairs):
+        call = {"action": "call_tool", "tool": "list_applications", "tool_args": {"limit": str(i)}}
+        payloads += [call, dict(call)]  # 실행 1회 + 중복 1회
+    payloads.append({"action": "respond", "response": "다 했어요"})
+    c = _container(payloads, notifier=notifier)
+
+    await handle_chat("도구를 여러 번 부르는 상황", c, _FakeClient())
+
+    # 중복이 MAX_STEPS 만큼 끼어도 진전 예산은 그대로라 끝까지 가서 respond 로 끝난다
+    assert [e.message for e in notifier.notified] == ["다 했어요"]
+
+
+async def test_repeating_the_same_call_forever_still_terminates():
+    """중복 예산(MAX_BLOCKED_STEPS)이 무한 루프를 막는다 — respond 가 영원히 안 나와도 끝난다."""
+    notifier = _FakeNotifier()
+    payloads = [
+        {"action": "call_tool", "tool": "list_applications", "tool_args": {}} for _ in range(200)
+    ]
+    c = _container(payloads, notifier=notifier)
+
+    await handle_chat("영원히 같은 도구만 부르는 상황", c, _FakeClient())
+
+    assert len(notifier.notified) == 1
+
+
 async def test_step_budget_exhausted_apologizes_when_no_tool_ever_ran():
     notifier = _FakeNotifier()
     payloads = [
         {"action": "call_tool", "tool": "no_such_tool", "tool_args": {"i": str(i)}}
-        for i in range(MAX_STEPS)
+        for i in range(MAX_STEPS + MAX_BLOCKED_STEPS + 2)
     ]
     c = _container(payloads, notifier=notifier)
 

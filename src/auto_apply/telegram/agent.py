@@ -23,6 +23,7 @@ from auto_apply.ai.schemas import AgentStep
 from auto_apply.bootstrap import Container
 from auto_apply.contracts.dto import NotifyEvent
 from auto_apply.domain.chat_agent import (
+    MAX_BLOCKED_STEPS,
     MAX_STEPS,
     build_fallback_message,
     build_prompt,
@@ -69,8 +70,10 @@ async def handle_chat(text: str, c: Container, client: Client) -> None:
     # 실제로 실행된 도구만 모은다(중복으로 차단된 호출 제외) — MAX_STEPS 를 소진했을 때
     # 사과만 하지 않고 이미 일어난 작업을 사용자에게 보여주는 데 쓴다.
     executed: list[tuple[str, str]] = []
+    steps = 0  # 진전을 낸 스텝만 센다 — 중복으로 차단된 스텝은 blocked 로 따로 센다
+    blocked = 0
     try:
-        for _ in range(MAX_STEPS):
+        while steps < MAX_STEPS and blocked < MAX_BLOCKED_STEPS:
             prompt = build_prompt(text, transcript)
             # 이력서 생성용 c.llm 이 아니라 c.chat_llm — 도구 선택/응답 판단은 훨씬 가벼운
             # 분류 작업이라 더 싼 모델(cfg.telegram_agent_model)을 쓴다(bootstrap.py 참고).
@@ -80,16 +83,19 @@ async def handle_chat(text: str, c: Container, client: Client) -> None:
                 return
             signature = (step.tool, tuple(sorted(step.tool_args.items())))
             if signature in called_signatures:
+                blocked += 1
                 observation = (
                     f"{step.tool}({step.tool_args})는 이번 턴에 이미 같은 인자로 호출했습니다"
                     " — 다시 부르지 말고 위 결과로 답하세요."
                 )
             elif step.tool in SINGLE_SHOT_TOOLS and step.tool in called_tool_names:
+                blocked += 1
                 observation = (
                     f"{step.tool}는 이번 턴에 이미 실행했습니다 — 추가로 부르지 말고 위 결과를"
                     " 바탕으로 사용자에게 바로 답하세요."
                 )
             else:
+                steps += 1
                 ok, observation = await _run_tool(step.tool, step.tool_args, c, client)
                 called_signatures.add(signature)
                 called_tool_names.add(step.tool)
