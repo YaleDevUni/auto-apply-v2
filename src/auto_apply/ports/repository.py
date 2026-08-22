@@ -1,7 +1,12 @@
 from types import TracebackType
 from typing import Protocol, Self
 
-from auto_apply.contracts.dto import ApplicationAttempt, ApplicationSummary, PersistState
+from auto_apply.contracts.dto import (
+    ApplicationAttempt,
+    ApplicationSummary,
+    PersistState,
+    ScheduleConfig,
+)
 from auto_apply.contracts.job import JobRecord
 from auto_apply.domain.enums import ApplicationState
 
@@ -67,6 +72,20 @@ class AttemptRepository(Protocol):
     async def history(self, application_id: str) -> list[ApplicationAttempt]: ...
 
 
+class ScheduleConfigRepository(Protocol):
+    """공고 수집/자동 지원 Schedule 설정 — target(`"collection"`/`"apply"`) 당 최신값 1건뿐이라
+
+    이력이 없다(§ apply-schedule). 채팅(`telegram/_agent_tools_schedule.py`)이 시각/건수를
+    바꾸면 여기 쓰고, `schedule_config.py`가 그 값을 Temporal Schedule에 그대로 밀어넣는다.
+    """
+
+    async def get(self, target: str) -> ScheduleConfig | None: ...
+
+    async def set(self, config: ScheduleConfig) -> None:
+        """target 기준 upsert — 멱등."""
+        ...
+
+
 class UnitOfWork(Protocol):
     # @property 로 선언한다. Protocol 의 일반 속성은 invariant 로 취급되어
     # 구현체가 더 구체적인 타입을 노출하면 타입 체크에 실패한다.
@@ -78,6 +97,9 @@ class UnitOfWork(Protocol):
 
     @property
     def attempts(self) -> AttemptRepository: ...
+
+    @property
+    def schedule_config(self) -> ScheduleConfigRepository: ...
 
     async def __aenter__(self) -> Self: ...
 

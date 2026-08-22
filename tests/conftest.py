@@ -42,6 +42,7 @@ from auto_apply.contracts.dto import (
     DecisionTicket,
     NotifyEvent,
     PersistState,
+    ScheduleConfig,
 )
 from auto_apply.contracts.fact import Fact
 from auto_apply.contracts.job import JobRecord
@@ -205,6 +206,7 @@ class Harness:
     rows: dict[str, list[PersistState]] = field(default_factory=dict)
     attempt_rows: dict[str, list[ApplicationAttempt]] = field(default_factory=dict)
     job_rows: dict[tuple[str, str], JobRecord] = field(default_factory=dict)
+    schedule_config_rows: dict[str, ScheduleConfig] = field(default_factory=dict)
     eligible: bool = True
     reject_reason: str = ""
     verified: bool = True
@@ -268,11 +270,14 @@ class Harness:
         recipes = InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)})
         rows = self.rows
         attempt_rows = self.attempt_rows
+        schedule_config_rows = self.schedule_config_rows
         app = ApplicationActivities(
             registry=StaticPlatformRegistry([adapter]),
             notifier=self._shared_notifier(),
             recipes=recipes,
-            uow=lambda: InMemoryUnitOfWork(rows, attempt_rows=attempt_rows),
+            uow=lambda: InMemoryUnitOfWork(
+                rows, attempt_rows=attempt_rows, schedule_config_rows=schedule_config_rows
+            ),
         )
         facts = StaticFactSource(_sample_facts())
         guide = self._shared_guide()
@@ -315,6 +320,7 @@ class Harness:
         rows = self.rows
         attempt_rows = self.attempt_rows
         job_rows = self.job_rows
+        schedule_config_rows = self.schedule_config_rows
         resolved_settings = settings or Settings(
             notifier="console", storage="memory", llm_provider="stub"
         )
@@ -326,7 +332,9 @@ class Harness:
             llm=llm,
             chat_llm=llm,
             notifier=self._shared_notifier(telegram=resolved_settings.notifier == "telegram"),
-            uow=lambda: InMemoryUnitOfWork(rows, job_rows, attempt_rows=attempt_rows),
+            uow=lambda: InMemoryUnitOfWork(
+                rows, job_rows, attempt_rows=attempt_rows, schedule_config_rows=schedule_config_rows
+            ),
             registry=self.registry
             or StaticPlatformRegistry([FixturePlatformAdapter(eligible=self.eligible)]),
             recipes=InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)}),

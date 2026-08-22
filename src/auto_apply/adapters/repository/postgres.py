@@ -22,8 +22,14 @@ from auto_apply.adapters.repository.models import (
     ApplicationAttemptRow,
     ApplicationStateRow,
     JobRow,
+    ScheduleConfigRow,
 )
-from auto_apply.contracts.dto import ApplicationAttempt, ApplicationSummary, PersistState
+from auto_apply.contracts.dto import (
+    ApplicationAttempt,
+    ApplicationSummary,
+    PersistState,
+    ScheduleConfig,
+)
 from auto_apply.contracts.job import JobRecord
 from auto_apply.domain.enums import ApplicationState
 
@@ -152,6 +158,26 @@ class SqlAlchemyAttemptRepository:
         return [ApplicationAttempt.model_validate(r.payload) for r in rows]
 
 
+class SqlAlchemyScheduleConfigRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, target: str) -> ScheduleConfig | None:
+        row = await self._session.scalar(
+            select(ScheduleConfigRow).where(ScheduleConfigRow.target == target)
+        )
+        return ScheduleConfig.model_validate(row.payload) if row else None
+
+    async def set(self, config: ScheduleConfig) -> None:
+        stmt = pg_insert(ScheduleConfigRow).values(
+            target=config.target, payload=config.model_dump(mode="json")
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[ScheduleConfigRow.target], set_={"payload": stmt.excluded.payload}
+        )
+        await self._session.execute(stmt)
+
+
 class SqlAlchemyUnitOfWork:
     """세션 하나 = 트랜잭션 하나. `commit()`을 부르지 않으면 `__aexit__`에서 롤백된다.
 
@@ -165,6 +191,7 @@ class SqlAlchemyUnitOfWork:
         self.applications = SqlAlchemyApplicationRepository(self._session)
         self.jobs = SqlAlchemyJobRepository(self._session)
         self.attempts = SqlAlchemyAttemptRepository(self._session)
+        self.schedule_config = SqlAlchemyScheduleConfigRepository(self._session)
 
     async def __aenter__(self) -> Self:
         return self

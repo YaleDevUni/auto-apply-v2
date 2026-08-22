@@ -869,11 +869,12 @@ DAILY_DIGEST                    /recipes wanted
   (`fetch_job`이 리다이렉트 등으로 정규화한 값이 아니라) — 나중에 워크플로우 상태를 봤을 때
   "이 링크로 시작했다"가 그대로 남게 하려는 선택이다.
 
-  **`schedule_status`/`set_schedule_enabled`(2026-08-22, § 11.2f)**는 앞의 셋과 달리
-  `ApplicationWorkflow`를 시작하지 않는다 — `apply_intake.py`가 채팅으로 "지금 몇 건 지원"을
-  트리거하는 쪽이라면, 이 둘은 그 트리거를 cron 으로 매일 자동 실행하게 등록해둔 두 Temporal
-  Schedule(공고 수집·자동 지원)을 켜고 끄고 상태만 본다. cron 표현식·건수는 채팅으로 안 바꾼다
-  (`.env` 고정) — 자세한 이유는 §11.2f.
+  **`schedule_status`/`set_schedule_enabled`/`set_schedule_time`(2026-08-22, § 11.2f)**는
+  앞의 셋과 달리 `ApplicationWorkflow`를 시작하지 않는다 — `apply_intake.py`가 채팅으로
+  "지금 몇 건 지원"을 트리거하는 쪽이라면, 이 셋은 그 트리거를 cron 으로 매일 자동 실행하게
+  등록해둔 두 Temporal Schedule(공고 수집·자동 지원)의 켜짐/꺼짐·시각·건수를 채팅으로
+  본다/바꾼다. 시각·건수는 `.env`가 아니라 DB(`ScheduleConfig`)에 산다 — 채팅으로 바꾸면
+  재배포·설정파일 수정 없이 바로 반영된다. 자세한 이유는 §11.2f.
 
 ---
 
@@ -974,6 +975,7 @@ auto-apply-v2/
 │   ├── bootstrap.py              ★ composition root: 설정 → 구현체 조립
 │   ├── config.py                 pydantic-settings
 │   ├── schedule.py               JobCollection/ApplyIntake Temporal Schedule 등록/삭제 (§11.2b, §11.2f)
+│   ├── schedule_config.py        DB(ScheduleConfig) ↔ Temporal Schedule 연결 (§11.2f)
 │   ├── watchdog.py                워크플로우 능동 감시 — `make watchdog` (§11.2d)
 │   └── worker.py                 --queue {default|ai|browser}
 └── tests/
@@ -1166,11 +1168,12 @@ Schedule(cron) 등록은 `schedule.py`의 `ensure_job_collection_schedule`/`dele
 + `cli.py collect-schedule`/`collect-unschedule`로 배선했다. `ensure_job_collection_schedule`는
 create-or-update다 — `client.create_schedule()`이 `ScheduleAlreadyRunningError`를 던지면(이미
 등록돼 있으면) `ScheduleHandle.update()`로 덮어쓴다. 몇 번을 실행해도 최종 상태가 같아서(idempotent),
-배포 스크립트가 매번 무조건 호출해도 안전하다. cron 표현식과 플랫폼 목록은
-`JOB_COLLECTION_CRON`/`JOB_COLLECTION_PLATFORMS` 환경변수(`config.py`)로 정하고, 겹쳐 도는 걸
-막기 위해 `SchedulePolicy(overlap=SKIP)`을 쓴다(재시도 단위가 "플랫폼 전체"라 겹쳐 돌면 같은
-공고를 두 activity가 동시에 upsert할 수 있어서다 — `JobRepository.upsert()`가 멱등이라 깨지진
-않지만 막을 이유가 있다).
+배포 스크립트가 매번 무조건 호출해도 안전하다. cron 표현식과 플랫폼 목록은 `schedule.py` 자신은
+모른다(순수하게 인자로 받는다) — `schedule_config.py`가 DB(`ScheduleConfig`, §11.2f) 또는
+`.env`(DB가 비어 있을 때의 최초 시드)에서 읽어 넘긴다. 겹쳐 도는 걸 막기 위해
+`SchedulePolicy(overlap=SKIP)`을 쓴다(재시도 단위가 "플랫폼 전체"라 겹쳐 돌면 같은 공고를 두
+activity가 동시에 upsert할 수 있어서다 — `JobRepository.upsert()`가 멱등이라 깨지진 않지만
+막을 이유가 있다).
 
 수동 1회 실행(`uv run python -m auto_apply.cli collect --platforms wanted,saramin`)은 여전히
 유효하다 — Schedule은 "누가/언제 시작하는지"만 바꾸고 워크플로우 자체는 그대로다.
@@ -1395,32 +1398,57 @@ child workflow 로 묶을 이유가 없었다 — activity 자체가 이미 실�
 단위다(개별 시작은 `WorkflowAlreadyStartedError`로 걸러지므로 전체를 재시도해도 중복
 시작되지 않는다).
 
-**Schedule 등록/삭제.** `schedule.py`의 `build_apply_intake_schedule`/`ensure_apply_intake_schedule`/
-`delete_apply_intake_schedule` + `cli.py apply-schedule`/`apply-unschedule`로, §11.2b의
-job-collection Schedule과 완전히 같은 모양(create-or-update, `SchedulePolicy(overlap=SKIP)`)을
-반복한다. cron/건수는 `APPLY_SCHEDULE_CRON`(기본 `0 10 * * *`)/`APPLY_SCHEDULE_COUNT`(기본
-3)로 정한다 — 기본 시각을 `JOB_COLLECTION_CRON`(기본 `0 9 * * *`) 한 시간 뒤로 잡은 건 그날
-수집분이 곧바로 후보에 잡히게 순서를 맞추려는 것뿐, 안전장치는 아니다(JOB_CACHE_TTL=24시간
-이라 순서가 안 맞아도 다음날 안에는 잡힌다).
+**Schedule 등록/갱신/삭제.** `schedule.py`의 `build_apply_intake_schedule`/
+`ensure_apply_intake_schedule`/`delete_apply_intake_schedule`가, §11.2b의 job-collection
+Schedule과 완전히 같은 모양(create-or-update, `SchedulePolicy(overlap=SKIP)`)을 반복한다.
+`cron: str`/`count: int`를 인자로 그대로 받을 뿐 `Settings`를 보지 않는다 — 아래 문단대로
+그 값의 원천이 `.env`에서 DB로 옮겨가면서, 이 모듈이 굳이 그 출처를 알 이유가 없어졌다.
 
-**봇에서 켜고 끄기 — cron/건수는 채팅으로 안 바꾼다.** 요청 자체("몇시 몇건")는 시각·건수
-설정을 원했지만, 그 값을 채팅 자유 텍스트로 파싱시키면(cron 표현식을 LLM이 뽑아내야 함)
-실패·오해석 위험이 텔레그램 채팅 에이전트의 기존 설계 원칙("AI는 생성만, 판정·조합은
-코드")과 맞지 않는다고 판단했다(2026-08-22) — 그래서 cron/건수는 `.env`로 고정하고, 봇은
-이미 등록된 Schedule 을 pause/unpause 하는 on/off 스위치만 쥔다. 새 도구 두 개
-(`telegram/_agent_tools_schedule.py`, `TOOLS` 에 병합):
-`schedule_status`(두 Schedule 의 켜짐/꺼짐·cron·다음 실행 시각을 본다)와
-`set_schedule_enabled(target, enabled)`(공고 수집/자동 지원 각각을 켜거나 끈다 — 끄기는
-`ScheduleHandle.pause()`, 켜기는 `ensure_*_schedule`로 최신 `.env` 설정을 다시 심고
-`unpause()`한다). `_agent_tools.py`가 아니라 별도 파일로 뺀 이유는 그 파일이 이미
-200줄을 넘어가고 있었기 때문이다(§ CLAUDE.md "한 파일 = 한 책임").
+**시각/건수를 채팅으로 바꾼다 — DB 테이블이 원천, `.env`는 최초 시드일 뿐.** 처음엔
+"채팅으로 cron 표현식을 파싱시키면 실패 위험이 크다"는 이유로 cron/건수를 `.env`에
+고정하고 봇은 on/off 스위치만 쥐게 했는데, 구현 직후 사용자가 바로 정정했다 — "cron으로
+하지 말고 서버에서 하면 설정파일 건드릴 필요도 없지 않냐"(2026-08-22). 정정된 요구는
+"LLM이 cron 문법을 만들면 안 된다"는 우려 자체는 그대로 인정하면서(그래서 `hour`/`minute`
+정수는 여전히 채팅에서 온다), "그 값을 `.env` 파일에 저장해서 재배포/재시작을 강제하지
+말라"는 것이었다 — 그래서 새 `ScheduleConfig`(`contracts/dto.py`) + `ScheduleConfigRepository`
+port(target당 최신값 1행, `ports/repository.py`의 `UnitOfWork.schedule_config`)를 만들어
+memory/file/postgres 세 구현(`adapters/repository/*.py`, `schedule_configs` 테이블 —
+`alembic/versions/05f35d5ad3d7_...`)을 얹었다. `domain/schedule_cron.build_cron(hour,
+minute)`(순수 함수)가 여전히 "AI는 정수만, cron 조립은 코드" 경계를 지킨다 — 달라진 건
+그 결과값을 어디 저장하느냐뿐이다.
 
-실측(2026-08-22, 라이브 Temporal 서버로 등록 후 `describe()` 확인): 서버는
-`ScheduleSpec.cron_expressions`를 등록 시점의 표현식 그대로 돌려주지 않는다 — 내부
-캘린더 스펙으로 컴파일하며 이 필드를 비워버려서 `desc.schedule.spec.cron_expressions`를
-그대로 읽으면 항상 빈 리스트다. `schedule_status`는 그래서 cron 문자열을 서버에 되묻지
-않고 `c.settings`(우리가 등록에 쓴 그 값)를 그대로 보여준다 — `next_action_times`(다음
-실행 시각)는 서버가 정상적으로 계산해 돌려주므로 그건 그대로 읽는다.
+`schedule_config.py`(운영 진입점, `cli.py`/`watchdog.py`와 같은 층)가 DB와 `schedule.py`를
+잇는다: `load_or_seed(c, target)`는 DB에 값이 있으면 그대로, 없으면 `.env`
+(`JOB_COLLECTION_CRON`/`APPLY_SCHEDULE_CRON` 등)로 만들어 저장한 뒤 돌려준다 — `.env`는
+그래서 "DB가 한 번도 안 채워졌을 때의 최초 기본값"으로만 남는다. `save_and_push(c, client,
+config)`는 DB에 먼저 쓰고 나서 `schedule.py`의 `ensure_*_schedule`로 Temporal에 반영한다
+(순서가 중요하다 — 재시작해도 DB 값이 남아야 한다). `cli.py collect-schedule`/`apply-schedule`
+은 `ensure(c, client, target)`(load_or_seed + push)로 재구현했다 — 처음 배포할 때 한 번
+실행해 DB를 채우는 용도로만 남았고, 그 뒤로는 다시 실행할 필요가 없다.
+
+**봇 도구 세 개** (`telegram/_agent_tools_schedule.py`, `TOOLS`에 병합 — `_agent_tools.py`가
+이미 200줄을 넘어가서 분리, § CLAUDE.md "한 파일 = 한 책임"):
+`schedule_status`(두 Schedule의 켜짐/꺼짐·시각·다음 실행 시각·건수/플랫폼을 본다),
+`set_schedule_enabled(target, enabled)`(시각/건수는 그대로 두고 on/off만 — 끄기는
+`ScheduleHandle.pause()`, 켜기는 `ensure()`로 DB/시드값을 다시 심고 `unpause()`한다),
+`set_schedule_time(target, hour, minute, count)`(DB에 쓰고 즉시 Temporal에 반영 — `.env`도
+재배포도 필요 없다). target=collection의 `platforms`는 여전히 채팅으로 못 바꾼다(범위를
+의도적으로 좁혔다 — 사용자가 요청한 두 레버는 "몇시 몇건"이었다).
+
+**실측 함정 둘.**
+1. (2026-08-22, 라이브 Temporal 서버로 등록 후 `describe()` 확인) 서버는
+   `ScheduleSpec.cron_expressions`를 등록 시점의 표현식 그대로 돌려주지 않는다 — 내부
+   캘린더 스펙으로 컴파일하며 이 필드를 비워버린다. DB를 원천으로 옮기면서 자연히 해소됐다
+   — `schedule_status`는 이제 cron을 Temporal에 아예 안 묻고 DB 값을 그대로 보여준다.
+   `next_action_times`(다음 실행 시각)는 서버가 정상적으로 계산해 돌려주므로 그건 여전히
+   Temporal에서 읽는다.
+2. `ScheduleUpdate(schedule=schedule)`의 `schedule`은 매 호출 새로 지은 객체라
+   `state.paused` 기본값이 `False`다 — 그래서 `handle.update()`만 부르면 꺼둔 Schedule이
+   시각/건수만 바꿔도 조용히 다시 켜진다. `set_schedule_time`이 잦아지면서(전엔 온/오프
+   토글만 있어 덜 드러났다) 실측으로 발견 — `schedule.py._create_or_update`가 update 전
+   `paused` 여부를 읽어두고, 꺼져 있었으면 update 뒤에 다시 `pause()`해 복원한다
+   (`tests/test_schedule.py::test_ensure_update_preserves_paused_state`가 실제 Temporal로
+   이 회귀를 고정한다).
 
 ### 11.3 Temporal에서의 주입 — activity가 곧 seam
 

@@ -16,12 +16,12 @@ from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
 from auto_apply.adapters.repository.models import Base
 from auto_apply.adapters.repository.postgres import SqlAlchemyUnitOfWork, build_engine
 from auto_apply.config import Settings
-from auto_apply.contracts.dto import ApplicationAttempt, PersistState
+from auto_apply.contracts.dto import ApplicationAttempt, PersistState, ScheduleConfig
 from auto_apply.contracts.job import ApplicabilityVerdict, JobPosting, JobRecord, ScreeningVerdict
 from auto_apply.domain.enums import ApplicationState, AttemptOutcome, ExecutionMode
 from auto_apply.ports.repository import UnitOfWork
 
-_PG_TABLES = "application_state_history, jobs, application_attempts"
+_PG_TABLES = "application_state_history, jobs, application_attempts, schedule_configs"
 
 
 @pytest.fixture(params=["memory", "file", pytest.param("postgres", marks=pytest.mark.integration)])
@@ -30,7 +30,8 @@ async def uow_factory(request: pytest.FixtureRequest, tmp_path):
         rows: dict = {}
         job_rows: dict = {}
         attempt_rows: dict = {}
-        yield lambda: InMemoryUnitOfWork(rows, job_rows, attempt_rows)
+        schedule_config_rows: dict = {}
+        yield lambda: InMemoryUnitOfWork(rows, job_rows, attempt_rows, schedule_config_rows)
         return
     if request.param == "file":
         yield lambda: FileUnitOfWork(tmp_path)
@@ -358,3 +359,45 @@ async def test_actionable_is_platform_scoped_correctly(uow_factory):
         ("wanted", "1"),
         ("saramin", "1"),
     }
+
+
+async def test_schedule_config_unknown_target_returns_none(uow_factory):
+    async with uow_factory() as uow:
+        assert await uow.schedule_config.get("apply") is None
+
+
+async def test_schedule_config_set_then_get_roundtrips(uow_factory):
+    config = ScheduleConfig(target="apply", hour=14, minute=30, count=5)
+    async with uow_factory() as uow:
+        await uow.schedule_config.set(config)
+        await uow.commit()
+    async with uow_factory() as uow:
+        got = await uow.schedule_config.get("apply")
+    assert got == config
+
+
+async def test_schedule_config_set_overwrites_previous_value_for_same_target(uow_factory):
+    """멱등 upsert — target당 최신값 1건만 남는다(이력 아님)."""
+    async with uow_factory() as uow:
+        await uow.schedule_config.set(ScheduleConfig(target="collection", hour=9, minute=0))
+        await uow.commit()
+    async with uow_factory() as uow:
+        await uow.schedule_config.set(
+            ScheduleConfig(target="collection", hour=11, minute=30, platforms=["wanted"])
+        )
+        await uow.commit()
+    async with uow_factory() as uow:
+        got = await uow.schedule_config.get("collection")
+    assert got == ScheduleConfig(target="collection", hour=11, minute=30, platforms=["wanted"])
+
+
+async def test_schedule_config_targets_are_independent(uow_factory):
+    async with uow_factory() as uow:
+        await uow.schedule_config.set(ScheduleConfig(target="collection", hour=9, minute=0))
+        await uow.schedule_config.set(ScheduleConfig(target="apply", hour=10, minute=0, count=3))
+        await uow.commit()
+    async with uow_factory() as uow:
+        collection = await uow.schedule_config.get("collection")
+        apply = await uow.schedule_config.get("apply")
+    assert collection is not None and collection.hour == 9
+    assert apply is not None and apply.hour == 10 and apply.count == 3

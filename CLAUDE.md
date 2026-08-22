@@ -440,3 +440,25 @@ Temporal 서버): `describe()`가 돌려주는 `spec.cron_expressions`는 서버
 스펙으로 컴파일하며 비워버려서, `schedule_status`는 그 필드 대신 `c.settings`에 있는 등록값을
 그대로 보여준다. 구현·유닛/워크플로우/실제 Temporal 라이브 등록·`make check` 통과 완료.
 자세한 설계는 ARCHITECTURE.md §11.2f.
+
+**공고수집·자동지원 Schedule 설정을 DB로 이관** — 위 구현 직후 사용자가 즉시 정정했다:
+"cron으로 하지 말고 서버에서 하면 설정파일 건드릴 필요도 없지 않냐" → "db테이블 하나 만들면
+되고"(2026-08-22, 같은 세션). cron/건수를 `.env` 고정 + 봇은 on/off만 하던 걸, 시각(hour/
+minute)·건수까지 채팅으로 바꾸도록 확장했다 — LLM이 cron 문법을 직접 만들면 안 된다는 원래
+우려는 유지한다(`domain/schedule_cron.build_cron(hour, minute)`, 순수 함수가 여전히 조립을
+전담). 새 `ScheduleConfig`(target당 최신값 1건) + `ScheduleConfigRepository` port를
+`UnitOfWork`에 4번째 sub-repository로 추가해 memory/file/postgres 세 구현(+ Alembic
+`schedule_configs` 테이블)을 얹었다. `schedule_config.py`(신설, 운영 진입점)가 "DB에 있으면
+그 값, 없으면 `.env` 시드값으로 최초 1회 생성"(`load_or_seed`) → "DB에 먼저 쓰고 Temporal에
+반영"(`save_and_push`)을 담당해, `.env`는 이제 최초 배포 시드로만 남는다. `schedule.py`의
+`build_*_schedule`/`ensure_*_schedule`는 `Settings` 의존을 걷어내고 `cron: str`/`count: int`
+같은 순수 인자만 받도록 리팩터했다. 채팅 도구가 하나 늘었다 — `set_schedule_time(target,
+hour, minute, count)`. 이 작업 중 라이브로 실측한 버그 둘: (1) `ScheduleDescription`이
+돌려주는 `spec.cron_expressions`는 서버가 내부 캘린더 스펙으로 컴파일하며 비워버려서(첫
+구현에서 `.env` 값을 대신 보여주는 우회로 넘어갔던 지점인데, DB 이관으로 그 우회 자체가
+자연스러운 설계가 됐다), (2) `ScheduleHandle.update()`에 넘기는 `Schedule` 객체의 `state.paused`
+기본값이 `False`라 시각/건수만 바꿔도 꺼둔 스케줄이 조용히 다시 켜지는 문제 — `_create_or_update`
+가 update 전 paused 여부를 읽어두고 필요하면 update 뒤에 다시 pause() 하는 것으로 고쳤다
+(`test_ensure_update_preserves_paused_state`, 실제 Temporal로 검증). 구현·contract test(3
+백엔드)·Alembic 마이그레이션 upgrade/downgrade 왕복·유닛/통합 테스트·`make check` 통과 완료.
+자세한 설계는 ARCHITECTURE.md §11.2f(갱신본).

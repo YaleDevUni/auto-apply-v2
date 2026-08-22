@@ -56,7 +56,7 @@ from auto_apply.adapters.storage.s3 import S3BlobStore
 from auto_apply.adapters.web_agent.aside_cli import AsideCliExecutor
 from auto_apply.adapters.web_agent.replay import ReplayWebAgentExecutor
 from auto_apply.config import Settings
-from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.dto import ApplicationAttempt, PersistState, ScheduleConfig
 from auto_apply.contracts.job import JobRecord
 from auto_apply.ports.attachments import AttachmentRegistry
 from auto_apply.ports.checkpoint_store import CheckpointStore
@@ -164,9 +164,16 @@ def _build_notifier(cfg: Settings, idgen: IdGen, store: BlobStore) -> Notifier:
 def _build_uow(cfg: Settings) -> Callable[[], UnitOfWork]:
     match cfg.repository:
         case "memory":
+            # 세 dict 모두 이 클로저 밖(함수 스코프)에서 한 번만 만들어 공유해야 한다 —
+            # InMemoryUnitOfWork 생성자에 안 넘긴 인자는 호출마다 빈 dict 로 기본값이 채워져서,
+            # 서로 다른 `c.uow()` 호출 사이에 쓴 값이 사라진다(schedule_config 추가하며 발견 —
+            # attempt_rows 도 원래부터 이 버그였다, REPOSITORY=memory 를 실제로 쓴 적이 없어서
+            # 안 드러났을 뿐).
             rows: dict[str, list[PersistState]] = {}
             job_rows: dict[tuple[str, str], JobRecord] = {}
-            return lambda: InMemoryUnitOfWork(rows, job_rows)
+            attempt_rows: dict[str, list[ApplicationAttempt]] = {}
+            schedule_config_rows: dict[str, ScheduleConfig] = {}
+            return lambda: InMemoryUnitOfWork(rows, job_rows, attempt_rows, schedule_config_rows)
         case "file":
             root = cfg.data_dir
             return lambda: FileUnitOfWork(root)

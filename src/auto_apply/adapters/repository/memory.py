@@ -1,13 +1,19 @@
 from types import TracebackType
 from typing import Self
 
-from auto_apply.contracts.dto import ApplicationAttempt, ApplicationSummary, PersistState
+from auto_apply.contracts.dto import (
+    ApplicationAttempt,
+    ApplicationSummary,
+    PersistState,
+    ScheduleConfig,
+)
 from auto_apply.contracts.job import JobRecord
 from auto_apply.domain.enums import ApplicationState
 
 Rows = dict[str, list[PersistState]]
 JobRows = dict[tuple[str, str], JobRecord]
 AttemptRows = dict[str, list[ApplicationAttempt]]
+ScheduleConfigRows = dict[str, ScheduleConfig]
 
 
 def _summary(application_id: str, latest: PersistState) -> ApplicationSummary:
@@ -78,16 +84,31 @@ class InMemoryAttemptRepository:
         return list(self._rows.get(application_id, []))
 
 
+class InMemoryScheduleConfigRepository:
+    def __init__(self, rows: ScheduleConfigRows) -> None:
+        self._rows = rows
+
+    async def get(self, target: str) -> ScheduleConfig | None:
+        return self._rows.get(target)
+
+    async def set(self, config: ScheduleConfig) -> None:
+        self._rows[config.target] = config
+
+
 class InMemoryUnitOfWork:
     def __init__(
         self,
         rows: Rows,
         job_rows: JobRows | None = None,
         attempt_rows: AttemptRows | None = None,
+        schedule_config_rows: ScheduleConfigRows | None = None,
     ) -> None:
         self.applications = InMemoryApplicationRepository(rows)
         self.jobs = InMemoryJobRepository(job_rows if job_rows is not None else {})
         self.attempts = InMemoryAttemptRepository(attempt_rows if attempt_rows is not None else {})
+        self.schedule_config = InMemoryScheduleConfigRepository(
+            schedule_config_rows if schedule_config_rows is not None else {}
+        )
 
     async def __aenter__(self) -> Self:
         return self

@@ -1,6 +1,7 @@
 """워크플로우 입출력 타입. workflow 파일이 import 해도 안전한 유일한 데이터 계층."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,6 +51,22 @@ class ApplyIntakeResult(_Frozen):
     started: list[str] = Field(default_factory=list)
     skipped: list[str] = Field(default_factory=list)
     candidates: int = 0
+
+
+class ScheduleConfig(_Frozen):
+    """공고 수집/자동 지원 Schedule 하나의 설정(§ apply-schedule). `.env`가 아니라 DB에
+
+    산다(`ScheduleConfigRepository`) — 채팅으로 시각/건수를 바꾸면 재배포 없이 바로 반영되게
+    하려는 선택(2026-08-22, "cron으로 하지말고 서버에서 하면 설정파일 건드릴 필요 없다"는
+    사용자 요청). `count`는 target="apply"에서만, `platforms`는 target="collection"에서만 쓴다
+    — 둘을 한 모델에 담은 건 두 target이 hour/minute 만큼은 완전히 같은 모양이라서다.
+    """
+
+    target: Literal["collection", "apply"]
+    hour: int = Field(ge=0, le=23)
+    minute: int = Field(default=0, ge=0, le=59)
+    count: int | None = Field(default=None, ge=1)
+    platforms: list[str] | None = None
 
 
 class JobRef(_Frozen):

@@ -1,6 +1,7 @@
-"""JobCollectionWorkflow/ApplyIntakeWorkflow 를 주기 실행하는 Schedule (ARCHITECTURE.md §11.2b,
+"""JobCollectionWorkflow/ApplyIntakeWorkflow 를 주기 실행하는 Temporal Schedule (ARCHITECTURE.md
 
-§ apply-schedule).
+§11.2b, §11.2f). 이 모듈은 cron/건수/플랫폼을 스스로 정하지 않는다 — 호출부(`schedule_config.py`)가
+DB나 `.env` 시드값에서 읽어 그대로 넘긴다(§ apply-schedule 상단 docstring).
 
 `build_*_schedule`는 순수 함수라 Temporal 없이 바로 검증한다. `ensure_*_schedule`/
 `delete_*_schedule`는 실제 Schedule RPC 가 필요한데, time-skipping test server(§ test_ping.py)는
@@ -13,7 +14,6 @@ import pytest
 from temporalio.client import ScheduleOverlapPolicy
 from temporalio.testing import WorkflowEnvironment
 
-from auto_apply.config import Settings
 from auto_apply.contracts.dto import ApplyIntakeInput
 from auto_apply.contracts.job import CollectJobsInput
 from auto_apply.schedule import (
@@ -29,13 +29,8 @@ from auto_apply.schedule import (
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_DEFAULT
 
 
-def _cfg(**overrides: object) -> Settings:
-    base = {"job_collection_cron": "0 9 * * *", "job_collection_platforms": "wanted,saramin"}
-    return Settings(**{**base, **overrides})
-
-
-def test_build_schedule_uses_configured_cron_and_platforms():
-    schedule = build_job_collection_schedule(_cfg())
+def test_build_schedule_uses_given_cron_and_platforms():
+    schedule = build_job_collection_schedule("0 9 * * *", ["wanted", "saramin"])
 
     assert schedule.spec.cron_expressions == ["0 9 * * *"]
     assert schedule.action.task_queue == QUEUE_DEFAULT
@@ -44,26 +39,19 @@ def test_build_schedule_uses_configured_cron_and_platforms():
     assert schedule.policy.overlap is ScheduleOverlapPolicy.SKIP
 
 
-def test_build_schedule_strips_whitespace_in_platform_list():
-    schedule = build_job_collection_schedule(
-        _cfg(job_collection_platforms="wanted, saramin , jasoseol")
-    )
-
-    assert schedule.action.args == [CollectJobsInput(platforms=["wanted", "saramin", "jasoseol"])]
-
-
 @pytest.mark.integration
 async def test_ensure_creates_then_updates_and_delete_removes_it():
     async with await WorkflowEnvironment.start_local(data_converter=DATA_CONVERTER) as env:
         client = env.client
-        cfg = _cfg()
 
-        assert await ensure_job_collection_schedule(client, cfg) == "created"
+        assert await ensure_job_collection_schedule(client, "0 9 * * *", ["wanted"]) == "created"
         # 재실행해도 두 번째부터는 업데이트다 — 몇 번을 실행해도 안전해야 한다.
-        assert await ensure_job_collection_schedule(client, cfg) == "updated"
+        assert await ensure_job_collection_schedule(client, "0 9 * * *", ["wanted"]) == "updated"
 
-        updated_cfg = cfg.model_copy(update={"job_collection_platforms": "wanted,saramin,jasoseol"})
-        assert await ensure_job_collection_schedule(client, updated_cfg) == "updated"
+        outcome = await ensure_job_collection_schedule(
+            client, "0 9 * * *", ["wanted", "saramin", "jasoseol"]
+        )
+        assert outcome == "updated"
 
         handle = client.get_schedule_handle(JOB_COLLECTION_SCHEDULE_ID)
         desc = await handle.describe()
@@ -75,10 +63,28 @@ async def test_ensure_creates_then_updates_and_delete_removes_it():
             await handle.describe()
 
 
-def test_build_apply_intake_schedule_uses_configured_cron_and_count():
-    schedule = build_apply_intake_schedule(
-        _cfg(apply_schedule_cron="0 10 * * *", apply_schedule_count=5)
-    )
+@pytest.mark.integration
+async def test_ensure_update_preserves_paused_state():
+    """시각/건수만 바꾸는 update가 꺼둔 Schedule을 조용히 다시 켜면 안 된다(§ apply-schedule).
+
+    `Schedule(state=...)`의 기본값은 unpaused라 매번 새로 지은 Schedule 객체로 그대로 update
+    하면 이 회귀가 재현된다.
+    """
+    async with await WorkflowEnvironment.start_local(data_converter=DATA_CONVERTER) as env:
+        client = env.client
+
+        await ensure_job_collection_schedule(client, "0 9 * * *", ["wanted"])
+        handle = client.get_schedule_handle(JOB_COLLECTION_SCHEDULE_ID)
+        await handle.pause(note="test")
+        assert (await handle.describe()).schedule.state.paused is True
+
+        await ensure_job_collection_schedule(client, "0 11 * * *", ["wanted"])
+
+        assert (await handle.describe()).schedule.state.paused is True
+
+
+def test_build_apply_intake_schedule_uses_given_cron_and_count():
+    schedule = build_apply_intake_schedule("0 10 * * *", 5)
 
     assert schedule.spec.cron_expressions == ["0 10 * * *"]
     assert schedule.action.task_queue == QUEUE_DEFAULT
@@ -91,13 +97,10 @@ def test_build_apply_intake_schedule_uses_configured_cron_and_count():
 async def test_ensure_apply_intake_creates_then_updates_and_delete_removes_it():
     async with await WorkflowEnvironment.start_local(data_converter=DATA_CONVERTER) as env:
         client = env.client
-        cfg = _cfg(apply_schedule_cron="0 10 * * *", apply_schedule_count=3)
 
-        assert await ensure_apply_intake_schedule(client, cfg) == "created"
-        assert await ensure_apply_intake_schedule(client, cfg) == "updated"
-
-        updated_cfg = cfg.model_copy(update={"apply_schedule_count": 7})
-        assert await ensure_apply_intake_schedule(client, updated_cfg) == "updated"
+        assert await ensure_apply_intake_schedule(client, "0 10 * * *", 3) == "created"
+        assert await ensure_apply_intake_schedule(client, "0 10 * * *", 3) == "updated"
+        assert await ensure_apply_intake_schedule(client, "0 10 * * *", 7) == "updated"
 
         handle = client.get_schedule_handle(APPLY_INTAKE_SCHEDULE_ID)
         desc = await handle.describe()

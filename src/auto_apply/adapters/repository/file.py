@@ -11,7 +11,12 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
-from auto_apply.contracts.dto import ApplicationAttempt, ApplicationSummary, PersistState
+from auto_apply.contracts.dto import (
+    ApplicationAttempt,
+    ApplicationSummary,
+    PersistState,
+    ScheduleConfig,
+)
 from auto_apply.contracts.job import JobRecord
 from auto_apply.domain.enums import ApplicationState
 
@@ -171,11 +176,42 @@ class FileAttemptRepository:
         return await asyncio.to_thread(self._read, self._path(application_id))
 
 
+class FileScheduleConfigRepository:
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self._lock = asyncio.Lock()
+
+    def _path(self, target: str) -> Path:
+        safe = target.replace("/", "_")
+        return self._root / "schedule_config" / f"{safe}.json"
+
+    async def get(self, target: str) -> ScheduleConfig | None:
+        return await asyncio.to_thread(self._read, self._path(target))
+
+    def _read(self, path: Path) -> ScheduleConfig | None:
+        if not path.is_file():
+            return None
+        return ScheduleConfig.model_validate(json.loads(path.read_text()))
+
+    async def set(self, config: ScheduleConfig) -> None:
+        path = self._path(config.target)
+
+        def _write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(config.model_dump(mode="json"), indent=2))
+            tmp.replace(path)  # 원자적 교체
+
+        async with self._lock:
+            await asyncio.to_thread(_write)
+
+
 class FileUnitOfWork:
     def __init__(self, root: Path) -> None:
         self.applications = FileApplicationRepository(root)
         self.jobs = FileJobRepository(root)
         self.attempts = FileAttemptRepository(root)
+        self.schedule_config = FileScheduleConfigRepository(root)
 
     async def __aenter__(self) -> Self:
         return self

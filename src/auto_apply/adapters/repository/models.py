@@ -56,3 +56,16 @@ class ApplicationAttemptRow(Base):
     application_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False)
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+
+class ScheduleConfigRow(Base):
+    """`ScheduleConfig` 최신값 1건 (§ apply-schedule). target(`"collection"`/`"apply"`) 이
+
+    유일키다 — 이력이 아니라 "현재 설정"만 필요해서 다른 테이블처럼 upsert 대상 컬럼을
+    따로 안 뺐다(payload 전체가 곧 조회 대상이다).
+    """
+
+    __tablename__ = "schedule_configs"
+
+    target: Mapped[str] = mapped_column(String, primary_key=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)

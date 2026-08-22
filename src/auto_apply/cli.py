@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 from temporalio.client import Client
 
+from auto_apply.bootstrap import build_container
 from auto_apply.config import load_settings
 from auto_apply.contracts.dto import (
     ApproveSignal,
@@ -19,12 +20,8 @@ from auto_apply.contracts.dto import (
     StartApplication,
 )
 from auto_apply.contracts.job import CollectJobsInput
-from auto_apply.schedule import (
-    delete_apply_intake_schedule,
-    delete_job_collection_schedule,
-    ensure_apply_intake_schedule,
-    ensure_job_collection_schedule,
-)
+from auto_apply.schedule import delete_apply_intake_schedule, delete_job_collection_schedule
+from auto_apply.schedule_config import ensure as ensure_schedule
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_DEFAULT
 from auto_apply.workflows.application import ApplicationWorkflow
 from auto_apply.workflows.job_collection import JobCollectionWorkflow
@@ -65,10 +62,12 @@ async def _run(args: argparse.Namespace) -> None:
         return
 
     if args.command == "collect-schedule":
-        outcome = await ensure_job_collection_schedule(client, cfg)
-        print(
-            f"{outcome}: cron='{cfg.job_collection_cron}' platforms={cfg.job_collection_platforms}"
-        )
+        # DB(ScheduleConfig)에 이미 값이 있으면 그걸 쓰고, 없으면 .env 시드값으로 처음
+        # 만든다(schedule_config.py) — 그 뒤로는 텔레그램으로 시각/건수를 바꿔도 이 명령을
+        # 다시 실행할 필요가 없다(§ apply-schedule).
+        container = build_container(cfg)
+        outcome, config = await ensure_schedule(container, client, "collection")
+        print(f"{outcome}: {config.hour:02d}:{config.minute:02d} platforms={config.platforms}")
         return
 
     if args.command == "collect-unschedule":
@@ -77,8 +76,9 @@ async def _run(args: argparse.Namespace) -> None:
         return
 
     if args.command == "apply-schedule":
-        outcome = await ensure_apply_intake_schedule(client, cfg)
-        print(f"{outcome}: cron='{cfg.apply_schedule_cron}' count={cfg.apply_schedule_count}")
+        container = build_container(cfg)
+        outcome, config = await ensure_schedule(container, client, "apply")
+        print(f"{outcome}: {config.hour:02d}:{config.minute:02d} count={config.count}")
         return
 
     if args.command == "apply-unschedule":

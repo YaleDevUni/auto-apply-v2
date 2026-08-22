@@ -18,7 +18,11 @@ from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.bootstrap import Container
 from auto_apply.config import Settings
 from auto_apply.schedule import APPLY_INTAKE_SCHEDULE_ID, JOB_COLLECTION_SCHEDULE_ID
-from auto_apply.telegram._agent_tools_schedule import _schedule_status, _set_schedule_enabled
+from auto_apply.telegram._agent_tools_schedule import (
+    _schedule_status,
+    _set_schedule_enabled,
+    _set_schedule_time,
+)
 from auto_apply.telegram.agent import handle_chat
 from tests.conftest import Harness
 from tests.telegram.test_agent import _FakeNotifier
@@ -29,10 +33,10 @@ def _not_found() -> RPCError:
 
 
 class _FakeScheduleHandle:
-    def __init__(self, *, exists: bool, cron: str = "0 9 * * *") -> None:
+    def __init__(self, *, exists: bool) -> None:
         self.exists = exists
         self.paused = False
-        self.cron = cron
+        self.schedule: object | None = None  # 마지막으로 create/update 된 실제 Schedule 객체
         self.pause_notes: list[str | None] = []
         self.unpause_notes: list[str | None] = []
 
@@ -40,10 +44,7 @@ class _FakeScheduleHandle:
         if not self.exists:
             raise _not_found()
         return SimpleNamespace(
-            schedule=SimpleNamespace(
-                state=SimpleNamespace(paused=self.paused),
-                spec=SimpleNamespace(cron_expressions=[self.cron]),
-            ),
+            schedule=SimpleNamespace(state=SimpleNamespace(paused=self.paused)),
             info=SimpleNamespace(next_action_times=[]),
         )
 
@@ -58,7 +59,11 @@ class _FakeScheduleHandle:
         self.unpause_notes.append(note)
 
     async def update(self, updater) -> None:
-        self.exists = True
+        # 실제 Temporal 처럼: update 는 새 Schedule 객체를 통째로 심고, 그 객체의 기본
+        # state.paused 는 False 다 — schedule.py._create_or_update 가 이 뒤에 명시적으로
+        # 다시 pause() 하지 않으면 꺼둔 스케줄이 조용히 켜진다(실측, § apply-schedule).
+        self.schedule = updater(None).schedule
+        self.paused = False
 
 
 class _FakeClient:
@@ -74,11 +79,12 @@ class _FakeClient:
     def get_schedule_handle(self, schedule_id: str) -> _FakeScheduleHandle:
         return self._handles.setdefault(schedule_id, _FakeScheduleHandle(exists=False))
 
-    async def create_schedule(self, schedule_id: str, _schedule) -> None:
+    async def create_schedule(self, schedule_id: str, schedule) -> None:
         handle = self.get_schedule_handle(schedule_id)
         if handle.exists:
             raise ScheduleAlreadyRunningError
         handle.exists = True
+        handle.schedule = schedule
 
 
 def _container() -> Container:
@@ -138,6 +144,62 @@ async def test_enable_unknown_target_is_rejected():
     )
 
     assert "collection" in result and "apply" in result
+
+
+async def test_set_schedule_time_persists_to_db_and_pushes_to_temporal():
+    c = _container()
+
+    result = await _set_schedule_time(
+        {"target": "apply", "hour": "14", "minute": "30", "count": "5"}, c, _FakeClient()
+    )
+
+    assert "14:30" in result
+    async with c.uow() as uow:
+        saved = await uow.schedule_config.get("apply")
+    assert saved is not None
+    assert (saved.hour, saved.minute, saved.count) == (14, 30, 5)
+
+
+async def test_set_schedule_time_keeps_existing_count_when_omitted():
+    c = _container()
+    client = _FakeClient()
+    await _set_schedule_time({"target": "apply", "hour": "9", "count": "7"}, c, client)
+
+    await _set_schedule_time({"target": "apply", "hour": "11"}, c, client)
+
+    async with c.uow() as uow:
+        saved = await uow.schedule_config.get("apply")
+    assert saved is not None
+    assert (saved.hour, saved.count) == (11, 7)  # count 는 그대로 유지
+
+
+async def test_set_schedule_time_does_not_silently_reenable_a_paused_schedule():
+    c = _container()
+    client = _FakeClient()
+    await _set_schedule_enabled({"target": "apply", "enabled": "true"}, c, client)
+    await _set_schedule_enabled({"target": "apply", "enabled": "false"}, c, client)
+    handle = client.get_schedule_handle(APPLY_INTAKE_SCHEDULE_ID)
+    assert handle.paused is True
+
+    await _set_schedule_time({"target": "apply", "hour": "15"}, c, client)
+
+    assert handle.paused is True  # 시각만 바뀌었을 뿐 꺼진 상태는 유지된다
+
+
+async def test_set_schedule_time_rejects_out_of_range_hour():
+    result = await _set_schedule_time(
+        {"target": "apply", "hour": "24", "minute": "0"}, _container(), _FakeClient()
+    )
+
+    assert "0~23" in result
+
+
+async def test_set_schedule_time_rejects_non_numeric_hour():
+    result = await _set_schedule_time(
+        {"target": "apply", "hour": "오후", "minute": "0"}, _container(), _FakeClient()
+    )
+
+    assert "숫자" in result
 
 
 async def test_schedule_status_tool_is_wired_into_chat_agent():
