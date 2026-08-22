@@ -2,7 +2,7 @@
 
 `start_actionable_applications`: TTL 필터링, 적합도 정렬, count 상한, canonical_key 기반
 중복지원 방어(WorkflowAlreadyStartedError → skip), application_state_history 기반 사전
-상태 필터(REJECTED 는 후순위, 그 외 기존 이력은 제외).
+상태 필터(REJECTED/NEEDS_HUMAN 은 후순위, 그 외 기존 이력은 제외).
 `apply_by_url`: 사용자가 직접 지정한 URL 1건 → 플랫폼 확인(wanted 한정) → fetch_job →
 canonical_key dedupe → 워크플로우 시작.
 실제 Temporal 없이 `_FakeClient.start_workflow` 로 어떤 id/정책으로 불렸는지만 본다.
@@ -169,8 +169,8 @@ async def test_dry_run_still_excludes_jobs_with_existing_application_history():
     assert result.skipped == ["A사 - 백엔드"]
 
 
-async def test_job_with_non_rejected_history_is_excluded_from_candidates():
-    """진행 중이든 COMPLETED/NEEDS_HUMAN 이든, REJECTED 가 아닌 기존 이력이 있으면 이미
+async def test_job_with_non_retryable_history_is_excluded_from_candidates():
+    """진행 중이든 COMPLETED 든, REJECTED/NEEDS_HUMAN 이 아닌 기존 이력이 있으면 이미
 
     지원 프로세스를 밟은 것으로 보고 후보에서 아예 뺀다(사용자 요청, 2026-08-21).
     """
@@ -185,6 +185,27 @@ async def test_job_with_non_rejected_history_is_excluded_from_candidates():
 
     assert result.started == ["B사 - 프론트"]  # fit_score 낮아도 새 후보라 시작됨
     assert result.skipped == ["A사 - 백엔드"]  # fit_score 더 높아도 이미 COMPLETED 라 제외
+
+
+async def test_needs_human_jobs_are_deprioritized_not_excluded():
+    """NEEDS_HUMAN 은 REJECTED 와 마찬가지로 신규 후보 뒤로 순위만 밀린다 — submitted_at
+
+    이 항상 None 인 채로만 끝나는 상태라(§apply_intake.py docstring) 원인이 해소되면 재시도가
+    안전하다(wanted 363152 공고 실측, 2026-08-22).
+    """
+    stuck = _record(platform_job_id="1", company="A사", title="백엔드", fit_score=99)
+    fresh = _record(platform_job_id="2", company="B사", title="프론트", fit_score=10)
+    job_rows = {(r.job.platform, r.job.platform_job_id): r for r in (stuck, fresh)}
+    state_rows = _state(canonical_key("A사", "백엔드"), ApplicationState.NEEDS_HUMAN)
+    c = _container(job_rows, state_rows=state_rows)
+    client = _FakeClient()
+
+    result = await start_actionable_applications(1, c, client, now=_NOW)
+    assert result.started == ["B사 - 프론트"]
+
+    client2 = _FakeClient()
+    result2 = await start_actionable_applications(2, c, client2, now=_NOW)
+    assert result2.started == ["B사 - 프론트", "A사 - 백엔드"]
 
 
 async def test_rejected_jobs_are_deprioritized_not_excluded():
@@ -277,6 +298,21 @@ async def test_apply_by_url_skips_when_already_applied():
 async def test_apply_by_url_allows_retry_after_rejected():
     """REJECTED 이력은 자동 후보 선정과 마찬가지로 재지원을 막지 않는다."""
     state_rows = _state(canonical_key(_WANTED_COMPANY, _WANTED_TITLE), ApplicationState.REJECTED)
+    c = _container({}, state_rows=state_rows, registry=_wanted_registry())
+    client = _FakeClient()
+
+    result = await apply_by_url(_WANTED_URL, c, client)
+
+    assert result.outcome == "started"
+    assert len(client.started) == 1
+
+
+async def test_apply_by_url_allows_retry_after_needs_human():
+    """NEEDS_HUMAN 이력도 REJECTED 와 같은 취급 — submitted_at 이 없는 종결이라 재지원이
+
+    안전하다(wanted 363152 공고 실측, 2026-08-22 — 이전엔 여기서 "이미 지원함"으로 막혔다).
+    """
+    state_rows = _state(canonical_key(_WANTED_COMPANY, _WANTED_TITLE), ApplicationState.NEEDS_HUMAN)
     c = _container({}, state_rows=state_rows, registry=_wanted_registry())
     client = _FakeClient()
 

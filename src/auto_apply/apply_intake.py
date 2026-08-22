@@ -16,10 +16,17 @@ workflow 파일이 아니다) — 새 port를 만들지 않는다. `uow.jobs.act
 쓰는 게 중복지원 방어선이다(그 모듈 docstring 참고). 이 id로 `uow.applications.latest_states`를
 찔러 이미 이력이 있는 공고를 후보 선정 단계에서 미리 갈라낸다(`_partition_by_state`,
 2026-08-21 세션 사용자 요청 — "거절된 건 후순위로, 이미 지원한 건 미리 걸러야" 하지 않냐는
-지적으로 추가) — REJECTED 는 완전히 빼지는 않고 신규 후보 뒤로 순위만 미룬다(사람이 그
-공고 자체를 다시 안 보고 싶다는 뜻은 아닐 수 있어서, fit_score 로만 거른 신규 후보가 없을 때
-대체재로 남겨둔다). REJECTED 를 제외한 나머지 상태(진행 중이든 COMPLETED/NEEDS_HUMAN 등
-종결 상태든)는 "이미 지원 프로세스를 밟은 공고"로 보고 후보에서 아예 뺀다.
+지적으로 추가) — REJECTED/NEEDS_HUMAN 은 완전히 빼지는 않고 신규 후보 뒤로 순위만 미룬다
+(`_RETRYABLE_STATES`). REJECTED 는 사람이 그 공고 자체를 다시 안 보고 싶다는 뜻은 아닐 수
+있어서고, NEEDS_HUMAN 은 다른 이유다 — 실제 워크플로우 종료 경로(`workflows/application.py`,
+`workflows/_execution.py`)를 보면 NEEDS_HUMAN 으로 끝나는 모든 경로가 submitted_at 을
+None 으로만 남긴다(실행 activity 실패든 verify 미확인이든, 실제 제출이 안 됐다고 확인됐을
+때만 이 상태로 떨어진다 — §5 "부분 제출 위험 방어"). 즉 NEEDS_HUMAN 은 "제출은 안 됐는데
+사람이 봐야 하는 상태"이지 "이미 지원 프로세스를 끝낸 상태"가 아니라서, 원인(예: recipe
+selector 변경, claude CLI 한도초과로 자동 수선 실패)이 나중에 해소되면 재시도가 안전하다
+(2026-08-22 세션 실측 — wanted 363152 공고, submitted_at=null 확인 후 재지원 시도가
+"이미 지원함"으로 막혀서 발견). 두 상태를 제외한 나머지(진행 중이든 COMPLETED 등 실제
+종결 상태든)는 여전히 "이미 지원 프로세스를 밟은 공고"로 보고 후보에서 아예 뺀다.
 
 Temporal 기본 `WorkflowIDReusePolicy.ALLOW_DUPLICATE`는 이전 실행이 COMPLETED로 끝난 뒤엔
 같은 id로 새로 시작하는 걸 막지 않으므로, 실제 시작 호출에서는 그와 별개로 명시적으로
@@ -64,6 +71,11 @@ JOB_CACHE_TTL = timedelta(hours=24)
 # saramin 도 등록돼 있어(bootstrap._build_registry) for_url 만으로는 못 막는다.
 _APPLY_BY_URL_PLATFORMS = frozenset({"wanted"})
 
+# 재시도를 막지 않는(=완전히 배제하지 않는) 기존 이력 상태. REJECTED 는 사람의 명시적
+# 거절이라 후순위로만 미루고, NEEDS_HUMAN 은 submitted_at 이 항상 None 인 채로만 끝나는
+# 상태(위 docstring)라 같은 취급이다 — 둘 다 "제출까지 가지 않은 이력"이라는 공통점.
+_RETRYABLE_STATES = frozenset({ApplicationState.REJECTED, ApplicationState.NEEDS_HUMAN})
+
 
 @dataclass(frozen=True, slots=True)
 class ApplyIntakeResult:
@@ -71,8 +83,8 @@ class ApplyIntakeResult:
     # 실제로 시작한 게 아니라 "시작했을" 후보 — 필드 이름은 그대로 두고 `dry_run` 플래그로
     # 의미를 구분한다(호출부가 이 플래그로 문구를 갈아 끼운다).
     skipped: list[str] = field(default_factory=list)  # 이미 진행 중이거나 끝난 것(dedupe) —
-    # 사전 상태 필터(REJECTED 제외 기존 이력)와, 그걸 빠져나간 뒤 시작 시점 경합으로 걸리는
-    # WorkflowAlreadyStartedError 둘 다 여기로 모인다.
+    # 사전 상태 필터(`_RETRYABLE_STATES` 제외 기존 이력)와, 그걸 빠져나간 뒤 시작 시점 경합으로
+    # 걸리는 WorkflowAlreadyStartedError 둘 다 여기로 모인다.
     candidates: int = 0  # TTL 창 안에서 발견된 actionable 후보 총 수(상태 필터 전, count와 무관)
     dry_run: bool = False
 
@@ -96,23 +108,24 @@ def _partition_by_state(
     states: dict[str, ApplicationState],
     skipped: list[str],
 ) -> list[tuple[str, JobRecord]]:
-    """이력이 없거나 REJECTED 인 것만 후보로 남긴다 — REJECTED 는 뒤로, 나머지 기존 이력은
+    """이력이 없거나 `_RETRYABLE_STATES`(REJECTED/NEEDS_HUMAN)인 것만 후보로 남긴다 — 그
 
-    아예 뺀다(`skipped`에 라벨을 적립). fit_score 순서(호출부가 `keyed`를 이미 정렬해 넘긴다)는
-    각 그룹 안에서 그대로 유지된다 — 안정 정렬로 새 후보 다음에 REJECTED 후보를 이어붙인다.
+    둘은 뒤로, 나머지 기존 이력은 아예 뺀다(`skipped`에 라벨을 적립). fit_score 순서(호출부가
+    `keyed`를 이미 정렬해 넘긴다)는 각 그룹 안에서 그대로 유지된다 — 안정 정렬로 새 후보
+    다음에 재시도 후보를 이어붙인다.
     """
     new: list[tuple[str, JobRecord]] = []
-    rejected: list[tuple[str, JobRecord]] = []
+    retryable: list[tuple[str, JobRecord]] = []
     for application_id, record in keyed:
         state = states.get(application_id)
         if state is None:
             new.append((application_id, record))
-        elif state is ApplicationState.REJECTED:
-            rejected.append((application_id, record))
+        elif state in _RETRYABLE_STATES:
+            retryable.append((application_id, record))
         else:
             job = record.job
             skipped.append(f"{job.company} - {job.title}")
-    return new + rejected
+    return new + retryable
 
 
 async def _start_workflow(application_id: str, job_url: str, c: Container, client: Client) -> bool:
@@ -178,7 +191,7 @@ async def apply_by_url(url: str, c: Container, client: Client) -> ApplyByUrlResu
     async with c.uow() as uow:
         states = await uow.applications.latest_states([application_id])
     state = states.get(application_id)
-    if state is not None and state is not ApplicationState.REJECTED:
+    if state is not None and state not in _RETRYABLE_STATES:
         return ApplyByUrlResult(outcome="duplicate", label=label)
 
     if await _start_workflow(application_id, url, c, client):
@@ -194,7 +207,7 @@ async def start_actionable_applications(
     now: datetime | None = None,
     dry_run: bool = False,
 ) -> ApplyIntakeResult:
-    """TTL 안에서 수집된 actionable 공고 중 이미 지원 이력이 없는(또는 REJECTED 뿐인) 것
+    """TTL 안에서 수집된 actionable 공고 중 이미 지원 이력이 없는(또는 `_RETRYABLE_STATES` 뿐인) 것
 
     상위 `count`건에 대해 `ApplicationWorkflow`를 새로 시작한다. `now`를 인자로 받는 건
     결정성 때문이 아니라(이 함수는 workflow 코드가 아니다) 테스트에서 TTL 경계를 고정하기
