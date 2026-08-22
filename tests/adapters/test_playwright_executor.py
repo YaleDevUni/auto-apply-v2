@@ -16,6 +16,7 @@ from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.contracts.dto import ExecutionContext
 from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.domain.enums import AttemptOutcome, ExecutionMode
+from auto_apply.domain.errors import RecipeExecutionError
 
 pytestmark = pytest.mark.integration
 
@@ -71,3 +72,69 @@ async def test_upload_preserves_the_blob_keys_filename(tmp_path: Path) -> None:
     result = await executor.run(recipe, ctx, ExecutionMode.DRY_RUN)
 
     assert result.outcome is AttemptOutcome.SUCCEEDED
+
+
+_SUBMIT_FORM_HTML = """
+<!doctype html><html><body>
+<button id="go"><span><span>제출하기</span></span></button>
+<div id="clicked"></div>
+<script>
+document.getElementById('go').addEventListener('click', () => {
+  document.getElementById('clicked').textContent = 'clicked';
+});
+</script>
+</body></html>
+"""
+
+
+def _submit_recipe(form_url: str, submit_selector: str) -> AutomationRecipe:
+    return AutomationRecipe(
+        platform="fixture",
+        version=1,
+        status="active",
+        form_hash="h-submit-1",
+        actions=[
+            Action(type=ActionType.GOTO, value_literal=form_url),
+            Action(type=ActionType.SUBMIT, selector=submit_selector, timeout_ms=2_000),
+        ],
+        success_signals=["ok"],
+    )
+
+
+def _submit_env(tmp_path: Path) -> tuple[str, PlaywrightExecutor]:
+    form_path = tmp_path / "submit.html"
+    form_path.write_text(_SUBMIT_FORM_HTML)
+    auth_dir = tmp_path / "auth"
+    auth_dir.mkdir()
+    (auth_dir / "fixture.json").write_text('{"cookies": [], "origins": []}')
+    executor = PlaywrightExecutor(
+        SystemClock(), InMemoryBlobStore(), auth_dir=auth_dir, headless=True
+    )
+    return form_path.as_uri(), executor
+
+
+async def test_dry_run_fails_when_the_submit_selector_matches_nothing(tmp_path: Path) -> None:
+    """dry_run 은 submit 을 누르지 않지만, 대상이 없다는 건 여기서 잡아야 한다.
+
+    `button:text-is("제출하기")` 는 0개 매칭이다 — Playwright 텍스트 엔진은 그 텍스트를 가진
+    가장 작은 요소(안쪽 span)만 매칭하기 때문. wanted recipe v1~v5 가 실제로 이 selector 였고,
+    dry_run 이 submit 직전에 그냥 SUCCEEDED 로 끝나버려서 AutomationRepairWorkflow 의 샌드박스
+    검증이 다섯 번 내리 "고쳤다"고 오판했다.
+    """
+    form_url, executor = _submit_env(tmp_path)
+    recipe = _submit_recipe(form_url, 'button:text-is("제출하기")')
+    ctx = ExecutionContext(application_id="app_submit_miss", attempt=1)
+
+    with pytest.raises(RecipeExecutionError):
+        await executor.run(recipe, ctx, ExecutionMode.DRY_RUN)
+
+
+async def test_dry_run_verifies_the_submit_target_without_clicking(tmp_path: Path) -> None:
+    form_url, executor = _submit_env(tmp_path)
+    recipe = _submit_recipe(form_url, 'button:has-text("제출하기")')
+    ctx = ExecutionContext(application_id="app_submit_ok", attempt=1)
+
+    result = await executor.run(recipe, ctx, ExecutionMode.DRY_RUN)
+
+    assert result.outcome is AttemptOutcome.SUCCEEDED
+    assert result.submitted_at is None

@@ -368,6 +368,13 @@ flowchart TB
 - **AI가 만든 Recipe는 절대 바로 `active`가 되지 않는다.** `draft → candidate → active → deprecated`.
 - Sandbox dry-run은 새 실행 모드가 필요 없다 — 기존 `ExecutionMode.DRY_RUN`(submit 직전까지만)을
   그대로 쓴다(§9.5, `_execution.resolve_mode`가 이미 이 의미로 쓰고 있었다).
+- **DRY_RUN은 submit을 누르지 않되 submit 대상이 실제 매칭되는지는 확인한다.** 원래는 `SUBMIT`
+  액션을 만나면 selector를 보지도 않고 `SUCCEEDED`로 끝냈는데, 그러면 이 노드 E가 정확히
+  submit 스텝만 눈감은 채 "고쳤다"고 판정한다 — 수선 루프가 발산한다. 실측(2026-08-22):
+  wanted recipe v1~v5의 `button:text-is("제출하기")`는 매칭 0개인데(Playwright 텍스트 엔진은
+  그 텍스트를 가진 가장 작은 요소, 즉 안쪽 `<span>`만 매칭한다) dry-run은 다섯 번 다
+  통과했고, live만 같은 자리에서 계속 실패했다. `ReplayExecutor`는 원래 submit selector도
+  검사하고 있었으므로, 이 수정은 실행기 셋의 계약을 맞춘 것이기도 하다(§11.1).
 - 승격(node I→J)은 `AutomationRepairWorkflow` 자기 자신이 Telegram 승인을 받아 그 자리에서
   끝낸다 — "candidate의 첫 실전 실행이 supervised mode로 돌다가 성공하면 자동 승격"이라는
   이전 초안의 대안 경로는 채택하지 않았다: `ExecutionMode.SUPERVISED`가 실제 실행 중 사람이
@@ -998,7 +1005,8 @@ M3에서 Fact 기반 생성(retrieve_facts → select_relevant_facts → generat
 
 ### 9.3 Recipe 자동 승격 → **금지 (supervised 1회 필수)**
 대화의 흐름은 "Sandbox PASS → 저장"이었다. 그런데 dry-run은 submit을 하지 않으므로
-**submit 경로의 정확성을 증명하지 못한다.** 그래서 `candidate` 첫 실행은 사람 확인이 붙는 supervised 모드.
+**submit 경로의 정확성을 증명하지 못한다**(§2.4의 submit 대상 확인은 "그 버튼이 거기 있다"까지만
+증명한다 — 눌렀을 때 실제로 접수되는지는 여전히 못 본다). 그래서 `candidate` 첫 실행은 사람 확인이 붙는 supervised 모드.
 "사람 확인이 붙는다"는 정책은 §2.4c에서 `CheckpointWaiter`(페이지 경계마다 스크린샷 승인,
 SUBMIT은 항상 강제)로 실제 구현됐다.
 

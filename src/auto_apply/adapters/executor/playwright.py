@@ -95,11 +95,25 @@ class PlaywrightExecutor:
         for i, action in enumerate(recipe.actions):
             if action.type is ActionType.SUBMIT:
                 if mode is ExecutionMode.DRY_RUN:
+                    # 누르지는 않지만 "대상이 실제로 있는지"는 확인하고 끝낸다. 이 확인이 없으면
+                    # dry_run 이 submit selector 를 한 번도 평가하지 않아서, 깨진 submit selector 를
+                    # 샌드박스 검증(=AutomationRepairWorkflow 의 dry-run)이 영원히 못 본다 —
+                    # 수선 루프가 "고쳤다"고 판정한 뒤 live 에서 같은 자리에서 계속 실패한다
+                    # (실측: wanted v1~v5 의 `button:text-is("제출하기")` 는 0개 매칭인데
+                    # dry_run 은 5번 다 SUCCEEDED 였다). ReplayExecutor 는 원래 이렇게
+                    # 동작했다 — 실행기 셋의 계약을 여기서 맞춘다.
+                    await self._run_one(
+                        i,
+                        action.model_copy(update={"type": ActionType.ASSERT_VISIBLE}),
+                        ctx,
+                        recipe,
+                        page,
+                    )
                     return ExecutionResult(
                         outcome=AttemptOutcome.SUCCEEDED,
                         submitted_at=None,
                         artifact_keys=artifacts,
-                        detail="dry_run: submit 을 실행하지 않았다",
+                        detail="dry_run: submit 대상만 확인하고 실행하지 않았다",
                     )
                 await self._check_captcha(page, recipe, ctx)
 

@@ -124,11 +124,21 @@ class AgentBrowserExecutor:
         for i, action in enumerate(recipe.actions):
             if action.type is ActionType.SUBMIT:
                 if mode is ExecutionMode.DRY_RUN:
+                    # PlaywrightExecutor 와 같은 계약: 누르지 않되 대상이 있는지는 확인한다.
+                    # 이 확인이 없으면 깨진 submit selector 를 dry_run 이 영원히 못 본다.
+                    await self._run_one(
+                        i,
+                        action.model_copy(update={"type": ActionType.ASSERT_VISIBLE}),
+                        ctx,
+                        recipe,
+                        session,
+                        state_path=None,
+                    )
                     return ExecutionResult(
                         outcome=AttemptOutcome.SUCCEEDED,
                         submitted_at=None,
                         artifact_keys=artifacts,
-                        detail="dry_run: submit 을 실행하지 않았다",
+                        detail="dry_run: submit 대상만 확인하고 실행하지 않았다",
                     )
                 await self._check_captcha(session, recipe, ctx)
 
