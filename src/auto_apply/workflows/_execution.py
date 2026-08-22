@@ -131,7 +131,11 @@ async def run_execution(
             execute_application,
             ExecuteInput(recipe=recipe, ctx=ctx, mode=mode),
             task_queue=QUEUE_BROWSER,
-            start_to_close_timeout=timedelta(minutes=15),
+            # SUPERVISED 는 이 activity 안에서 사람의 체크포인트 승인을 기다린다
+            # (기본 checkpoint_timeout_minutes=30). 15분이면 승인 전에 activity 가 먼저
+            # StartToClose 로 죽어서 recipe 를 처음부터 다시 실행한다 — 죽은 워커는
+            # heartbeat_timeout 30초가 이미 잡아주므로 이 상한은 넉넉해도 안전하다.
+            start_to_close_timeout=timedelta(minutes=45),
             heartbeat_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
