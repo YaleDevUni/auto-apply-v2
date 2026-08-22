@@ -26,6 +26,7 @@ from temporalio.service import RPCError
 from auto_apply.apply_intake import apply_by_url, start_actionable_applications
 from auto_apply.bootstrap import Container
 from auto_apply.domain.chat_agent import ToolCatalogEntry
+from auto_apply.telegram._agent_tools_schedule import SCHEDULE_TOOLS
 from auto_apply.workflows.application import ApplicationWorkflow
 
 ToolHandler = Callable[[dict[str, str], Container, Client], Awaitable[str]]
@@ -210,6 +211,9 @@ TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
         ("url",),
         _apply_by_url,
     ),
+    # 공고 수집/자동 지원 Schedule 관리(schedule_status/set_schedule_enabled)는
+    # _agent_tools_schedule.py 에서 구현하고 여기서 병합만 한다(§ 그 파일 docstring).
+    **SCHEDULE_TOOLS,
 }
 
 # 실측(2026-08-21): "지원시작 2건정도" 한 턴에서 chat_llm(Haiku, 저렴한 분류 모델)이

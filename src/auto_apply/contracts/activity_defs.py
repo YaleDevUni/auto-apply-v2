@@ -10,6 +10,8 @@ from temporalio import activity
 
 from auto_apply.contracts.dto import (
     ApplicationAttempt,
+    ApplyIntakeInput,
+    ApplyIntakeResult,
     DecisionRequest,
     DecisionTicket,
     Eligibility,
@@ -118,6 +120,12 @@ async def ping(message: str) -> str:
 @activity.defn(name="collect_platform_jobs")
 async def collect_platform_jobs(platform: str) -> PlatformCollectionResult:
     """목록 수집 → 스크리닝 → 상세 조회 → 지원가능성 판정 → 저장 (§11.2b)."""
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="start_actionable_applications")
+async def start_actionable_applications(cmd: ApplyIntakeInput) -> ApplyIntakeResult:
+    """actionable 공고 캐시 상위 N건에 `ApplicationWorkflow` 시작 (§ apply-schedule)."""
     raise NotImplementedError(_ONLY)
 
 

@@ -869,6 +869,12 @@ DAILY_DIGEST                    /recipes wanted
   (`fetch_job`이 리다이렉트 등으로 정규화한 값이 아니라) — 나중에 워크플로우 상태를 봤을 때
   "이 링크로 시작했다"가 그대로 남게 하려는 선택이다.
 
+  **`schedule_status`/`set_schedule_enabled`(2026-08-22, § 11.2f)**는 앞의 셋과 달리
+  `ApplicationWorkflow`를 시작하지 않는다 — `apply_intake.py`가 채팅으로 "지금 몇 건 지원"을
+  트리거하는 쪽이라면, 이 둘은 그 트리거를 cron 으로 매일 자동 실행하게 등록해둔 두 Temporal
+  Schedule(공고 수집·자동 지원)을 켜고 끄고 상태만 본다. cron 표현식·건수는 채팅으로 안 바꾼다
+  (`.env` 고정) — 자세한 이유는 §11.2f.
+
 ---
 
 ## 7. FastAPI 표면
@@ -967,7 +973,7 @@ auto-apply-v2/
 │   │   └── resume_blocks.py      group_facts_for_resume · select_relevant_blocks (§2.3)
 │   ├── bootstrap.py              ★ composition root: 설정 → 구현체 조립
 │   ├── config.py                 pydantic-settings
-│   ├── schedule.py               JobCollectionWorkflow Temporal Schedule 등록/삭제 (§11.2b)
+│   ├── schedule.py               JobCollection/ApplyIntake Temporal Schedule 등록/삭제 (§11.2b, §11.2f)
 │   ├── watchdog.py                워크플로우 능동 감시 — `make watchdog` (§11.2d)
 │   └── worker.py                 --queue {default|ai|browser}
 └── tests/
@@ -1349,6 +1355,72 @@ storage_state(`var/auth/wanted.json`)를 httpx 로 그대로 재사용하면 되
 실행한다. 상시 폴링 프로세스가 아니다: 삭제는 되돌릴 수 없는 행위라 사람이 그때그때 후보
 목록을 보고 판단하는 쪽을 택했다(CLAUDE.md "되돌릴 수 없는 행위는 사람 승인 뒤에서만" —
 여긴 텔레그램 승인 대신 명시적 `--yes` 플래그가 그 역할). 기본은 dry-run(후보만 출력).
+
+### 11.2f 자동 지원 시작 Schedule — `ApplyIntakeWorkflow` + 텔레그램 on/off
+
+"공고수집 및 지원하기 스케줄링 기능 봇에 탑재해"(2026-08-22) 요청으로 신설. 공고 수집은
+이미 §11.2b의 Schedule로 주기 실행됐지만, "지원 시작"(`apply_intake.start_actionable_applications`,
+채팅 도구 `start_applications`가 쓰는 그 함수)은 사람이 매번 채팅으로 트리거해야 했다 —
+이번 요청은 그 자리도 cron 으로 채워달라는 것.
+
+**"자동 지원"이 실제로 자동화하는 범위.** `JobCollectionWorkflow`가 채운 actionable 공고
+캐시에서 적합도 상위 N건에 대해 `ApplicationWorkflow`를 새로 **시작**하는 것까지만 자동이다
+— 이력서 생성 → 텔레그램 승인 대기 진입까지다. 최종 제출은 그렇게 시작된
+`ApplicationWorkflow` 안에서 여전히 사람의 텔레그램 승인 뒤에만 일어난다(CLAUDE.md
+절대규칙 4). `apply_intake.py`의 기존 docstring이 이미 짚었듯 진짜 불변식은 "워크플로우를
+안 건드린다"가 아니라 "제출은 못 건드린다"이고, 이 Schedule 도 그 경계를 그대로 넘겨받는다.
+
+**새 워크플로우가 필요했던 이유.** Temporal Schedule은 워크플로우만 시작할 수 있는데,
+`start_actionable_applications`(TTL 캐시 조회 → dedupe → `ApplicationWorkflow` 여러 건
+시작)는 지금까지 workflow 코드가 아니라 `cli.py`/텔레그램 채팅 도구가 쓰는 **운영
+진입점**이었다(Client를 직접 들고 I/O를 한다 — §11.3 규칙 대상이 아니다). 이 함수를
+그대로 재사용하되 Schedule 이 시작할 수 있는 형태로 감싸는 얇은 계층 하나만 새로 추가했다:
+
+```
+ApplyIntakeWorkflow.run(ApplyIntakeInput)
+  → activity: start_actionable_applications(cmd) (ApplyIntakeActivities)
+      → apply_intake.start_actionable_applications(cmd.count, container, client)  # 기존 함수 그대로
+```
+
+`ApplyIntakeActivities`는 다른 activity 들(개별 port 주입)과 다르게 `Container`를 통째로
+받는다 — `start_actionable_applications`가 CLI·채팅 도구·이 activity 세 호출부에서 정확히
+같은 시그니처를 유지하길 원해서고, 포트별로 쪼개면 호출부마다 다시 조립해야 한다(activities
+계층이 `bootstrap.Container`를 직접 아는 게 유일한 예외 — import-linter 계약도 activities가
+adapters를 *직접* import하는 것만 막지 bootstrap 자체는 막지 않는다, §11.7 체크리스트
+"어댑터 생성은 bootstrap 에서만"이 `allow_indirect_imports=True`인 것도 같은 이유). 이
+activity가 내부에서 여러 `ApplicationWorkflow`를 시작하는 것 자체는 Temporal의 표준 패턴은
+아니지만(보통 child workflow), sibling workflow 를 `WorkflowIDReusePolicy.REJECT_DUPLICATE`
+로 dedupe 하는 기존 설계(§ apply_intake.py, telegram-chat-agent-design 메모리)와 맞추려면
+child workflow 로 묶을 이유가 없었다 — activity 자체가 이미 실패해도 안전한 재시도
+단위다(개별 시작은 `WorkflowAlreadyStartedError`로 걸러지므로 전체를 재시도해도 중복
+시작되지 않는다).
+
+**Schedule 등록/삭제.** `schedule.py`의 `build_apply_intake_schedule`/`ensure_apply_intake_schedule`/
+`delete_apply_intake_schedule` + `cli.py apply-schedule`/`apply-unschedule`로, §11.2b의
+job-collection Schedule과 완전히 같은 모양(create-or-update, `SchedulePolicy(overlap=SKIP)`)을
+반복한다. cron/건수는 `APPLY_SCHEDULE_CRON`(기본 `0 10 * * *`)/`APPLY_SCHEDULE_COUNT`(기본
+3)로 정한다 — 기본 시각을 `JOB_COLLECTION_CRON`(기본 `0 9 * * *`) 한 시간 뒤로 잡은 건 그날
+수집분이 곧바로 후보에 잡히게 순서를 맞추려는 것뿐, 안전장치는 아니다(JOB_CACHE_TTL=24시간
+이라 순서가 안 맞아도 다음날 안에는 잡힌다).
+
+**봇에서 켜고 끄기 — cron/건수는 채팅으로 안 바꾼다.** 요청 자체("몇시 몇건")는 시각·건수
+설정을 원했지만, 그 값을 채팅 자유 텍스트로 파싱시키면(cron 표현식을 LLM이 뽑아내야 함)
+실패·오해석 위험이 텔레그램 채팅 에이전트의 기존 설계 원칙("AI는 생성만, 판정·조합은
+코드")과 맞지 않는다고 판단했다(2026-08-22) — 그래서 cron/건수는 `.env`로 고정하고, 봇은
+이미 등록된 Schedule 을 pause/unpause 하는 on/off 스위치만 쥔다. 새 도구 두 개
+(`telegram/_agent_tools_schedule.py`, `TOOLS` 에 병합):
+`schedule_status`(두 Schedule 의 켜짐/꺼짐·cron·다음 실행 시각을 본다)와
+`set_schedule_enabled(target, enabled)`(공고 수집/자동 지원 각각을 켜거나 끈다 — 끄기는
+`ScheduleHandle.pause()`, 켜기는 `ensure_*_schedule`로 최신 `.env` 설정을 다시 심고
+`unpause()`한다). `_agent_tools.py`가 아니라 별도 파일로 뺀 이유는 그 파일이 이미
+200줄을 넘어가고 있었기 때문이다(§ CLAUDE.md "한 파일 = 한 책임").
+
+실측(2026-08-22, 라이브 Temporal 서버로 등록 후 `describe()` 확인): 서버는
+`ScheduleSpec.cron_expressions`를 등록 시점의 표현식 그대로 돌려주지 않는다 — 내부
+캘린더 스펙으로 컴파일하며 이 필드를 비워버려서 `desc.schedule.spec.cron_expressions`를
+그대로 읽으면 항상 빈 리스트다. `schedule_status`는 그래서 cron 문자열을 서버에 되묻지
+않고 `c.settings`(우리가 등록에 쓴 그 값)를 그대로 보여준다 — `next_action_times`(다음
+실행 시각)는 서버가 정상적으로 계산해 돌려주므로 그건 그대로 읽는다.
 
 ### 11.3 Temporal에서의 주입 — activity가 곧 seam
 

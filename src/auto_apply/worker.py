@@ -14,6 +14,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from auto_apply.activities.application import ApplicationActivities
+from auto_apply.activities.apply_intake import ApplyIntakeActivities
 from auto_apply.activities.browser import BrowserActivities
 from auto_apply.activities.guide import GuideActivities
 from auto_apply.activities.job_collection import JobCollectionActivities
@@ -24,6 +25,7 @@ from auto_apply.bootstrap import Container, build_container
 from auto_apply.config import load_settings
 from auto_apply.temporal_config import DATA_CONVERTER
 from auto_apply.workflows.application import ApplicationWorkflow
+from auto_apply.workflows.apply_intake import ApplyIntakeWorkflow
 from auto_apply.workflows.job_collection import JobCollectionWorkflow
 from auto_apply.workflows.ping import PingWorkflow
 from auto_apply.workflows.repair import AutomationRepairWorkflow
@@ -38,12 +40,12 @@ MAX_CONCURRENT: dict[Queue, int] = {"default": 50, "ai": 5, "browser": 1}
 
 
 def _registrations(
-    queue: Queue, c: Container
+    queue: Queue, c: Container, client: Client
 ) -> tuple[Sequence[type], Sequence[Callable[..., Any]]]:
     match queue:
         case "default":
             return (
-                [ApplicationWorkflow, PingWorkflow, JobCollectionWorkflow],
+                [ApplicationWorkflow, PingWorkflow, JobCollectionWorkflow, ApplyIntakeWorkflow],
                 [
                     *ApplicationActivities(c.registry, c.notifier, c.recipes, c.uow).all(),
                     *PingActivities(c.clock, c.store).all(),
@@ -55,6 +57,7 @@ def _registrations(
                         c.uow,
                         auth_dir=c.settings.data_dir / "auth",
                     ).all(),
+                    *ApplyIntakeActivities(c, client).all(),
                 ],
             )
         case "ai":
@@ -78,11 +81,11 @@ async def main() -> None:
 
     cfg = load_settings()
     container = build_container(cfg)
-    workflows, activities = _registrations(queue, container)
-
     client = await Client.connect(
         cfg.temporal_address, namespace=cfg.temporal_namespace, data_converter=DATA_CONVERTER
     )
+    workflows, activities = _registrations(queue, container, client)
+
     log.info(
         "worker.start",
         queue=queue,

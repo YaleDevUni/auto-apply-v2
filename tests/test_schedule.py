@@ -1,11 +1,12 @@
-"""JobCollectionWorkflow 를 주기 실행하는 Schedule (ARCHITECTURE.md §11.2b).
+"""JobCollectionWorkflow/ApplyIntakeWorkflow 를 주기 실행하는 Schedule (ARCHITECTURE.md §11.2b,
 
-`build_job_collection_schedule`는 순수 함수라 Temporal 없이 바로 검증한다.
-`ensure_job_collection_schedule`/`delete_job_collection_schedule`는 실제 Schedule RPC 가
-필요한데, time-skipping test server(§ test_ping.py)는 CreateSchedule 을 구현하지 않는다
-(`RPCError: ... CreateSchedule is unimplemented`) — 그래서 여기서만
-`WorkflowEnvironment.start_local()`(풀 dev server)를 쓴다. 최초 실행 시 별도 바이너리를
-내려받고 기동에 시간이 걸린다.
+§ apply-schedule).
+
+`build_*_schedule`는 순수 함수라 Temporal 없이 바로 검증한다. `ensure_*_schedule`/
+`delete_*_schedule`는 실제 Schedule RPC 가 필요한데, time-skipping test server(§ test_ping.py)는
+CreateSchedule 을 구현하지 않는다(`RPCError: ... CreateSchedule is unimplemented`) — 그래서
+여기서만 `WorkflowEnvironment.start_local()`(풀 dev server)를 쓴다. 최초 실행 시 별도
+바이너리를 내려받고 기동에 시간이 걸린다.
 """
 
 import pytest
@@ -13,11 +14,16 @@ from temporalio.client import ScheduleOverlapPolicy
 from temporalio.testing import WorkflowEnvironment
 
 from auto_apply.config import Settings
+from auto_apply.contracts.dto import ApplyIntakeInput
 from auto_apply.contracts.job import CollectJobsInput
 from auto_apply.schedule import (
+    APPLY_INTAKE_SCHEDULE_ID,
     JOB_COLLECTION_SCHEDULE_ID,
+    build_apply_intake_schedule,
     build_job_collection_schedule,
+    delete_apply_intake_schedule,
     delete_job_collection_schedule,
+    ensure_apply_intake_schedule,
     ensure_job_collection_schedule,
 )
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_DEFAULT
@@ -65,5 +71,39 @@ async def test_ensure_creates_then_updates_and_delete_removes_it():
         assert b"jasoseol" in payload.data
 
         await delete_job_collection_schedule(client)
+        with pytest.raises(Exception):  # RPCError: schedule not found
+            await handle.describe()
+
+
+def test_build_apply_intake_schedule_uses_configured_cron_and_count():
+    schedule = build_apply_intake_schedule(
+        _cfg(apply_schedule_cron="0 10 * * *", apply_schedule_count=5)
+    )
+
+    assert schedule.spec.cron_expressions == ["0 10 * * *"]
+    assert schedule.action.task_queue == QUEUE_DEFAULT
+    assert schedule.action.args == [ApplyIntakeInput(count=5)]
+    # job-collection Schedule 과 같은 이유(§11.2b) — 겹쳐 돌 이유가 없다.
+    assert schedule.policy.overlap is ScheduleOverlapPolicy.SKIP
+
+
+@pytest.mark.integration
+async def test_ensure_apply_intake_creates_then_updates_and_delete_removes_it():
+    async with await WorkflowEnvironment.start_local(data_converter=DATA_CONVERTER) as env:
+        client = env.client
+        cfg = _cfg(apply_schedule_cron="0 10 * * *", apply_schedule_count=3)
+
+        assert await ensure_apply_intake_schedule(client, cfg) == "created"
+        assert await ensure_apply_intake_schedule(client, cfg) == "updated"
+
+        updated_cfg = cfg.model_copy(update={"apply_schedule_count": 7})
+        assert await ensure_apply_intake_schedule(client, updated_cfg) == "updated"
+
+        handle = client.get_schedule_handle(APPLY_INTAKE_SCHEDULE_ID)
+        desc = await handle.describe()
+        [payload] = desc.schedule.action.args
+        assert b'"count":7' in payload.data
+
+        await delete_apply_intake_schedule(client)
         with pytest.raises(Exception):  # RPCError: schedule not found
             await handle.describe()

@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     job_collection_cron: str = "0 9 * * *"
     job_collection_platforms: str = "wanted,saramin,jasoseol"
 
+    # 자동 지원 시작 Schedule (§ apply-schedule) — `cli.py apply-schedule`이 이 값으로
+    # 등록/갱신한다. job_collection_cron 과 다른 시각을 기본값으로 둔다 — 수집이 캐시를
+    # 채운 뒤에 돌아야 그날 수집분이 곧바로 후보에 잡힌다(JOB_CACHE_TTL=24시간이라 하루
+    # 늦어도 안전판은 있지만, 순서를 맞추는 쪽이 자연스럽다).
+    apply_schedule_cron: str = "0 10 * * *"
+    apply_schedule_count: int = Field(default=3, ge=1)
+
     # 워크플로우 감시 watchdog (`make watchdog`, workflow-failure-visibility-backlog §3) —
     # FAILED/TERMINATED/TIMED_OUT 으로 끝난 워크플로우를 능동으로 텔레그램 알림한다.
     watchdog_poll_interval_seconds: int = Field(default=60, ge=5)

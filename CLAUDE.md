@@ -421,3 +421,22 @@ ARCHITECTURE.md §6.
 `REJECT_DUPLICATE` dedupe)은 `start_actionable_applications`의 루프와 `_start_workflow`
 헬퍼로 공유해서 뺐다. 구현·유닛 테스트(`apply_intake.py`의 wanted 한정/dedupe/REJECTED 재시도,
 `telegram/agent.py` 도구 라우팅)·`make check` 통과 완료. 자세한 설계는 ARCHITECTURE.md §6.
+
+**공고수집·자동지원 Schedule 봇 탑재** — "공고수집 및 지원하기 스케줄링 기능 봇에
+탑재해"(2026-08-22) 요청. 공고 수집은 이미 Temporal Schedule(cron)로 주기 실행됐지만
+(공고 수집·매칭 트랙), "지원 시작"(`start_actionable_applications`)은 채팅으로만 트리거되던
+갭을 메웠다. 새 `ApplyIntakeWorkflow`(activity 하나, `ApplyIntakeActivities` — 기존
+`apply_intake.start_actionable_applications`를 그대로 재사용) + `schedule.py`의
+`ensure_apply_intake_schedule`/`delete_apply_intake_schedule`(job-collection Schedule과
+같은 create-or-update 패턴) + `cli.py apply-schedule`/`apply-unschedule`로
+`APPLY_SCHEDULE_CRON`(기본 매일 10시)/`APPLY_SCHEDULE_COUNT`(기본 3건) 설정을 등록한다.
+최종 제출은 그렇게 자동 시작된 `ApplicationWorkflow` 안에서도 여전히 사람의 텔레그램 승인
+뒤에만 일어난다(절대규칙 4 — 자동화되는 건 "지원 프로세스 시작"까지). "봇에 탑재"는 텔레그램
+채팅 도구 `schedule_status`/`set_schedule_enabled`(`telegram/_agent_tools_schedule.py`,
+신설 — `_agent_tools.py`가 200줄을 넘어가서 분리)로 구현했다 — cron 시각·건수는 채팅으로
+바꾸지 않고(LLM이 cron 표현식을 파싱하는 실패 위험을 피함, `.env`로 고정) 이미 등록된
+Schedule을 pause/unpause 하는 on/off·상태조회만 채팅으로 노출한다. 실측(2026-08-22, 라이브
+Temporal 서버): `describe()`가 돌려주는 `spec.cron_expressions`는 서버가 내부 캘린더
+스펙으로 컴파일하며 비워버려서, `schedule_status`는 그 필드 대신 `c.settings`에 있는 등록값을
+그대로 보여준다. 구현·유닛/워크플로우/실제 Temporal 라이브 등록·`make check` 통과 완료.
+자세한 설계는 ARCHITECTURE.md §11.2f.

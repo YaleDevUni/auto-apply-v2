@@ -19,7 +19,12 @@ from auto_apply.contracts.dto import (
     StartApplication,
 )
 from auto_apply.contracts.job import CollectJobsInput
-from auto_apply.schedule import delete_job_collection_schedule, ensure_job_collection_schedule
+from auto_apply.schedule import (
+    delete_apply_intake_schedule,
+    delete_job_collection_schedule,
+    ensure_apply_intake_schedule,
+    ensure_job_collection_schedule,
+)
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_DEFAULT
 from auto_apply.workflows.application import ApplicationWorkflow
 from auto_apply.workflows.job_collection import JobCollectionWorkflow
@@ -68,6 +73,16 @@ async def _run(args: argparse.Namespace) -> None:
 
     if args.command == "collect-unschedule":
         await delete_job_collection_schedule(client)
+        print("deleted")
+        return
+
+    if args.command == "apply-schedule":
+        outcome = await ensure_apply_intake_schedule(client, cfg)
+        print(f"{outcome}: cron='{cfg.apply_schedule_cron}' count={cfg.apply_schedule_count}")
+        return
+
+    if args.command == "apply-unschedule":
+        await delete_apply_intake_schedule(client)
         print("deleted")
         return
 
@@ -159,6 +174,12 @@ def main() -> None:
         help="공고 수집 Schedule 등록/갱신 (JOB_COLLECTION_CRON/_PLATFORMS 사용, idempotent)",
     )
     sub.add_parser("collect-unschedule", help="공고 수집 Schedule 삭제")
+
+    sub.add_parser(
+        "apply-schedule",
+        help="자동 지원 시작 Schedule 등록/갱신 (APPLY_SCHEDULE_CRON/_COUNT 사용, idempotent)",
+    )
+    sub.add_parser("apply-unschedule", help="자동 지원 시작 Schedule 삭제")
 
     asyncio.run(_run(parser.parse_args()))
 

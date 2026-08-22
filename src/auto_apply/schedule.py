@@ -20,11 +20,14 @@ from temporalio.client import (
 )
 
 from auto_apply.config import Settings
+from auto_apply.contracts.dto import ApplyIntakeInput
 from auto_apply.contracts.job import CollectJobsInput
 from auto_apply.temporal_config import QUEUE_DEFAULT
+from auto_apply.workflows.apply_intake import ApplyIntakeWorkflow
 from auto_apply.workflows.job_collection import JobCollectionWorkflow
 
 JOB_COLLECTION_SCHEDULE_ID = "job-collection-schedule"
+APPLY_INTAKE_SCHEDULE_ID = "apply-intake-schedule"
 
 
 def build_job_collection_schedule(cfg: Settings) -> Schedule:
@@ -60,3 +63,36 @@ async def ensure_job_collection_schedule(client: Client, cfg: Settings) -> str:
 
 async def delete_job_collection_schedule(client: Client) -> None:
     await client.get_schedule_handle(JOB_COLLECTION_SCHEDULE_ID).delete()
+
+
+def build_apply_intake_schedule(cfg: Settings) -> Schedule:
+    """등록될 Schedule 정의. `build_job_collection_schedule`과 같은 이유로 순수 함수다."""
+    return Schedule(
+        action=ScheduleActionStartWorkflow(
+            ApplyIntakeWorkflow.run,
+            ApplyIntakeInput(count=cfg.apply_schedule_count),
+            id=f"{APPLY_INTAKE_SCHEDULE_ID}-run",
+            task_queue=QUEUE_DEFAULT,
+        ),
+        spec=ScheduleSpec(cron_expressions=[cfg.apply_schedule_cron]),
+        # job-collection Schedule 과 같은 이유(§11.2b) — 겹쳐 돌 이유가 없다. dedupe 는
+        # ApplyIntakeWorkflow 활동이 REJECT_DUPLICATE 로 이미 하지만, 굳이 겹쳐 돌릴 이유는
+        # 없다.
+        policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
+    )
+
+
+async def ensure_apply_intake_schedule(client: Client, cfg: Settings) -> str:
+    """없으면 만들고, 있으면 최신 설정으로 덮어쓴다. 반환값은 "created" | "updated"."""
+    schedule = build_apply_intake_schedule(cfg)
+    try:
+        await client.create_schedule(APPLY_INTAKE_SCHEDULE_ID, schedule)
+        return "created"
+    except ScheduleAlreadyRunningError:
+        handle = client.get_schedule_handle(APPLY_INTAKE_SCHEDULE_ID)
+        await handle.update(lambda _: ScheduleUpdate(schedule=schedule))
+        return "updated"
+
+
+async def delete_apply_intake_schedule(client: Client) -> None:
+    await client.get_schedule_handle(APPLY_INTAKE_SCHEDULE_ID).delete()

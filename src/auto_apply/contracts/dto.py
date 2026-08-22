@@ -35,6 +35,23 @@ class StartApplication(_Frozen):
     max_guide_revisions: int = Field(default=5, ge=1)
 
 
+class ApplyIntakeInput(_Frozen):
+    """`ApplyIntakeWorkflow.run()`의 입력. Schedule 이 시작할 때마다 넘긴다(§ apply-schedule)."""
+
+    count: int = Field(default=3, ge=1)
+
+
+class ApplyIntakeResult(_Frozen):
+    """`apply_intake.start_actionable_applications`의 워크플로우-safe 사본. 필드는 그 함수의
+
+    `ApplyIntakeResult` 데이터클래스와 의도적으로 동일한 모양을 유지한다.
+    """
+
+    started: list[str] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+    candidates: int = 0
+
+
 class JobRef(_Frozen):
     job_id: str
     platform: str
