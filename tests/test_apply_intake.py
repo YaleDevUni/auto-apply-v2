@@ -187,11 +187,12 @@ async def test_job_with_non_retryable_history_is_excluded_from_candidates():
     assert result.skipped == ["A사 - 백엔드"]  # fit_score 더 높아도 이미 COMPLETED 라 제외
 
 
-async def test_needs_human_jobs_are_deprioritized_not_excluded():
-    """NEEDS_HUMAN 은 REJECTED 와 마찬가지로 신규 후보 뒤로 순위만 밀린다 — submitted_at
+async def test_needs_human_jobs_are_treated_as_full_candidates_not_deprioritized():
+    """NEEDS_HUMAN 은 REJECTED 와 달리 순위를 밀리지 않고 신규 후보와 완전히 동등하게
 
-    이 항상 None 인 채로만 끝나는 상태라(§apply_intake.py docstring) 원인이 해소되면 재시도가
-    안전하다(wanted 363152 공고 실측, 2026-08-22).
+    fit_score 순서에 섞인다 — submitted_at 이 항상 None 인 채로만 끝나는 상태라(§apply_intake.py
+    docstring) 사람의 의사 표현이 아니기 때문(wanted 363152 공고 실측, 2026-08-22 — 처음엔
+    REJECTED 와 같이 후순위로 뒀다가, 사용자가 "후순위로 하지마"로 이 구분을 확정했다).
     """
     stuck = _record(platform_job_id="1", company="A사", title="백엔드", fit_score=99)
     fresh = _record(platform_job_id="2", company="B사", title="프론트", fit_score=10)
@@ -200,12 +201,10 @@ async def test_needs_human_jobs_are_deprioritized_not_excluded():
     c = _container(job_rows, state_rows=state_rows)
     client = _FakeClient()
 
+    # fit_score 가 더 높은 A사(NEEDS_HUMAN)가 신규 후보 B사보다 먼저 뽑힌다 — REJECTED 였다면
+    # (아래 test_rejected_jobs_are_deprioritized_not_excluded) B사가 먼저 뽑혔을 것.
     result = await start_actionable_applications(1, c, client, now=_NOW)
-    assert result.started == ["B사 - 프론트"]
-
-    client2 = _FakeClient()
-    result2 = await start_actionable_applications(2, c, client2, now=_NOW)
-    assert result2.started == ["B사 - 프론트", "A사 - 백엔드"]
+    assert result.started == ["A사 - 백엔드"]
 
 
 async def test_rejected_jobs_are_deprioritized_not_excluded():
