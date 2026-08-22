@@ -12,10 +12,13 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
-from auto_apply.contracts.activity_defs import collect_platform_jobs
+from auto_apply.contracts.activity_defs import collect_platform_jobs, notify
+from auto_apply.contracts.dto import NotifyEvent
 from auto_apply.contracts.job import CollectJobsInput, CollectJobsResult, PlatformCollectionResult
+from auto_apply.domain.alerting import collection_alert
 
 _RETRY = RetryPolicy(maximum_attempts=3, non_retryable_error_types=["PolicyViolation"])
+_NOTIFY_RETRY = RetryPolicy(maximum_attempts=3, initial_interval=timedelta(seconds=1))
 
 
 @workflow.defn
@@ -25,7 +28,28 @@ class JobCollectionWorkflow:
         # 플랫폼마다 독립적인 파이프라인이다. 하나가 느리거나(수백 건 상세 조회)
         # 실패해도 나머지를 막지 않도록 동시에 돌린다.
         results = await asyncio.gather(*(self._collect(p) for p in cmd.platforms))
+        await self._alert_if_unhealthy(list(results))
         return CollectJobsResult(results=list(results))
+
+    async def _alert_if_unhealthy(self, results: list[PlatformCollectionResult]) -> None:
+        """이 워크플로우는 플랫폼 실패를 결과 필드로 삼켜 COMPLETED 로 끝난다 — watchdog
+        (`watchdog.py`)이 못 보는 조용한 실패라 여기서 직접 알린다(§ domain/alerting.py).
+
+        알림 전송이 실패해도 수집 결과 자체는 살린다 — 이미 저장까지 끝난 뒤라 여기서
+        워크플로우를 죽이면 멀쩡한 수집이 FAILED 로 보인다.
+        """
+        message = collection_alert(results)
+        if message is None:
+            return
+        try:
+            await workflow.execute_activity(
+                notify,
+                NotifyEvent(kind="JOB_COLLECTION_UNHEALTHY", message=message),
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_NOTIFY_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("job_collection.alert_failed")
 
     async def _collect(self, platform: str) -> PlatformCollectionResult:
         """한 플랫폼의 실패가 다른 플랫폼 결과까지 지우지 않는다 — 받은 데까지 보고한다."""

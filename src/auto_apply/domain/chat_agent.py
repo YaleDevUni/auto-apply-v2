@@ -58,17 +58,28 @@ def build_prompt(user_text: str, transcript: list[tuple[AgentStep, str]]) -> str
     """이번 턴의 사용자 원문 + 지금까지 이번 턴에서 부른 (도구 호출, 관찰 결과) 를 이어붙인다.
 
     `catalog_prefix`는 여기 안 들어간다 — `cache_prefix`로 따로 실려서 캐시 경계가 갈린다.
+
+    포맷이 "완료 체크리스트"인 이유: `LLMClient` 에는 멀티턴 tool-use 프리미티브가 없어서
+    (`complete`/`structured` 뿐, §9.2) 매 스텝이 무상태 재판단이고, 지난 호출은 모델 자신의
+    assistant 턴이 아니라 사용자 메시지 안의 텍스트로만 들어온다. 이걸 `[도구 호출] x -> y`
+    같은 로그 한 줄로 적으면 모델이 "내가 이미 했다"로 못 읽고 요청에서 제일 눈에 띄는 도구를
+    다시 고른다 — 실측(2026-08-22, claude CLI + haiku, 서로 다른 복합 요청 3건): 로그 형식은
+    매번 중복 호출 3~4회, 아래 체크리스트 형식은 3건 모두 중복 0회였다. 중복은 코드가 막아
+    실행되진 않지만(telegram/agent.py) 스텝 예산과 LLM 호출비를 태운다.
     """
-    lines = [f"사용자: {user_text}"]
-    for step, observation in transcript:
-        lines.append(f"[도구 호출] {step.tool}({step.tool_args}) -> {observation}")
-    if transcript:
-        # 모델이 성공 관찰 결과를 보고도 같은 도구를 또 부르는 습성이 있어(MAX_STEPS 주석)
-        # 매 턴 끝에 종료 조건을 다시 상기시킨다.
-        lines.append(
-            '위 결과로 사용자에게 답할 수 있으면 action="respond" 로 끝내세요.'
-            " 아직 실행하지 않은 다른 도구가 필요할 때만 도구를 부르세요."
-        )
+    lines = [f"사용자 요청: {user_text}", ""]
+    if not transcript:
+        lines.append("아직 아무 도구도 실행하지 않았습니다.")
+        return "\n".join(lines)
+    lines.append("이미 완료한 도구 호출 (다시 부르면 무시됩니다):")
+    for i, (step, observation) in enumerate(transcript, 1):
+        lines.append(f"{i}. ✅ {step.tool}({step.tool_args})")
+        lines.append(f"   결과: {observation}")
+    lines += [
+        "",
+        "위 목록에 있는 호출은 이미 끝났습니다. 사용자 요청 중 아직 실행하지 않은 것이 남아"
+        ' 있으면 그 도구만 부르고, 남은 게 없으면 action="respond" 로 결과를 정리해 답하세요.',
+    ]
     return "\n".join(lines)
 
 

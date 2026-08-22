@@ -40,23 +40,31 @@ def test_build_prompt_appends_tool_calls_in_order():
     prompt = build_prompt("a1 어떻게 됐어?", [(step1, "3건"), (step2, "AWAITING_APPROVAL")])
 
     lines = prompt.splitlines()
-    assert any("list_applications" in line and "3건" in line for line in lines)
-    assert any("get_application" in line and "AWAITING_APPROVAL" in line for line in lines)
-    # 순서 보존: list_applications 관찰이 get_application 호출보다 먼저 나와야 한다
     first_idx = next(i for i, line in enumerate(lines) if "list_applications" in line)
     second_idx = next(i for i, line in enumerate(lines) if "get_application" in line)
+    # 관찰 결과는 그 호출 바로 다음 줄에 붙는다
+    assert "3건" in lines[first_idx + 1]
+    assert "AWAITING_APPROVAL" in lines[second_idx + 1]
+    # 순서 보존: list_applications 가 get_application 보다 먼저 나와야 한다
     assert first_idx < second_idx
 
 
-def test_build_prompt_reminds_model_to_respond_once_tools_have_run():
-    """도구 결과가 있으면 매 턴 종료 조건을 다시 알려준다 — 모델이 성공한 도구를 또 부르는
+def test_build_prompt_marks_finished_calls_and_restates_the_exit_condition():
+    """지난 호출을 "이미 완료"로 표시하고 매 턴 종료 조건을 다시 알려준다.
 
-    습성 때문에 MAX_STEPS 가 소진되던 실측(2026-08-22)에 대한 방어.
+    로그 한 줄(`[도구 호출] x -> y`) 형식이면 모델이 같은 도구를 다시 부른다는 걸 실측
+    (2026-08-22, 복합 요청 3건에서 매번 중복 3~4회)하고 바꾼 포맷이다.
     """
     step = AgentStep(action="call_tool", tool="schedule_status", tool_args={})
 
-    assert "respond" not in build_prompt("스케줄 상태", [])
-    assert "respond" in build_prompt("스케줄 상태", [(step, "공고 수집: 켜짐")])
+    empty = build_prompt("스케줄 상태", [])
+    assert "respond" not in empty
+    assert "아직 아무 도구도 실행하지 않았습니다" in empty
+
+    after = build_prompt("스케줄 상태", [(step, "공고 수집: 켜짐")])
+    assert "이미 완료한 도구 호출" in after
+    assert "다시 부르면 무시됩니다" in after
+    assert "respond" in after
 
 
 def test_fallback_message_apologizes_when_nothing_ran():
