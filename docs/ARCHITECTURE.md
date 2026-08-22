@@ -336,6 +336,17 @@ flowchart LR
   라이브러리 문제라서 별도다)이고, `PDF_RENDERER` 기본값은 `weasyprint`다(`stub`는 JSON 덤프로
   남겨뒀다 — 인프라 없는 개발 환경을 위한 대역).
 
+  **개인 프로젝트 GitHub 링크 (2026-08-22 연장)** — 전엔 프로젝트 URL을 `content` 원문
+  텍스트에 그냥 적어뒀다(`config/facts.yaml`) — LLM이 불릿 문장 안에 그 URL을 그대로
+  옮겨 적을지 여부에 기댔고, 옮겨 적혀도 PDF에는 escape된 평문으로만 나와 클릭 가능한
+  링크가 아니었다. `entity_label`/`entity_period`와 같은 패턴으로 `Fact.entity_url`을
+  추가해(`contracts/fact.py`) `group_facts_for_resume`가 `FactBlock.entity_url`로
+  결정론적으로 뽑고(`domain/resume_blocks.py`), `_assemble.py`가 `ResumeBlockView.url`로
+  옮겨 `PdfRenderer`가 블록 제목 옆에 항상 `<a>` 링크로 그린다(`adapters/pdf/_template.py`)
+  — URL은 서술이 아니라 리터럴이라 `ground_check`(fact_id 근거 검증) 대상이 아니다. 렌더러는
+  `http(s)://`로 시작하는 값만 링크로 그리고 그 외(예: `javascript:` 스킴, 빈 값)는 조용히
+  생략한다.
+
 ### 2.4 AutomationRepairWorkflow
 
 ```mermaid

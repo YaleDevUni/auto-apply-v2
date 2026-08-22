@@ -24,6 +24,7 @@ BLOCK = FactBlock(
     entity="acme",
     entity_label="Acme",
     entity_period="2023.01 - 2023.12",
+    entity_url=None,
     title="API 개발",
     period="2023.01 - 2023.06",
     facts=[],

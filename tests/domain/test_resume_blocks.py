@@ -41,6 +41,7 @@ FACT_PROJ_SUMMARY = Fact(
     content="X 프로젝트를 개발했다.",
     keywords=["React"],
     entity="proj-x",
+    entity_url="https://github.com/example/proj-x",
     block="main",
     block_label="X 프로젝트",
     block_period="2024.01 - 2024.02",
@@ -77,6 +78,7 @@ def test_group_facts_for_resume_builds_company_header_and_sub_blocks():
     assert api_block.kind == "career"
     assert api_block.entity_label == "Acme(백엔드 인턴)"
     assert api_block.entity_period == "2023.01 - 2023.12"
+    assert api_block.entity_url is None
     assert api_block.title == "API 개발"
     assert api_block.period == "2023.01 - 2023.06"
     assert api_block.tech_stack == ["FastAPI", "REST"]
@@ -91,6 +93,7 @@ def test_group_facts_for_resume_merges_facts_sharing_same_block():
     assert [f.id for f in block.facts] == ["proj-x-summary", "proj-x-detail"]
     # 헤더 fact 가 없는 프로젝트는 블록 자신의 title/period 가 entity label/period 로도 쓰인다.
     assert block.entity_label == "X 프로젝트"
+    assert block.entity_url == "https://github.com/example/proj-x"
     assert block.tech_stack == ["React", "TypeScript"]
 
 

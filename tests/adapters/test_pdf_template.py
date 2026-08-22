@@ -33,6 +33,7 @@ RESUME = AssembledResume(
         ResumeBlockView(
             title="칸반 협업 시스템",
             period="2024.01 - 2024.02",
+            url="https://github.com/example/project-kanban",
             bullets=[ResumeBulletView(text="실시간 칸반 도구를 구현했다", fact_ids=["f-3"])],
             tech_stack=["NestJS"],
         )
@@ -57,6 +58,10 @@ def test_render_resume_html_includes_every_section():
     assert "[결제 API 개발]" in html
     assert "사용기술: FastAPI, PostgreSQL" in html
     assert "칸반 협업 시스템" in html
+    assert (
+        "<a class='block-link' href='https://github.com/example/project-kanban'>"
+        "github.com/example/project-kanban</a>" in html
+    )
     assert "LLM 파이프라인 설계 경험" in html
     assert "Example University" in html
     assert "React" in html
@@ -68,6 +73,19 @@ def test_render_resume_html_escapes_user_content():
     html = render_resume_html(resume)
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_render_resume_html_omits_link_for_missing_or_unsafe_url():
+    resume = RESUME.model_copy(
+        update={
+            "projects": [
+                ResumeBlockView(title="URL 없는 프로젝트", bullets=[]),
+                ResumeBlockView(title="위험한 스킴", url="javascript:alert(1)", bullets=[]),
+            ]
+        }
+    )
+    html = render_resume_html(resume)
+    assert "<a class='block-link'" not in html
 
 
 def test_render_resume_html_omits_empty_optional_sections():

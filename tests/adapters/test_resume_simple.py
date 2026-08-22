@@ -53,6 +53,18 @@ FACT_BLOCK_DEVOPS = Fact(
     block_label="배포 자동화",
     block_period="2023.07 - 2023.12",
 )
+FACT_PROJ = Fact(
+    id="proj-x-summary",
+    user_id="u1",
+    kind="project",
+    content="X 프로젝트를 개발했다.",
+    keywords=["React"],
+    entity="proj-x",
+    entity_url="https://github.com/example/proj-x",
+    block="main",
+    block_label="X 프로젝트",
+    block_period="2024.01 - 2024.02",
+)
 PROFILE = Profile(user_id="u1", name="테스터")
 VALID_PAYLOAD = {
     "summary": "FastAPI 경험을 살린 백엔드 엔지니어입니다",
@@ -254,6 +266,35 @@ async def test_generate_assembles_block_bullets_into_career_section():
     assert career[0]["blocks"][0]["tech_stack"] == ["FastAPI", "결제"]
     assert career[0]["blocks"][0]["bullets"][0]["fact_ids"] == ["exp-block-1"]
     assert draft.used_fact_ids == ["exp-block-1"]
+
+
+async def test_generate_carries_entity_url_into_project_block():
+    """개인 프로젝트의 entity_url(config/facts.yaml, 예: GitHub 링크)이 LLM 을 거치지 않고
+
+    ResumeBlockView.url 로 그대로 조립된다(adapters/resume/_assemble.py).
+    """
+    facts = StaticFactSource([FACT_PROJ])
+    payload = {
+        "summary": "충분히 긴 요약 문장입니다",
+        "blocks": [
+            {
+                "block_id": "proj-x:main",
+                "bullets": [{"text": "X 프로젝트를 개발했다", "fact_ids": ["proj-x-summary"]}],
+            }
+        ],
+    }
+    gen = SimpleResumeGenerator(
+        StubLLM(payloads=[payload]),
+        UuidIdGen(),
+        facts,
+        _profile_source(),
+        _portfolio_source(),
+        StaticGuideSource(),
+    )
+    draft = await gen.generate(GenerateResumeRequest(application_id="a1", user_id="u1", job=JOB))
+    projects = draft.content["projects"]
+    assert projects[0]["title"] == "X 프로젝트"
+    assert projects[0]["url"] == "https://github.com/example/proj-x"
 
 
 async def test_generate_excludes_block_llm_skipped_from_career_section():

@@ -15,6 +15,9 @@
 #   - entity/block 계열: 이력서 경력·프로젝트 블록을 조립하는 그룹핑 키(kind=experience|project
 #     에서만 쓴다). 경력은 회사 헤더 fact(block 없음) + 하위 블록 fact 여러 개, 개인 프로젝트는
 #     헤더 fact 없이 block="main" 하나로 묶는다. 나머지 kind 는 전부 생략한다.
+#   - entity_url: 엔티티 링크(개인 프로젝트면 GitHub 저장소 URL). content 에 원문으로 적지
+#     않는다 — LLM 이 서술 안에 그대로 옮겨 적을지 여부에 기대지 않고, PdfRenderer 가 블록
+#     제목 옆에 항상 링크로 그린다. 그룹 안 fact 중 하나에만 있으면 된다(보통 summary fact).
 
 - id: exp-example-role
   user_id: default
@@ -44,6 +47,7 @@
   keywords: [WebSocket, React]
   source: "예시 — 실제 값으로 교체"
   entity: proj-example
+  entity_url: "https://github.com/example/realtime-chat"
   block: main
   block_label: "실시간 채팅 서비스"
   block_period: "2024.01 - 2024.02"

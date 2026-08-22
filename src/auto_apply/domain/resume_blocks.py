@@ -26,6 +26,7 @@ class FactBlock:
     entity: str
     entity_label: str
     entity_period: str | None
+    entity_url: str | None
     title: str
     period: str | None
     facts: list[Fact] = field(default_factory=list)
@@ -59,11 +60,13 @@ def group_facts_for_resume(facts: list[Fact]) -> list[FactBlock]:
     for fact in facts:
         if not fact.entity:
             continue
-        meta = entity_meta.setdefault(fact.entity, {"label": None, "period": None})
+        meta = entity_meta.setdefault(fact.entity, {"label": None, "period": None, "url": None})
         if fact.entity_label and not meta["label"]:
             meta["label"] = fact.entity_label
         if fact.entity_period and not meta["period"]:
             meta["period"] = fact.entity_period
+        if fact.entity_url and not meta["url"]:
+            meta["url"] = fact.entity_url
         if fact.block is None:
             continue
         key = (fact.entity, fact.block)
@@ -82,7 +85,7 @@ def group_facts_for_resume(facts: list[Fact]) -> list[FactBlock]:
     blocks: list[FactBlock] = []
     for key in block_order:
         entity, _ = key
-        meta = entity_meta.get(entity, {"label": None, "period": None})
+        meta = entity_meta.get(entity, {"label": None, "period": None, "url": None})
         title = block_label[key] or meta["label"] or entity
         period = block_period[key] or meta["period"]
         entity_label = meta["label"] or title
@@ -94,6 +97,7 @@ def group_facts_for_resume(facts: list[Fact]) -> list[FactBlock]:
                 entity=entity,
                 entity_label=entity_label,
                 entity_period=entity_period,
+                entity_url=meta["url"],
                 title=title,
                 period=period,
                 facts=block_facts[key],

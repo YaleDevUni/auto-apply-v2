@@ -56,6 +56,7 @@ def assemble_resume(
         view = ResumeBlockView(
             title=block.title,
             period=block.period,
+            url=block.entity_url,
             bullets=bullets,
             tech_stack=block.tech_stack,
         )

@@ -24,6 +24,7 @@ class ResumeBulletView(_Frozen):
 class ResumeBlockView(_Frozen):
     title: str
     period: str | None = None
+    url: str | None = None
     bullets: list[ResumeBulletView] = Field(default_factory=list)
     tech_stack: list[str] = Field(default_factory=list)
 

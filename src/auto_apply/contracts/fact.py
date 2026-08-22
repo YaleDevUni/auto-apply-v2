@@ -36,6 +36,10 @@ class Fact(_Frozen):
     """엔티티 헤더 표시명. 경력이면 "회사명(직무)" 형태 (예: "Acme(풀스택 개발자 인턴)")."""
     entity_period: str | None = None
     """엔티티 전체 기간 표시 (예: "2023.08 - 2024.04"). 그룹 안 fact 중 하나에만 있으면 된다."""
+    entity_url: str | None = None
+    """엔티티 링크(주로 개인 프로젝트의 GitHub 저장소 URL). 그룹 안 fact 중 하나에만 있으면
+    된다. LLM 불릿 텍스트에 원문을 흘려보내는 대신 여기 구조화해서 렌더러가 직접 링크로
+    그린다 — URL은 서술이 아니라 리터럴이라 grounding 검증 대상이 아니다."""
     block: str | None = None
     """entity 안의 하위 블록 키. None 이면 블록을 이루지 않고 entity 메타데이터만 제공한다
     (예: 경력의 역할 개요 fact)."""

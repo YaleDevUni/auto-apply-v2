@@ -37,6 +37,7 @@ h2 {
 .entity-head .company { font-weight: 700; font-size: 10.5pt; }
 .block { margin: 2.5mm 0 0 3mm; }
 .block-head .block-title { font-weight: 600; }
+.block-head .block-link { font-size: 8.5pt; margin-left: 2mm; color: #1a5fb4; }
 .period { color: #666; font-size: 9pt; white-space: nowrap; }
 ul.bullets { margin: 1mm 0 1mm; padding-left: 4.5mm; }
 ul.bullets li { margin-bottom: 0.8mm; }
@@ -69,12 +70,25 @@ def _tech(tech_stack: list[str]) -> str:
     return f"<div class='tech'>사용기술: {_e(', '.join(tech_stack))}</div>"
 
 
+def _link_label(url: str) -> str:
+    """블록 제목 옆에 붙는 링크 표시 텍스트 — href는 원문 그대로 두고, 화면엔 스킴 없는
+
+    짧은 형태만 보여준다(경력/프로젝트 헤더 한 줄이 너무 길어지지 않게).
+    """
+    return url.removeprefix("https://").removeprefix("http://")
+
+
 def _block(block: ResumeBlockView) -> str:
     period = f"<span class='period'>{_e(block.period)}</span>" if block.period else ""
     title = f"<span class='block-title'>[{_e(block.title)}]</span>"
+    link = (
+        f"<a class='block-link' href='{_e(block.url)}'>{_e(_link_label(block.url))}</a>"
+        if block.url and block.url.startswith(("http://", "https://"))
+        else ""
+    )
     return (
         "<div class='block'>"
-        f"<div class='block-head'>{title}{period}</div>"
+        f"<div class='block-head'><span>{title}{link}</span>{period}</div>"
         f"{_bullets(block.bullets)}"
         f"{_tech(block.tech_stack)}"
         "</div>"
