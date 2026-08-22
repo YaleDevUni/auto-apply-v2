@@ -98,11 +98,17 @@ class WantedPlatformAdapter:
             raise PolicyViolation(f"원티드 공고를 찾을 수 없다(마감/비공개/삭제): {url}")
 
         company = ((jd.get("company") or {}).get("name")) or ""
+        # 직무명은 상세 API 에선 `job.detail.position` 이다 — 목록 API(`job_source/wanted.py`)의
+        # 평평한 `position` 과 경로가 달라서 여태 title 이 항상 빈 문자열이었다(실측 2026-08-22,
+        # 공고 379571). 빈 title 은 조용히 번지는 종류의 버그다: 이력서 프롬프트에 직무명이
+        # 안 들어가고, canonical_key(company, "") 가 같은 회사의 모든 공고를 한 지원 건으로
+        # 뭉갠다. 목록 API 모양도 같이 받아둔다.
+        detail = jd.get("detail") or {}
         return JobRef(
             job_id=f"wanted:{job_id}",
             platform="wanted",
             url=url,
-            title=str(jd.get("position") or ""),
+            title=str(detail.get("position") or jd.get("position") or ""),
             company=str(company),
             description=_describe(jd),
         )

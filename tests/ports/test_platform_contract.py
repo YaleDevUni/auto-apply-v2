@@ -57,19 +57,30 @@ def _wanted_verify_handler(applications: list[dict], *, user_id: int = 2763813):
     return handler
 
 
+# 상세 API 는 직무명을 `job.detail.position` 에 준다 — 목록 API 의 평평한 `position` 과
+# 경로가 다르다(실측 2026-08-22, 공고 379571). 이 fixture 가 목록 API 모양을 흉내내고 있어서
+# "title 이 항상 빈 문자열"인 버그를 오프라인에서 못 잡았다.
 WANTED_DETAIL = {
     "job": {
-        "position": "백엔드 엔지니어",
         "company": {"name": "원티드 주식회사"},
-        "detail": {"intro": "회사 소개", "main_tasks": "백엔드 개발", "status": "open"},
+        "detail": {
+            "position": "백엔드 엔지니어",
+            "intro": "회사 소개",
+            "main_tasks": "백엔드 개발",
+            "status": "open",
+        },
         "skill_tags": [{"title": "Python"}],
     }
 }
 WANTED_DETAIL_CLOSED = {
     "job": {
-        "position": "백엔드 엔지니어",
         "company": {"name": "원티드 주식회사"},
-        "detail": {"intro": "회사 소개", "main_tasks": "백엔드 개발", "status": "close"},
+        "detail": {
+            "position": "백엔드 엔지니어",
+            "intro": "회사 소개",
+            "main_tasks": "백엔드 개발",
+            "status": "close",
+        },
         "skill_tags": [{"title": "Python"}],
     }
 }
@@ -126,6 +137,19 @@ class TestWantedPlatformAdapter:
         assert job.company == "원티드 주식회사"
         assert "회사 소개" in job.description
         assert "Python" in job.description
+
+    async def test_fetch_job_falls_back_to_flat_position(self):
+        """목록 API 모양(평평한 position)도 받아준다 — 응답 모양이 갈릴 때 title 을 잃지 않게."""
+        body = {
+            "job": {
+                "position": "프론트엔드 엔지니어",
+                "company": {"name": "원티드 주식회사"},
+                "detail": {"intro": "회사 소개", "status": "open"},
+            }
+        }
+        adapter = _wanted_adapter(body=body)
+        job = await adapter.fetch_job("https://www.wanted.co.kr/wd/373300")
+        assert job.title == "프론트엔드 엔지니어"
 
     async def test_fetch_job_rejects_malformed_url(self):
         adapter = _wanted_adapter()
