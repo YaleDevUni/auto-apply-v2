@@ -22,22 +22,33 @@ from temporalio.client import Client
 from auto_apply.ai.schemas import AgentStep
 from auto_apply.bootstrap import Container
 from auto_apply.contracts.dto import NotifyEvent
-from auto_apply.domain.chat_agent import MAX_STEPS, build_prompt, catalog_prefix
+from auto_apply.domain.chat_agent import (
+    MAX_STEPS,
+    build_fallback_message,
+    build_prompt,
+    catalog_prefix,
+)
 from auto_apply.telegram._agent_tools import SINGLE_SHOT_TOOLS, TOOLS, catalog
 
 log = structlog.get_logger(__name__)
 
 
-async def _run_tool(name: str, args: dict[str, str], c: Container, client: Client) -> str:
+async def _run_tool(
+    name: str, args: dict[str, str], c: Container, client: Client
+) -> tuple[bool, str]:
+    """`(성공 여부, 관찰 결과)`. 성공 여부는 `build_fallback_message`가 "실제로 실행됐다"고
+
+    말해도 되는 도구만 고르는 데 쓴다 — 관찰 결과 문자열만으로는 실행 실패와 구분할 수 없다.
+    """
     entry = TOOLS.get(name)
     if entry is None:
-        return f"알 수 없는 도구입니다: {name}. 사용 가능한 도구: {', '.join(TOOLS)}"
+        return False, f"알 수 없는 도구입니다: {name}. 사용 가능한 도구: {', '.join(TOOLS)}"
     _, _, handler = entry
     try:
-        return await handler(args, c, client)
+        return True, await handler(args, c, client)
     except Exception as e:  # 도구 하나가 죽어도 대화 전체는 안 죽는다 — 관찰 결과로 되돌린다
         log.warning("telegram.chat_agent.tool_failed", tool=name, error=str(e))
-        return f"{name} 실행 중 오류가 발생했습니다: {e}"
+        return False, f"{name} 실행 중 오류가 발생했습니다: {e}"
 
 
 async def handle_chat(text: str, c: Container, client: Client) -> None:
@@ -55,6 +66,9 @@ async def handle_chat(text: str, c: Container, client: Client) -> None:
     # SINGLE_SHOT_TOOLS(인자가 달라도 한 턴 1회만)는 코드로 재실행을 막는다.
     called_signatures: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
     called_tool_names: set[str] = set()
+    # 실제로 실행된 도구만 모은다(중복으로 차단된 호출 제외) — MAX_STEPS 를 소진했을 때
+    # 사과만 하지 않고 이미 일어난 작업을 사용자에게 보여주는 데 쓴다.
+    executed: list[tuple[str, str]] = []
     try:
         for _ in range(MAX_STEPS):
             prompt = build_prompt(text, transcript)
@@ -76,15 +90,13 @@ async def handle_chat(text: str, c: Container, client: Client) -> None:
                     " 바탕으로 사용자에게 바로 답하세요."
                 )
             else:
-                observation = await _run_tool(step.tool, step.tool_args, c, client)
+                ok, observation = await _run_tool(step.tool, step.tool_args, c, client)
                 called_signatures.add(signature)
                 called_tool_names.add(step.tool)
+                if ok:
+                    executed.append((step.tool, observation))
             transcript.append((step, observation))
-        await c.notifier.notify(
-            NotifyEvent(
-                kind="CHAT", message="죄송해요, 요청을 다 처리하지 못했어요. 다시 말씀해주세요."
-            )
-        )
+        await c.notifier.notify(NotifyEvent(kind="CHAT", message=build_fallback_message(executed)))
     except Exception as e:  # 이 함수는 예외를 던지지 않는다 — 모듈 docstring 참고
         log.warning("telegram.chat_agent.turn_failed", error=str(e))
         await c.notifier.notify(

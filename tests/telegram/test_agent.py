@@ -150,7 +150,12 @@ async def test_unknown_tool_name_is_self_corrected_not_crashed():
     assert [e.message for e in notifier.notified] == ["죄송해요, 그 요청은 처리할 수 없어요."]
 
 
-async def test_step_budget_exhausted_sends_apology_instead_of_looping_forever():
+async def test_step_budget_exhausted_reports_tools_that_already_ran():
+    """스텝을 다 써도 실행된 도구가 있으면 사과 대신 그 결과를 보낸다.
+
+    실측(2026-08-22): "스케줄 시각 바꾸고 켜줘"가 스케줄을 실제로 바꿔놓고도 "다 처리하지
+    못했어요"만 보내서, 사용자가 기능이 실패한 줄 알고 같은 요청을 반복했다.
+    """
     notifier = _FakeNotifier()
     payloads = [
         {"action": "call_tool", "tool": "list_applications", "tool_args": {}}
@@ -159,6 +164,20 @@ async def test_step_budget_exhausted_sends_apology_instead_of_looping_forever():
     c = _container(payloads, notifier=notifier)
 
     await handle_chat("계속 도구만 부르는 상황", c, _FakeClient())
+
+    assert len(notifier.notified) == 1
+    assert "list_applications" in notifier.notified[0].message
+
+
+async def test_step_budget_exhausted_apologizes_when_no_tool_ever_ran():
+    notifier = _FakeNotifier()
+    payloads = [
+        {"action": "call_tool", "tool": "no_such_tool", "tool_args": {"i": str(i)}}
+        for i in range(MAX_STEPS)
+    ]
+    c = _container(payloads, notifier=notifier)
+
+    await handle_chat("존재하지 않는 도구만 부르는 상황", c, _FakeClient())
 
     assert len(notifier.notified) == 1
     assert "죄송해요" in notifier.notified[0].message
