@@ -16,7 +16,14 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from auto_apply.temporal_config import DATA_CONVERTER
-from auto_apply.watchdog import WatchdogHit, build_query, format_message, poll_once, to_hit
+from auto_apply.watchdog import (
+    WatchdogHit,
+    blind_alert,
+    build_query,
+    format_message,
+    poll_once,
+    to_hit,
+)
 from tests.fixtures.watchdog_fail_workflow import AlwaysFailWorkflow
 from tests.ports.test_notifier_contract import RecordingNotifier
 
@@ -43,6 +50,19 @@ def test_format_message_includes_id_and_status():
     assert "application-42" in message
     assert "FAILED" in message
     assert "2026-08-20T01:02:03" in message
+
+
+def test_blind_alert_fires_once_exactly_at_the_threshold():
+    """계속 실패하는 동안 매 주기 알리면 그게 소음이다 — 임계치에 닿은 순간만 알린다."""
+    assert blind_alert(1, 3, "connection refused") is None
+    assert blind_alert(2, 3, "connection refused") is None
+
+    message = blind_alert(3, 3, "connection refused")
+
+    assert message is not None
+    assert "connection refused" in message
+
+    assert blind_alert(4, 3, "connection refused") is None
 
 
 @dataclass

@@ -2,16 +2,23 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 
-from fastapi import FastAPI
+import structlog
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from temporalio.client import Client
 
 from auto_apply.api.deps import ContainerDep
 from auto_apply.api.routers import applications, recipes, telegram
-from auto_apply.bootstrap import build_container
+from auto_apply.bootstrap import Container, build_container
 from auto_apply.config import load_settings
+from auto_apply.contracts.dto import NotifyEvent
+from auto_apply.process_alerts import notify_safely
+from auto_apply.telegram.bridge import inbound_failure_message
 from auto_apply.temporal_config import DATA_CONVERTER
+
+log = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
@@ -30,6 +37,28 @@ app = FastAPI(title="auto-apply", version="0.1.0", lifespan=lifespan)
 app.include_router(applications.router)
 app.include_router(recipes.router)
 app.include_router(telegram.router)
+
+
+@app.exception_handler(Exception)
+async def alert_on_unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+    """미처리 예외를 500 으로 돌려주기 전에 사람에게 알린다.
+
+    이 API 는 컨트롤 플레인이라 호출자가 늘 사람인 건 아니다 — `POST /telegram/webhook` 은
+    텔레그램 서버가 부르므로 여기서 500 이 나면 버튼을 누른 사람에게는 그냥 무응답으로 보이고
+    (`telegram/listener.py` 의 dispatch 실패와 같은 증상), 로그를 열지 않는 한 아무도 모른다.
+    그래서 응답 코드와 별개로 알림을 한 번 보낸다.
+    """
+    container = cast(Container | None, getattr(request.app.state, "container", None))
+    log.exception("api.unhandled_error", path=request.url.path, method=request.method)
+    if container is not None:
+        message = (
+            inbound_failure_message(exc)
+            if request.url.path.startswith("/telegram/")
+            else f"API 요청 처리 실패: {request.method} {request.url.path}\n"
+            f"{type(exc).__name__}: {exc}"
+        )
+        await notify_safely(container.notifier, NotifyEvent(kind="API_ERROR", message=message))
+    return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
 
 @app.get("/healthz")

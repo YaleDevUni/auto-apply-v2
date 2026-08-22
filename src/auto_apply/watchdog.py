@@ -33,6 +33,7 @@ from auto_apply.bootstrap import build_container
 from auto_apply.config import load_settings
 from auto_apply.contracts.dto import NotifyEvent
 from auto_apply.ports.notifier import Notifier
+from auto_apply.process_alerts import notify_safely, run_guarded
 from auto_apply.temporal_config import DATA_CONVERTER
 
 log = structlog.get_logger(__name__)
@@ -60,6 +61,22 @@ def to_hit(execution: WorkflowExecution) -> WatchdogHit:
         run_id=execution.run_id,
         status=execution.status.name if execution.status else "UNKNOWN",
         close_time=execution.close_time,
+    )
+
+
+def blind_alert(consecutive_failures: int, threshold: int, error: str) -> str | None:
+    """폴링이 연속으로 실패하면 "감시가 눈이 먼 상태"다 — 그것도 알려야 한다.
+
+    폴링 실패는 로그에만 남기고 계속 도는 게 맞다(모듈 docstring: 감시가 감시 대상이 되면
+    안 된다). 하지만 Temporal 접속이 몇 분째 안 되는 동안에는 워크플로우가 죽어도 알림이
+    안 온다 — 그 침묵이 "아무 문제 없음"으로 읽히는 게 제일 위험하다. 임계치에 정확히
+    도달한 순간 딱 한 번만 알린다(계속 실패하는 동안 매 주기 알리면 그게 소음이다).
+    """
+    if consecutive_failures != threshold:
+        return None
+    return (
+        f"워크플로우 감시가 {threshold}회 연속 실패했다 — 지금은 실패한 워크플로우를 감지하지"
+        f" 못하는 상태다.\nTemporal 접속을 확인해라: {error}"
     )
 
 
@@ -110,15 +127,31 @@ async def main() -> None:
 
     since = datetime.now(UTC) - timedelta(minutes=cfg.watchdog_lookback_minutes)
     seen: set[tuple[str, str]] = set()
+    failures = 0
     while True:
         try:
             since = await poll_once(client, container.notifier, since, seen)
-        except Exception:
+        except Exception as e:
             # telegram/listener.py 에서 실측한 교훈과 같다 — 폴링 중 뭐가 터져도 이 프로세스는
             # 살아 있어야 한다. 안 그러면 감시가 감시 대상이 되는 역설이 생긴다.
             log.exception("watchdog.poll_failed")
+            failures += 1
+            message = blind_alert(failures, cfg.watchdog_blind_alert_after, str(e))
+            if message is not None:
+                await notify_safely(
+                    container.notifier, NotifyEvent(kind="WATCHDOG_BLIND", message=message)
+                )
+        else:
+            if failures >= cfg.watchdog_blind_alert_after:
+                await notify_safely(
+                    container.notifier,
+                    NotifyEvent(kind="WATCHDOG_RECOVERED", message="워크플로우 감시가 복구됐다."),
+                )
+            failures = 0
         await asyncio.sleep(cfg.watchdog_poll_interval_seconds)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # watchdog 이 죽으면 아무도 안 알려준다 — 그래서 이 프로세스야말로 크래시 알림이 필요하다
+    # (§ process_alerts.py).
+    asyncio.run(run_guarded("watchdog", main))

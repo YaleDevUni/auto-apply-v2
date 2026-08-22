@@ -61,6 +61,41 @@ async def test_process_updates_continues_past_a_dispatch_that_raises():
     assert offset == 3  # 실패한 update 도 offset 은 넘어가서 다음 poll 에서 다시 안 받는다
 
 
+async def test_process_updates_reports_a_dispatch_failure_to_the_human():
+    """살아 있는 것과 조용한 것은 다르다 — 버튼을 누른 사람에게 dispatch 실패는 그냥 무응답이다.
+
+    `_notify_signal_failed`(bridge.py)가 다루는 "signal 이 안 닿았다"와 증상이 같아서, 여기서
+    알리지 않으면 사용자는 원인을 구분할 방법이 없다.
+    """
+    reported: list[tuple[int, str]] = []
+
+    async def dispatch(update: dict[str, object]) -> CallbackOutcome | None:
+        raise RuntimeError("Query is too old")
+
+    async def on_error(update: dict[str, object], error: Exception) -> None:
+        reported.append((int(update["update_id"]), str(error)))
+
+    offset = await _process_updates([{"update_id": 7}], dispatch, on_error=on_error)
+
+    assert reported == [(7, "Query is too old")]
+    assert offset == 8
+
+
+async def test_process_updates_does_not_report_malformed_callbacks():
+    """형식이 안 맞는 콜백은 남의 봇/오래된 버전이 보낸 것일 수 있다 — 사람을 부를 일이 아니다."""
+    reported: list[str] = []
+
+    async def dispatch(update: dict[str, object]) -> CallbackOutcome | None:
+        raise MalformedCallback("bogus")
+
+    async def on_error(update: dict[str, object], error: Exception) -> None:
+        reported.append(str(error))
+
+    await _process_updates([{"update_id": 9}], dispatch, on_error=on_error)
+
+    assert reported == []
+
+
 async def test_process_updates_still_advances_offset_on_malformed_callback():
     async def dispatch(update: dict[str, object]) -> CallbackOutcome | None:
         raise MalformedCallback("bogus")

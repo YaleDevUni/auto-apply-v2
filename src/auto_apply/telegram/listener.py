@@ -23,11 +23,14 @@ import structlog
 
 from auto_apply.bootstrap import Container, build_container
 from auto_apply.config import load_settings
+from auto_apply.contracts.dto import NotifyEvent
+from auto_apply.process_alerts import notify_safely, run_guarded
 from auto_apply.telegram.bridge import (
     CallbackOutcome,
     MalformedCallback,
     handle_callback_query,
     handle_message,
+    inbound_failure_message,
 )
 from auto_apply.temporal_config import DATA_CONVERTER
 
@@ -75,6 +78,13 @@ async def main() -> None:
     log.info("telegram.listener.start")
 
     offset: int | None = None
+
+    async def on_error(update: dict[str, Any], error: Exception) -> None:
+        await notify_safely(
+            container.notifier,
+            NotifyEvent(kind="TELEGRAM_INBOUND_FAILED", message=inbound_failure_message(error)),
+        )
+
     async with httpx.AsyncClient() as http:
         while True:
             try:
@@ -84,7 +94,9 @@ async def main() -> None:
                 await asyncio.sleep(5)
                 continue
 
-            new_offset = await _process_updates(updates, lambda u: _dispatch(u, container, client))
+            new_offset = await _process_updates(
+                updates, lambda u: _dispatch(u, container, client), on_error=on_error
+            )
             if new_offset is not None:
                 offset = new_offset
 
@@ -92,6 +104,8 @@ async def main() -> None:
 async def _process_updates(
     updates: list[dict[str, Any]],
     dispatch: Callable[[dict[str, Any]], Awaitable[CallbackOutcome | None]],
+    *,
+    on_error: Callable[[dict[str, Any], Exception], Awaitable[None]] | None = None,
 ) -> int | None:
     """update 를 순서대로 처리한다. 하나가 실패해도 나머지는 계속 처리하고 offset 은 넘긴다.
 
@@ -101,6 +115,10 @@ async def _process_updates(
     않는 설계(모듈 docstring)라 다음 기동에서 같은 update 를 또 받아 똑같이 죽는 무한
     크래시루프가 됐다. 모듈 docstring이 전제한 "재처리는 비용만 남는다"가 성립하려면 여기서
     어떤 예외가 나도 이 프로세스는 살아 있어야 한다.
+
+    다만 "살아 있다"와 "조용하다"는 다르다 — 버튼을 누른 사람 입장에서 dispatch 실패는
+    `_notify_signal_failed`(bridge.py)가 다루는 "signal 이 안 닿았다"와 구분이 안 되는 무응답이다.
+    그래서 로그만 남기지 않고 `on_error` 로 사람에게도 알린다.
     """
     offset: int | None = None
     for update in updates:
@@ -110,8 +128,10 @@ async def _process_updates(
         except MalformedCallback as e:
             log.warning("telegram.listener.malformed_callback", data=str(e))
             continue
-        except Exception:
+        except Exception as e:
             log.exception("telegram.listener.dispatch_failed", update_id=update.get("update_id"))
+            if on_error is not None:
+                await on_error(update, e)
             continue
         if outcome is None:
             continue
@@ -130,4 +150,6 @@ async def _dispatch(
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # 리스너가 죽으면 승인 버튼이 조용히 안 먹는다 — 워크플로우는 approval_timeout 이 지나서야
+    # EXPIRED 로 끝난다 (§ process_alerts.py).
+    asyncio.run(run_guarded("telegram listener", main))

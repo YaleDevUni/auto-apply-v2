@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     # FAILED/TERMINATED/TIMED_OUT 으로 끝난 워크플로우를 능동으로 텔레그램 알림한다.
     watchdog_poll_interval_seconds: int = Field(default=60, ge=5)
     watchdog_lookback_minutes: int = Field(default=60, ge=1)
+    # 폴링이 이만큼 연속 실패하면 "감시가 눈이 먼 상태"를 알린다(watchdog.blind_alert).
+    # 한두 번의 일시적 실패로 알림이 오면 소음이라 기본값을 조금 여유 있게 잡는다.
+    watchdog_blind_alert_after: int = Field(default=3, ge=1)
 
     s3_endpoint_url: str = "http://localhost:9000"
     s3_bucket: str = "auto-apply"

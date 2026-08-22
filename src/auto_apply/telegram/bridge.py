@@ -134,6 +134,19 @@ def _telegram(c: Container) -> _RevisableNotifier:
     return c.notifier
 
 
+def inbound_failure_message(error: Exception) -> str:
+    """인바운드 처리(버튼/답장/채팅)가 예상 밖 예외로 죽었을 때 사람에게 보낼 문구.
+
+    두 인바운드 경로(롱폴링 `telegram/listener.py`, 웹훅 `api/main.py` 의 예외 처리기)가
+    같은 문구를 쓰도록 여기 둔다 — 사용자 입장에서는 어느 통로로 들어왔든 "버튼을 눌렀는데
+    아무 일도 안 일어났다"는 같은 증상이고, 그게 이 알림이 메우려는 사각지대다.
+    """
+    return (
+        f"텔레그램 요청 처리 중 오류가 발생했습니다: {type(error).__name__}: {error}\n"
+        "방금 누른 버튼/보낸 메시지는 처리되지 않았습니다. 다시 시도해주세요."
+    )
+
+
 async def _notify_signal_failed(c: Container, application_id: str, action_label: str) -> None:
     """signal 이 워크플로우에 안 닿았을 때(주로 이미 종료된 워크플로우) 누른 사람에게 알린다.
 

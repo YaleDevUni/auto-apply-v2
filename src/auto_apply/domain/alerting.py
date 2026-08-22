@@ -1,4 +1,4 @@
-""""조용한 실패"를 알림 문구로 바꾸는 순수 규칙 (ARCHITECTURE.md §11.2d).
+"""조용한 실패를 알림 문구로 바꾸는 순수 규칙 (ARCHITECTURE.md §11.2d).
 
 watchdog(`watchdog.py`)은 Temporal 이 FAILED/TERMINATED/TIMED_OUT 으로 닫은 워크플로우만
 본다. 그런데 이 프로젝트에는 **성공으로 끝나는 실패**가 있다 — 스케줄로 도는 두 워크플로우가
@@ -43,9 +43,7 @@ def collection_alert(results: Sequence[PlatformCollectionResult]) -> str | None:
         elif r.found == 0:
             problems.append(f"- {r.platform}: 0건 수집 (셀렉터 변경/세션 만료 의심)")
         elif r.enrich_errors >= ENRICH_ERROR_ALERT_MIN:
-            problems.append(
-                f"- {r.platform}: 상세 조회 {r.enrich_errors}건 실패 (found={r.found})"
-            )
+            problems.append(f"- {r.platform}: 상세 조회 {r.enrich_errors}건 실패 (found={r.found})")
     if not problems:
         return None
 

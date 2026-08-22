@@ -441,6 +441,28 @@ Temporal 서버): `describe()`가 돌려주는 `spec.cron_expressions`는 서버
 그대로 보여준다. 구현·유닛/워크플로우/실제 Temporal 라이브 등록·`make check` 통과 완료.
 자세한 설계는 ARCHITECTURE.md §11.2f.
 
+**알림 사각지대 전수 조사 + 보완** (2026-08-22) — "에러가 나도 알림이 안 오는 곳"을 전수
+조사했다. watchdog(`watchdog.py`)은 Temporal 이 **닫은** 워크플로우(FAILED/TERMINATED/
+TIMED_OUT)만 보므로, 그 정의 밖의 조용한 실패 네 부류가 로그에만 남고 있었다: (1) **성공으로
+끝나는 실패** — `JobCollectionWorkflow` 는 플랫폼 실패를 결과 필드로 삼켜 COMPLETED 로 끝나고
+(셀렉터가 바뀌어 `found=0` 이 되면 예외조차 안 난다), `ApplyIntakeWorkflow` 는 후보 0건이어도
+정상 종료한다. (2) **상주 프로세스의 죽음** — worker 가 죽으면 워크플로우는 FAILED 가 아니라
+Running 인 채로 멈춰서 watchdog 이 영영 못 잡고, listener 가 죽으면 승인 버튼이 조용히 안
+먹고, watchdog 이 죽으면 감시 자체가 사라진다. (3) **감시가 눈이 먼 구간** — Temporal 접속이
+끊긴 동안의 폴링 실패는 로그만 남아서 그 침묵이 "아무 문제 없음"으로 읽힌다. (4) **인바운드
+처리 실패** — 리스너 dispatch 예외/웹훅 500 은 버튼을 누른 사람에겐 그냥 무응답이다. 넷 다
+텔레그램으로 알리게 했다: 판정은 순수 함수 `domain/alerting.py`(`collection_alert`/
+`intake_alert` — Recipe 와 같은 "판정은 코드" 철학, 임계치를 Temporal 없이 테스트로 고정),
+전송은 새 port 없이 기존 `Notifier`. 상주 프로세스 크래시는 `process_alerts.run_guarded`
+(`cli.py`/`watchdog.py` 와 같은 운영 진입점 계층)가 세 프로세스의 `main()` 을 감싸 알리고
+재던진다 — `SystemExit`/`KeyboardInterrupt` 는 사고가 아니라 안 알린다. watchdog 은
+`WATCHDOG_BLIND_ALERT_AFTER`(기본 3회) 연속 폴링 실패에 **정확히 한 번** 알리고 복구도 알린다.
+인바운드는 문구를 `telegram/bridge.inbound_failure_message` 하나로 공유해 롱폴링
+(`_process_updates(..., on_error=)`)·웹훅(`api/main.py` 예외 처리기)이 같은 말을 한다.
+알림 전송 자체의 실패는 `notify_safely` 가 삼킨다 — 알림을 보내는 자리는 대부분 이미 뭔가
+잘못된 지점이라, 거기서 알림이 또 터지면 원래 오류가 가려진다. 구현·유닛/워크플로우/API
+테스트·`make check` 통과 완료. 자세한 설계는 ARCHITECTURE.md §11.2d.
+
 **공고수집·자동지원 Schedule 설정을 DB로 이관** — 위 구현 직후 사용자가 즉시 정정했다:
 "cron으로 하지 말고 서버에서 하면 설정파일 건드릴 필요도 없지 않냐" → "db테이블 하나 만들면
 되고"(2026-08-22, 같은 세션). cron/건수를 `.env` 고정 + 봇은 on/off만 하던 걸, 시각(hour/

@@ -971,11 +971,13 @@ auto-apply-v2/
 │   │   ├── job_screening.py      축1 적합도: 하드컷 · 트랙 · 스코어링 (§11.2b)
 │   │   ├── job_applicability.py  축2 지원가능성: blocker · requires (§11.2b)
 │   │   ├── resume_matching.py    select_relevant_facts · ground_check (§2.3)
-│   │   └── resume_blocks.py      group_facts_for_resume · select_relevant_blocks (§2.3)
+│   │   ├── resume_blocks.py      group_facts_for_resume · select_relevant_blocks (§2.3)
+│   │   └── alerting.py           조용한 실패 판정: collection_alert · intake_alert (§11.2d)
 │   ├── bootstrap.py              ★ composition root: 설정 → 구현체 조립
 │   ├── config.py                 pydantic-settings
 │   ├── schedule.py               JobCollection/ApplyIntake Temporal Schedule 등록/삭제 (§11.2b, §11.2f)
 │   ├── schedule_config.py        DB(ScheduleConfig) ↔ Temporal Schedule 연결 (§11.2f)
+│   ├── process_alerts.py         상주 프로세스 크래시 알림 (§11.2d)
 │   ├── watchdog.py                워크플로우 능동 감시 — `make watchdog` (§11.2d)
 │   └── worker.py                 --queue {default|ai|browser}
 └── tests/
@@ -1317,6 +1319,43 @@ workflow 코드 안에서 잡아 `NEEDS_HUMAN`으로 정상 종료시키는 것�
 (3) 콜백이 실제로 어떤 payload로 오는지(Nexus completion 프로토콜 포맷 추정) 검증 못 했다.
 안정적으로 보장된 visibility API 폴링을 두고 비공식·불안정 표면으로 갈아탈 이유가 없다는
 판단이다 — 나중에 같은 질문이 또 나오면 이 문단으로 답할 것.
+
+**watchdog이 못 보는 네 가지, 그리고 그 보완** (2026-08-22 전수 조사). watchdog은 "Temporal이
+FAILED/TERMINATED/TIMED_OUT으로 **닫은** 워크플로우"만 본다. 조사해보니 그 정의 밖에서
+조용히 실패하는 지점이 네 부류 있었다 — 전부 로그에만 남고 텔레그램은 울리지 않았다.
+
+1. **성공으로 끝나는 실패** — `JobCollectionWorkflow`는 플랫폼 하나가 죽어도 나머지를
+   살리려고 예외를 결과 필드(`PlatformCollectionResult.error`)로 삼키고 COMPLETED로 끝난다.
+   셀렉터가 바뀌어 `found=0`이 되는 경우는 예외조차 안 난다. `ApplyIntakeWorkflow`도 후보
+   0건이면 아무것도 시작하지 않고 정상 종료한다. 둘 다 cron으로 도는 루틴이라 "아무 일도
+   안 일어난 것"과 구별이 안 된다. → 판정을 순수 함수 `domain/alerting.py`
+   (`collection_alert`/`intake_alert`)로 두고, 두 워크플로우가 끝에서 `notify` activity를
+   건다(kind=`JOB_COLLECTION_UNHEALTHY`/`APPLY_INTAKE_UNHEALTHY`). 판정을 워크플로우 코드가
+   아니라 domain에 둔 건 Recipe·가이드 patch와 같은 이유다 — 임계치를 바꿀 때 Temporal 없이
+   테스트로 고정할 수 있어야 한다. 알림 전송 실패가 수집 결과나 원래 예외를 덮지 않게
+   `notify` 호출은 각 워크플로우에서 try/except로 감싼다.
+2. **상주 프로세스의 죽음** — worker가 죽으면 워크플로우는 FAILED가 아니라 **Running인 채로
+   멈춘다**(watchdog은 닫힌 것만 보므로 영영 못 잡는다). listener가 죽으면 승인 버튼이 그냥
+   안 먹고 `approval_timeout`(기본 72시간) 뒤에야 EXPIRED가 된다. watchdog 자신이 죽으면
+   감시가 사라진다. → `process_alerts.run_guarded(name, main)`이 세 프로세스의 `main()`을
+   감싸 크래시 시 알리고 그대로 재던진다(kind=`PROCESS_CRASHED`). `SystemExit`(설정 오류로
+   인한 조기 종료)/`KeyboardInterrupt`(사람이 껐다)는 사고가 아니라 알리지 않는다.
+3. **감시가 눈이 먼 구간** — Temporal 접속이 끊기면 watchdog의 폴링이 계속 실패하는데,
+   프로세스는 살아 있으므로(그게 맞다 — 감시가 감시 대상이 되면 안 된다) 그 침묵이 "아무
+   문제 없음"으로 읽힌다. → `blind_alert`가 `WATCHDOG_BLIND_ALERT_AFTER`(기본 3회) 연속
+   실패에 **정확히 한 번** 알리고(계속 실패하는 동안 매 주기 알리면 그게 소음이다), 복구되면
+   `WATCHDOG_RECOVERED`를 보낸다.
+4. **인바운드 처리 실패** — 리스너의 dispatch가 예상 밖 예외로 죽으면 로그만 남고 버튼을
+   누른 사람에겐 무응답으로 보인다(`_notify_signal_failed`가 다루는 "signal이 안 닿았다"와
+   증상이 같아 원인 구분이 불가능하다). 웹훅 경로도 500이 나면 텔레그램 서버만 알고 사람은
+   모른다. → 문구를 `telegram/bridge.inbound_failure_message` 하나로 공유하고, 롱폴링은
+   `_process_updates(..., on_error=)`로, 웹훅은 `api/main.py`의 미처리 예외 처리기
+   (kind=`API_ERROR`)로 각각 알린다.
+
+`process_alerts.py`는 `cli.py`/`watchdog.py`/`apply_intake.py`와 같은 **운영 진입점** 계층이다
+— 새 port를 만들지 않고 `Notifier`를 그대로 쓴다(§11.6). `notify_safely()`가 모든 전송을
+감싸는데, 알림을 보내는 자리는 대부분 이미 뭔가 잘못된 지점이라 거기서 알림이 또 터지면 원래
+오류가 traceback에서 가려지기 때문이다.
 
 ### 11.2e 플랫폼 첨부파일 정리 — `AttachmentManager` / `resume_cleanup.py`
 

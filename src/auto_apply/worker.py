@@ -23,6 +23,7 @@ from auto_apply.activities.repair import RepairActivities
 from auto_apply.activities.resume import ResumeActivities
 from auto_apply.bootstrap import Container, build_container
 from auto_apply.config import load_settings
+from auto_apply.process_alerts import run_guarded
 from auto_apply.temporal_config import DATA_CONVERTER
 from auto_apply.workflows.application import ApplicationWorkflow
 from auto_apply.workflows.apply_intake import ApplyIntakeWorkflow
@@ -106,4 +107,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # 워커가 죽으면 워크플로우는 FAILED 가 아니라 Running 인 채로 멈춰서 watchdog 도 못 잡는다
+    # (§ process_alerts.py).
+    asyncio.run(run_guarded("worker", main))
