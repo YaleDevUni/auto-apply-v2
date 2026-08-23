@@ -12,7 +12,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)](https://postgresql.org)
 [![mypy](https://img.shields.io/badge/mypy-strict-blue)](https://mypy-lang.org)
-[![tests](https://img.shields.io/badge/tests-571%20(449%20offline)-brightgreen)](#12-테스트와-품질-게이트)
+[![tests](https://img.shields.io/badge/tests-681%20(614%20offline)-brightgreen)](#12-테스트와-품질-게이트)
 
 ---
 
@@ -710,11 +710,15 @@ make check   # lint + type + arch + test  ← 커밋 전 필수
 | `lint` | ruff | pycodestyle · pyflakes · isort · bugbear · **ANN(타입 애노테이션 강제)** · **TID252(상대 import 금지)** |
 | `type` | mypy `strict` | `warn_unreachable` 포함, pydantic 플러그인 |
 | `arch` | import-linter | [§2-3](#2-3-계층-구조와-의존-방향)의 계층 계약 7개 |
-| `test` | pytest | 전체 **571개**, 인프라 없이 도는 것 **449개** (그중 17개는 동결된 기능이라 skip — [§7](#7-의도적으로-하지-않은-것)) |
+| `test` | pytest | 전체 **681개**, `make check`가 도는 것(Docker/네이티브 바이너리 불필요) **614개** (그중 17개는 동결된 기능이라 skip — [§7](#7-의도적으로-하지-않은-것)) |
 
 **테스트 전략의 원칙**
 
-- **기본 `make test`는 Docker 없이 항상 돌아야 합니다.** 인프라가 필요한 테스트에는 `@pytest.mark.integration`을 붙입니다.
+- **기본 `make test`는 Docker 없이 항상 돌아야 합니다.** 마커는 "무엇이 있어야 도는가"로만 가릅니다 —
+  `@pytest.mark.docker`(postgres/minio 등 `make up` 인프라), `@pytest.mark.native`(playwright 브라우저·
+  agent-browser CLI·weasyprint 의 cairo/pango 등 이 머신에 설치된 바이너리), `@pytest.mark.temporal`
+  (Temporal 테스트 서버 — Docker 는 아니라서 `make check`엔 포함되고, 느릴 뿐이라 `make test-fast`에서만 뺍니다).
+  아무 마커도 없으면 기본 실행 대상입니다.
 - **contract test가 교체 가능성의 유일한 증거입니다.** 새 어댑터는 기존 스위트의 `params`에 추가되며,
   통과하지 못하면 그 어댑터는 존재하지 않는 것으로 취급합니다.
 - **워크플로우는 `WorkflowEnvironment`로 검증합니다.** 시간 스킵 덕분에 72시간 승인 타임아웃을 즉시 테스트할 수 있고,

@@ -1075,7 +1075,7 @@ Grafana 스택 전체를 초기에 세우지 않는다. 대신 **Temporal UI를 
 | `ProfileSource` | `YamlProfileSource` | `StaticProfileSource` | 중간 | 이력서 헤더/학력/스킬태그/언어(§2.3). `FactSource`와 동일 패턴 |
 | `ResumeGenerator` / `ResumeReviewer` | plain 함수(`SimpleResume*`) | — (§9.2 보류, 아직 2번째 구현 없음) | **높음** | LangGraph/PydanticAI 등, 프레임워크는 미정 — §9.2 보류 결정을 가능하게 하는 seam |
 | `Clock` / `IdGen` | 시스템 | 고정값 | 중간 | 테스트 결정성 |
-| `PdfRenderer` | `WeasyPrintPdfRenderer`(구현 완료, §2.3) | `StubPdfRenderer`(JSON 덤프) | 낮음 | 교체 가능성보다 격리 목적. weasyprint 렌더 테스트는 시스템 라이브러리 필요해 integration |
+| `PdfRenderer` | `WeasyPrintPdfRenderer`(구현 완료, §2.3) | `StubPdfRenderer`(JSON 덤프) | 낮음 | 교체 가능성보다 격리 목적. weasyprint 렌더 테스트는 시스템 라이브러리 필요해 `native` |
 | `AttachmentManager` | `WantedAttachmentManager` | `FixtureAttachmentManager` | 낮음 | `PlatformAdapter`와 별개 축(§11.2e) — 계정에 쌓인 첨부파일 관리. `resume_cleanup.py` 전용 |
 | `CheckpointStore` | `FileCheckpointStore` | `InMemoryCheckpointStore` | 중간 | SUPERVISED 페이지 경계 체크포인트 승인/거절(§2.4c) — nonce처럼 프로세스 경계를 넘지만, 워크플로우가 아니라 activity가 기다린다는 점이 다르다 |
 
