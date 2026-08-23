@@ -27,11 +27,20 @@ workflow 파일이 아니다) — 새 port를 만들지 않는다. `uow.jobs.act
 뿐이라서다(wanted 363152 공고 실측). 두 상태를 제외한 나머지(진행 중이든 COMPLETED 등 실제
 종결 상태든)는 여전히 "이미 지원 프로세스를 밟은 공고"로 보고 후보에서 아예 뺀다.
 
-Temporal 기본 `WorkflowIDReusePolicy.ALLOW_DUPLICATE`는 이전 실행이 COMPLETED로 끝난 뒤엔
-같은 id로 새로 시작하는 걸 막지 않으므로, 실제 시작 호출에서는 그와 별개로 명시적으로
-REJECT_DUPLICATE를 준다 — 위 사전 필터와 시작 호출 사이의 경합(같은 공고에 거의 동시에 두
-요청이 들어오는 경우)을 잡는 마지막 안전판이다(`workflows/_repair.py`의 child workflow
-dedupe와 같은 패턴). `WorkflowAlreadyStartedError`로 걸러 조용히 건너뛴다.
+실제 시작 호출은 `WorkflowIDReusePolicy.ALLOW_DUPLICATE`(Temporal 기본값)를 명시적으로 준다
+— 위 사전 필터와 시작 호출 사이의 경합(같은 공고에 거의 동시에 두 요청이 들어오는 경우)을
+잡는 마지막 안전판이면서도, NEEDS_HUMAN/REJECTED 재시도를 실제로 허용해야 하기 때문이다.
+`WorkflowAlreadyStartedError`로 걸러 조용히 건너뛰는 건 여전한데, 이게 발동하는 조건이
+"현재 RUNNING 중인 동일 id"로 국한된다 — **2026-08-23 라이브로 확인**: 처음엔
+`REJECT_DUPLICATE`를 썼는데, 이 정책은 "동시 요청 경합"만 막는 게 아니라 이전 실행이
+COMPLETED로 끝난 뒤에도 같은 id 재사용을 **영구히** 막는다(Temporal 문서/실측 둘 다 확인).
+그래서 위 사전 필터가 NEEDS_HUMAN을 신규 후보와 동등하게 통과시켜도, 실제 시작 호출이 매번
+조용히 막혀 텔레그램에서 재시도가 실질적으로 불가능했다 — 설계 의도(§본문)와 실제 동작이
+갈라져 있던 버그. `ALLOW_DUPLICATE`로 바꿔 "RUNNING 중일 때만 막고, 닫힌 뒤엔 재사용 허용"
+동작을 실제로 맞췄다 — `workflows/_repair.py`의 child workflow dedupe(`id_reuse_policy`
+미지정, 즉 기본값)도 원래 이 동작(RUNNING 중일 때만 막음)이었고, 그게 그 자리에 맞는
+선택이다: "동시에 도는 수선에 다시 안 붙고 이번 지원은 포기"가 목적이지 "완료된 수선을
+영원히 재시작 못 하게"가 목적이 아니었다.
 
 실제 최종 제출은 여전히 사람이 텔레그램 승인 버튼을 눌러야 일어난다 — 이 함수는 워크플로우를
 "시작"만 할 뿐이고, CLAUDE.md 절대규칙 4는 `ApplicationWorkflow` 안의 승인 대기가 그대로 지킨다.
@@ -131,9 +140,11 @@ def _partition_by_state(
 
 
 async def _start_workflow(application_id: str, job_url: str, c: Container, client: Client) -> bool:
-    """워크플로우 시작 1건(REJECT_DUPLICATE dedupe 포함) — `start_actionable_applications`의
+    """워크플로우 시작 1건(ALLOW_DUPLICATE dedupe 포함) — `start_actionable_applications`의
 
-    루프와 `apply_by_url` 이 공유한다. 이미 시작돼 있으면(경합 등) False, 새로 시작했으면 True.
+    루프와 `apply_by_url` 이 공유한다. 같은 id로 RUNNING 중인 워크플로우가 있으면(경합 등)
+    False, 새로 시작했으면 True — 모듈 docstring 참고(과거 REJECT_DUPLICATE는 NEEDS_HUMAN
+    재시도까지 막던 버그였다).
     """
     try:
         await client.start_workflow(
@@ -149,7 +160,7 @@ async def _start_workflow(application_id: str, job_url: str, c: Container, clien
             ),
             id=f"application-{application_id}",
             task_queue=QUEUE_DEFAULT,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
         )
         return True
     except WorkflowAlreadyStartedError:

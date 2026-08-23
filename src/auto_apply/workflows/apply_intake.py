@@ -20,9 +20,9 @@ from auto_apply.contracts.dto import ApplyIntakeInput, ApplyIntakeResult, Notify
 from auto_apply.domain.alerting import intake_alert
 from auto_apply.workflows._errors import activity_failure
 
-# 활동 자체가 `ApplicationWorkflow` 시작 여러 건을 REJECT_DUPLICATE dedupe 로 감싸므로
-# (apply_intake.py), 전체를 재시도해도 이미 시작된 건 WorkflowAlreadyStartedError 로 안전하게
-# 건너뛴다 — JobCollectionWorkflow 와 같은 상한(3회)을 쓴다.
+# 활동 자체가 `ApplicationWorkflow` 시작 여러 건을 ALLOW_DUPLICATE dedupe 로 감싸므로
+# (apply_intake.py — RUNNING 중인 동일 id만 막는다), 전체를 재시도해도 이미 시작된 건
+# WorkflowAlreadyStartedError 로 안전하게 건너뛴다 — JobCollectionWorkflow 와 같은 상한(3회)을 쓴다.
 _RETRY = RetryPolicy(maximum_attempts=3)
 _NOTIFY_RETRY = RetryPolicy(maximum_attempts=3, initial_interval=timedelta(seconds=1))
 

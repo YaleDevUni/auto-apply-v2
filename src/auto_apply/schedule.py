@@ -89,8 +89,8 @@ def build_apply_intake_schedule(cron: str, count: int) -> Schedule:
         ),
         spec=ScheduleSpec(cron_expressions=[cron]),
         # job-collection Schedule 과 같은 이유(§11.2b) — 겹쳐 돌 이유가 없다. dedupe 는
-        # ApplyIntakeWorkflow 활동이 REJECT_DUPLICATE 로 이미 하지만, 굳이 겹쳐 돌릴 이유는
-        # 없다.
+        # ApplyIntakeWorkflow 활동이 ALLOW_DUPLICATE(RUNNING 중인 동일 id만 막음)로 이미
+        # 하지만, 굳이 겹쳐 돌릴 이유는 없다.
         policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
     )
 

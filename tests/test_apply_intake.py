@@ -10,6 +10,7 @@ canonical_key dedupe → 워크플로우 시작.
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
@@ -124,8 +125,13 @@ async def test_non_actionable_jobs_are_never_candidates():
     assert result.started == []
 
 
-async def test_uses_reject_duplicate_reuse_policy_as_the_dedup_guard():
-    """canonical_key 를 다시 써도 Temporal 기본 정책(ALLOW_DUPLICATE)에 기대지 않는다는 계약."""
+async def test_uses_allow_duplicate_reuse_policy_so_needs_human_retries_actually_start():
+    """RUNNING 중인 동일 id 경합만 막고, COMPLETED(NEEDS_HUMAN 등)로 끝난 뒤엔 재사용을
+
+    막지 않는다는 계약 — REJECT_DUPLICATE는 경합 방지만이 아니라 완료된 워크플로우의 id
+    재사용도 영구히 막아서(2026-08-23 라이브로 확인), NEEDS_HUMAN 재시도가 실제로는 항상
+    조용히 무시되는 버그였다.
+    """
     from temporalio.common import WorkflowIDReusePolicy
 
     record = _record(platform_job_id="1", company="A사", title="백엔드")
@@ -135,7 +141,7 @@ async def test_uses_reject_duplicate_reuse_policy_as_the_dedup_guard():
 
     await start_actionable_applications(1, c, client, now=_NOW)
 
-    assert client.started[0]["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
+    assert client.started[0]["id_reuse_policy"] == WorkflowIDReusePolicy.ALLOW_DUPLICATE
 
 
 async def test_dry_run_selects_candidates_without_calling_temporal():
@@ -255,7 +261,7 @@ async def test_apply_by_url_starts_workflow_for_wanted_link():
     assert len(client.started) == 1
     started = client.started[0]
     assert started["id"] == f"application-{canonical_key(_WANTED_COMPANY, _WANTED_TITLE)}"
-    assert started["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
+    assert started["id_reuse_policy"] == WorkflowIDReusePolicy.ALLOW_DUPLICATE
     # 사람이 붙여넣은 원본 URL을 그대로 워크플로우에 넘긴다(job.url 이 아니라).
     assert started["cmd"].job_url == _WANTED_URL
 
@@ -319,3 +325,51 @@ async def test_apply_by_url_allows_retry_after_needs_human():
 
     assert result.outcome == "started"
     assert len(client.started) == 1
+
+
+@pytest.mark.temporal
+async def test_start_workflow_actually_restarts_after_a_prior_run_completed():
+    """ALLOW_DUPLICATE 회귀 테스트 — 위의 `_FakeClient` 기반 테스트들은 "정책 필터를 통과해서
+
+    시작 호출까지 갔다"만 증명하지, 실제 Temporal 이 그 시작을 받아주는지는 fake 로 증명이
+    안 된다(2026-08-23 실측: `_FakeClient` 는 항상 받아주므로 REJECT_DUPLICATE 였을 때도
+    이 스위트는 전부 통과했었다 — 진짜 서버로 붙여서야 재시도가 늘 조용히 막혀 있었다는 게
+    드러났다). 그래서 REJECTED 로 완전히 끝난 진짜 워크플로우에 대고 `_start_workflow` 를
+    한 번 더 불러 실제로 재시작되는지, 그리고 RUNNING 중인 동일 id 는 여전히 막히는지를
+    실제 서버로 검증한다.
+    """
+    from temporalio.client import Client
+    from temporalio.testing import WorkflowEnvironment
+
+    from auto_apply import apply_intake
+    from auto_apply.contracts.dto import RejectSignal
+    from auto_apply.temporal_config import DATA_CONVERTER
+    from auto_apply.workflows.application import ApplicationWorkflow
+    from tests.workflows.test_application import APP_ID, _cmd, _start, _wait_state, _Workers
+
+    async with await WorkflowEnvironment.start_time_skipping(data_converter=DATA_CONVERTER) as env:
+        client: Client = env.client
+        h = Harness()
+        c = h.container(settings=Settings(storage="memory", llm_provider="stub"))
+        async with _Workers(client, h):
+            handle = await _start(client, _cmd())
+            await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+            await handle.signal(ApplicationWorkflow.reject, RejectSignal())
+            await handle.result()  # REJECTED 로 완전히 COMPLETED 됨
+
+            restarted = await apply_intake._start_workflow(
+                APP_ID, "https://fixture.local/jobs/1", c, client
+            )
+            assert restarted, (
+                "REJECTED 로 끝난 뒤에도 같은 id 로 재시작돼야 한다"
+                "(REJECT_DUPLICATE 로 되돌리면 여기서 실패한다)"
+            )
+
+            again = await apply_intake._start_workflow(
+                APP_ID, "https://fixture.local/jobs/1", c, client
+            )
+            assert not again, "RUNNING 중인 동일 id 재시작은 여전히 막혀야 한다"
+
+            handle2 = client.get_workflow_handle(f"application-{APP_ID}")
+            await handle2.signal(ApplicationWorkflow.reject, RejectSignal())
+            await handle2.result()
