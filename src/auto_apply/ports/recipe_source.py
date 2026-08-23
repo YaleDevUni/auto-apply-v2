@@ -33,11 +33,32 @@ class RecipeSource(Protocol):
         """
         ...
 
+    async def quarantine(self, platform: str) -> AutomationRecipe:
+        """지금 살아 있는(active|candidate) 버전을 status="quarantined" 로 내린다 (§2.4a).
+
+        사람이 텔레그램에서 "이 recipe 는 진짜 깨졌다"를 확정했을 때만 불린다 —
+        `AutomationRepairWorkflow` 가 수선을 시작하기 직전이다. 그 뒤로는 `active()` 가
+        PolicyViolation 을 던져서 그 플랫폼의 지원 실행이 아예 시작되지 않는다("깨진 recipe
+        로 계속 제출을 시도하지 않는다"). 살아 있는 버전이 없으면 PolicyViolation.
+        """
+        ...
+
+    async def unquarantine(self, platform: str) -> AutomationRecipe:
+        """격리를 푼다 — status 를 "candidate" 로 되돌린다(active 가 아니다).
+
+        active 로 바로 되돌리지 않는 건 의도다: 한 번 사람이 "깨졌다"고 판정한 recipe 는
+        신뢰를 잃었으므로, 돌아올 때는 `resolve_mode` 가 SUPERVISED 로 돌리는 candidate
+        여야 한다(§2.4a) — 다음 실행에서 사람이 submit 직전을 눈으로 확인하고, 그게
+        성공하면 그때 promote() 로 다시 active 가 된다. 격리된 버전이 없으면 PolicyViolation.
+        """
+        ...
+
     async def promote(self, platform: str, version: int) -> AutomationRecipe:
         """candidate 버전을 active 로 승격한다.
 
         대상이 status="candidate" 가 아니면 PolicyViolation(draft 를 바로 승격하거나 이미
-        승격된 걸 또 승격하는 걸 막음). 같은 platform 의 기존 active 버전(들)은 deprecated 로
-        내려간다 — platform 당 active 는 최대 1개라는 불변식을 유지한다.
+        승격된 걸 또 승격하는 걸 막음). 같은 platform 의 기존 active/quarantined 버전(들)은
+        deprecated 로 내려간다 — platform 당 active 는 최대 1개라는 불변식을 유지하고,
+        수선이 성공하면 격리도 같이 풀린다(§2.4a).
         """
         ...

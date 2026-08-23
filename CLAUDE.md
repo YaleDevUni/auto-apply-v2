@@ -125,6 +125,8 @@ api         라우터는 컨테이너에서 꺼내 쓴다
   로그인(`scripts/auto_login.py`)은 항상 **본인이 이미 가진 계정**의 자격증명(`.env`)만 쓴다.
 - `DRY_RUN_ONLY`를 사용자 확인 없이 끄지 않는다.
 - AI가 만든 Recipe를 `active`로 바로 올리지 않는다 (`draft → candidate → active`, 사람 승격).
+- 실행 실패를 곧바로 "recipe가 깨졌다"로 단정하지 않는다 — 수선 에이전트는 사람이 텔레그램에서
+  확정(`qa`)한 뒤에만 돈다. 확정 전에는 recipe를 건드리지 않아 다른 지원 건은 계속 제출된다 (§2.4a).
 - `applications.status`를 `persist_state` 밖에서 UPDATE하지 않는다.
 - 플랫폼 rate limit(`platform_policies`)을 우회하는 코드를 추가하지 않는다.
 
@@ -144,6 +146,7 @@ api         라우터는 컨테이너에서 꺼내 쓴다
 | `application_attempts` 감사 로그 · 부분 제출 방어 · `verify_submission` | 완료 | §5 |
 | Postgres/Alembic (`REPOSITORY=postgres`) · S3BlobStore | 완료 | §9.1, §11.2 |
 | `AutomationRepairWorkflow` 전 구간 · goto timeout 자동 수선 | 완료 | §2.4 |
+| 수선 전 사람 확인 · 페이지 판정 · recipe 격리(제출 중단) | 완료 | §2.4a |
 | SUPERVISED 페이지 경계 체크포인트 (`CheckpointWaiter`) | 완료 | §2.4c |
 | 공고 수집·매칭 · `JobCollectionWorkflow` · Schedule | 완료 | §11.2b |
 | `ClaudeCodeCliLLM`(로컬 구독) · 프롬프트 캐시 · 장애 알림 | 완료 | §11.2c |

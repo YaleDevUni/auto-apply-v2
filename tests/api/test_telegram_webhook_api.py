@@ -22,7 +22,14 @@ from auto_apply.workflows.application import ApplicationWorkflow
 from auto_apply.workflows.repair import AutomationRepairWorkflow
 from tests.conftest import Harness
 from tests.workflows.test_application import APP_ID, _cmd, _wait_state, _Workers
-from tests.workflows.test_repair import _FIXED_DIFF, FORM_HASH, PLATFORM, _req
+from tests.workflows.test_repair import (
+    _FIXED_DIFF,
+    FORM_HASH,
+    PLATFORM,
+    _confirm_broken,
+    _req,
+    _wait_nonce,
+)
 
 pytestmark = pytest.mark.temporal
 
@@ -417,14 +424,9 @@ async def _repairing_with_nonce(env: WorkflowEnvironment, h: Harness):
         task_queue=QUEUE_AI,
     )
     assert h.notifier is not None
-    nonce = None
-    for _ in range(300):
-        nonce = h.notifier.last_ticket.get(key)
-        if nonce is not None:
-            break
-        await asyncio.sleep(0.05)
-    assert nonce is not None, "recipe 승격 승인 요청이 안 왔다"
-    return handle, key, nonce
+    # §2.4a 관문을 먼저 넘긴다 — 여기서 보려는 건 그 다음의 pa/pr 콜백 라우팅이다.
+    await _confirm_broken(handle, h)
+    return handle, key, await _wait_nonce(h)
 
 
 async def test_repair_promotion_approve_callback_promotes_recipe(repair_client):

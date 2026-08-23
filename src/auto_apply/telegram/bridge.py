@@ -26,6 +26,9 @@ JSON 스키마 그대로)만 쓴다. scope 선택/ForceReply 프롬프트를 보
   (§ supervised-checkpoint-design). 워크플로우가 아니라 activity(`CheckpointWaiter`)가
   기다리는 대상이라 signal 경로를 안 탄다 — `c.checkpoint_store.record_decision`을 직접
   호출한다(nonce 검증과 같은 이유로 이 어댑터/서버 메모리에 상태를 못 둔다).
+- `"{qa|qr}:{platform}-{form_hash}:{nonce}"` — "이 recipe 진짜 깨졌나?" 확정/부정 (§2.4a).
+  `qa`(확정)면 recipe 가 격리돼 그 플랫폼 제출이 멈추고 수선 에이전트가 돈다. `qr`(부정)이면
+  아무것도 안 바뀌어 다른 지원 건은 계속 제출된다. `pa`/`pr`과 같은 wf_id 복원 규칙을 쓴다.
 - `"{pa|pr}:{platform}-{form_hash}:{nonce}"` — recipe 승격 승인/보류 (§2.4). 다른 액션과 달리
   `application_id` 자리가 실제 지원 건이 아니라 `AutomationRepairWorkflow`의 정체성
   (`platform`/`form_hash`)을 담는다 — `wf_id = f"repair-{platform}-{form_hash}"`를 그대로
@@ -67,11 +70,13 @@ _ACTIONS = {
     "gr": "가이드 무시",
     "pa": "recipe 승격",
     "pr": "recipe 승격 보류",
+    "qa": "recipe 파손 확정",
+    "qr": "recipe 정상 판정",
 }
 # pa/pr(recipe 승격, §2.4)은 `application-{id}` 가 아니라 `repair-{id}` 워크플로우를 겨눈다 —
 # AutomationRepairWorkflow 의 승인 요청은 application_id 자리에 "{platform}-{form_hash}"를
 # 담아 보낸다(DecisionRequest.repair_promotion, workflows/repair.py 참고).
-_REPAIR_ACTIONS = frozenset({"pa", "pr"})
+_REPAIR_ACTIONS = frozenset({"pa", "pr", "qa", "qr"})
 _REVISE_TAG_RE = re.compile(r"\[revise:([^:\s]+):([^:\s]+):(specific|general)\]")
 _GUIDE_REVISE_TAG_RE = re.compile(r"\[guiderevise:([^:\s]+):([^:\s]+)\]")
 
@@ -265,6 +270,16 @@ async def handle_callback_query(
                 await handle.signal(
                     AutomationRepairWorkflow.approve,
                     ApproveSignal(decided_by=decided_by, nonce=nonce),
+                )
+            case "qa":
+                await handle.signal(
+                    AutomationRepairWorkflow.confirm_broken,
+                    ApproveSignal(decided_by=decided_by, nonce=nonce),
+                )
+            case "qr":
+                await handle.signal(
+                    AutomationRepairWorkflow.deny_broken,
+                    RejectSignal(decided_by=decided_by, nonce=nonce),
                 )
             case _:  # "pr"
                 await handle.signal(

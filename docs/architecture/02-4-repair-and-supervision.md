@@ -8,7 +8,11 @@
 
 ```mermaid
 flowchart TB
-    A[failed recipe + DOM snapshot] --> T{goto 액션의 timeout 인가?}
+    A[failed recipe + DOM snapshot] --> DX[페이지 판정 §2.4a]
+    DX --> HQ{사람: 진짜 깨졌나?}
+    HQ -->|아니오/무응답| SD[아무것도 안 함<br/>recipe 는 active 유지 → 제출 계속]
+    HQ -->|예| QN[recipe quarantined<br/>이 플랫폼 제출 중단]
+    QN --> T{goto 액션의 timeout 인가?}
     T -->|예, 상한 미만| BT[코드가 timeout_ms 만 2배로<br/>LLM 호출 생략]
     BT --> D
     T -->|아니오| B[LLM: recipe diff 제안]
@@ -53,6 +57,8 @@ flowchart TB
   낮은 건 의도적이다 — 10초까지 올려도 계속 timeout이면 "시간이 모자랐다"가 아니라 사이트가
   안 뜨거나 네트워크가 막혔다는 별도 문제일 가능성이 크므로, 코드가 숫자를 계속 올리는 대신
   LLM/사람에게 넘긴다(60초는 LLM이 DOM을 보고 진단한 뒤 직접 정할 수 있는 값).
+- **수선의 첫 관문은 LLM 이 아니라 사람이다(§2.4a).** 위 다이어그램의 `DX`/`HQ`/`QN` 이
+  그것이고, 아래 §2.4a 에 따로 적었다.
 - 승격(node I→J)은 `AutomationRepairWorkflow` 자기 자신이 Telegram 승인을 받아 그 자리에서
   끝낸다 — "candidate의 첫 실전 실행이 supervised mode로 돌다가 성공하면 자동 승격"이라는
   이전 초안의 대안 경로는 채택하지 않았다: `ExecutionMode.SUPERVISED`가 실제 실행 중 사람이
@@ -110,6 +116,73 @@ phase 2에서 추가한 것:
   `telegram/bridge.py`가 `pa`/`pr` 콜백을 받으면 이 값으로 `wf_id = f"repair-{...}"`를
   복원해 `AutomationRepairWorkflow.approve`/`.reject`를 부른다(`application-*`로 조립하는
   기존 액션들과 분기).
+
+### 2.4a 수선 전 사람 확인 + recipe 격리 (quarantine)
+
+2026-08-24 이전의 전제는 **"recipe 실행이 실패했다 = recipe 가 깨졌다"** 였다. 그 전제가 틀린
+게 실측으로 드러났다.
+
+**실측 사고(2026-08-24, application `d81fbe9e…`)** — wanted 지원이
+`wait_for(text=첨부파일 선택)` 15초 timeout 으로 실패했고 `AutomationRepairWorkflow` 가 돌았다.
+그런데 그 시점 DOM 스냅샷(`attempt-1-2.html`)의 지원 버튼은 `지원하기` 가 아니라
+**`지원완료`** 였다 — 이미 지원한 공고라 지원 패널이 애초에 안 열린 것이다. recipe(v8)는
+멀쩡했고, LLM 은 고칠 게 없는 selector 를 두 라운드 헤집다 샌드박스에서 실패했으며, 최종
+사유는 `샌드박스 dry-run 실패: unknown: activity Heartbeat timeout` 이었다(그 heartbeat
+문제는 아래 별도 항목). 즉 **LLM 호출·시간·사람의 주의를 통째로 태우고 아무것도 못 고쳤다.**
+
+그래서 두 가지를 바꿨다.
+
+**(1) 판정을 먼저 하고, 판단은 사람이 한다.** `domain/recipe_diagnosis.diagnose_page`(순수
+함수)가 실패 시점 스냅샷의 **본문 텍스트**를 보고 `ALREADY_APPLIED` / `LOGIN_REQUIRED` /
+`POSTING_CLOSED` / `PAGE_NOT_LOADED` / `RECIPE_SUSPECTED` 를 가른다. 마커는 실측 스냅샷 9개로
+보정했다 — `마감` 은 정상 페이지에도 늘 있어서(`마감일 상시채용`) 쓰지 않고, `마감된 공고`
+처럼 페이지 전체를 설명하는 문구만 쓴다. 태그를 걷어낸 텍스트에만 매칭한다(클래스명에 섞인
+`지원완료` 로 오판하지 않게).
+
+**판정이 수선 여부를 대신 결정하지는 않는다.** `ALREADY_APPLIED` 로 보여도 자동으로 건너뛰지
+않고, `diagnose_recipe_failure` activity 의 결과를 근거로 붙여 Telegram 으로 묻는다
+(`DecisionRequest.repair_confirm`, 콜백 `qa`/`qr`, 신호 `confirm_broken`/`deny_broken`).
+사용자 요청이 정확히 이것이었다 — "진짜 레시피가 깨졌다고 하는 건 내가 판단하겠다". 판정은
+사람이 버튼을 누르기 전에 볼 근거일 뿐이다. 판정 activity 가 실패해도(스냅샷 조회 실패 등)
+확인 절차는 그대로 진행한다 — 판정 실패가 사람에게 묻는 걸 막아선 안 된다.
+
+**(2) 확정 전에는 아무것도 막지 않고, 확정하면 확실히 막는다.** 이게 격리(quarantine)다.
+
+| 사람의 선택 | recipe status | 그 플랫폼의 다른 지원 |
+|---|---|---|
+| 아직 안 누름 / 무응답(24h) | `active` 그대로 | **계속 제출된다** |
+| ❌ "recipe 문제 아님" | `active` 그대로 | 계속 제출된다 |
+| ✅ "진짜 깨짐" | `quarantined` | `load_active_recipe` 에서 막혀 실행 자체가 안 된다 |
+
+`RecipeSource.quarantine()/unquarantine()` 을 port 에 추가했다(구현 2개 + contract test).
+`active()` 는 `active|candidate` 만 살아 있는 상태로 보므로 `quarantined` 는 자동으로 빠지고,
+`ApplicationWorkflow._execute` 가 그 `PolicyViolation` 을 NEEDS_HUMAN 으로 정상 종료시킨다
+(§2.2 의 기존 경로 그대로). 사유 문구는 `adapters/recipe/_status.no_live_reason` 한 곳에서
+만든다 — "active recipe 가 없다"가 아니라 "격리 상태다 + 어떻게 푸는가"여야 사람이 텔레그램에서
+바로 조치할 수 있다.
+
+격리 해제는 두 갈래다:
+- **수선 성공** — `promote()` 가 옛 `active`/`quarantined` 버전을 함께 `deprecated` 로 내린다.
+  승격이 곧 해제다.
+- **사람이 직접** — 텔레그램 채팅 도구 `unquarantine_recipe`(`telegram/_agent_tools_recipe.py`).
+  **`active` 가 아니라 `candidate` 로 되돌린다** — 한 번 "깨졌다"고 판정된 recipe 는 신뢰를
+  잃었으므로, 돌아올 때는 `resolve_mode` 가 SUPERVISED 로 돌리는 상태여야 한다(§2.4c 의 페이지
+  경계 체크포인트가 걸려 사람이 submit 직전을 눈으로 본다). 수선이 실패하면 recipe 는 격리된
+  채로 남는다 — 그게 의도다(깨진 recipe 로 계속 제출을 시도하지 않는다).
+
+무응답 타임아웃은 승격 승인(72h)보다 짧은 **24h** 다. 이 단계는 무응답의 기본값("아무것도 안
+한다")이 안전한 쪽이고, 기다리는 동안 트리거가 된 지원 건이 `REPAIRING` 에 묶여 있기 때문이다.
+
+**같은 사고에서 같이 드러난 실행기 쪽 문제 두 가지**(액션마다 heartbeat, 스냅샷 키에
+`application_id`)는 §2.4c 에 적었다 — 둘 다 "수선이 고칠 단서를 아예 못 받는" 문제였고,
+그 heartbeat 계약을 만든 절이 §2.4c 라 거기가 맞는 자리다.
+
+LLM diff 프롬프트에도 같은 판정을 한 줄 넣는다(`build_recipe_diff_prompt(page_diagnosis=…)`) —
+**지시가 아니라 근거로** 준다("DOM 과 안 맞으면 무시해라"를 같이 적는다). 판정이 틀릴 수 있고,
+§2.4 가 이미 "timeout 이면 selector 건드리지 마라" 류의 단정적 지시를 일부러 피한 것과 같은
+이유다.
+
+---
 
 ### 2.4b ATS/자체구축 실행 — `WebAgentExecutor`(Aside)
 

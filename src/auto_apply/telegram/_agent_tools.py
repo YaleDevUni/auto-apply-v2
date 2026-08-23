@@ -34,6 +34,7 @@ from auto_apply.bootstrap import Container
 from auto_apply.domain.chat_agent import ToolCatalogEntry
 from auto_apply.domain.job_identity import canonical_key
 from auto_apply.telegram._agent_tools_collect import COLLECT_TOOLS
+from auto_apply.telegram._agent_tools_recipe import RECIPE_TOOLS
 from auto_apply.telegram._agent_tools_resend import RESEND_TOOLS
 from auto_apply.telegram._agent_tools_retry import RETRY_TOOLS
 from auto_apply.telegram._agent_tools_schedule import SCHEDULE_TOOLS
@@ -172,7 +173,9 @@ TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
         _get_application,
     ),
     "list_recipe_versions": (
-        "특정 플랫폼의 recipe 버전 목록과 각 상태(draft/candidate/active/deprecated)를 본다",
+        "특정 플랫폼의 recipe 버전 목록과 각 상태"
+        "(draft/candidate/active/quarantined/deprecated)를 본다."
+        " quarantined 는 사람이 '깨졌다'고 확정해 제출이 멈춘 상태다(unquarantine_recipe 로 해제)",
         ("platform",),
         _list_recipe_versions,
     ),
@@ -206,6 +209,9 @@ TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
     # application_id 만으로 재시도(retry_application)는 _agent_tools_retry.py 에서 구현
     # (§ 그 파일 docstring).
     **RETRY_TOOLS,
+    # recipe 격리 해제(unquarantine_recipe)는 _agent_tools_recipe.py 에서 구현
+    # (§ 그 파일 docstring, §2.4a).
+    **RECIPE_TOOLS,
 }
 
 # 실측(2026-08-21): "지원시작 2건정도" 한 턴에서 chat_llm(Haiku, 저렴한 분류 모델)이

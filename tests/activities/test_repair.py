@@ -13,6 +13,7 @@ from auto_apply.adapters.recipe.memory import InMemoryRecipeSource
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.contracts.dto import ExecutionContext, RepairInput
 from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
+from auto_apply.domain.recipe_diagnosis import PageVerdict
 
 PLATFORM = "wanted"
 
@@ -137,3 +138,56 @@ async def test_propose_recipe_diff_falls_back_when_reason_missing() -> None:
     prompt, cache_prefix = llm.prompts[0]
     full_prompt = cache_prefix + prompt
     assert "[실패 사유]\n(사유 미상)" in full_prompt
+
+
+# ── §2.4a 판정 activity ─────────────────────────────────────────────────
+_ALREADY_APPLIED_PAGE = (
+    "<html><body><p>" + "본 채용정보는 무단전재 금지. " * 40 + "</p>"
+    "<button>지원완료</button></body></html>"
+).encode()
+
+
+def _activities(store: InMemoryBlobStore) -> RepairActivities:
+    return RepairActivities(_PromptSpyLLM(), InMemoryRecipeSource({PLATFORM: _previous()}), store)
+
+
+def _diag_req(snapshot_key: str, reason: str = "wait_for 실패 (text=첨부파일 선택)") -> RepairInput:
+    return RepairInput(
+        platform=PLATFORM,
+        form_hash="h-wanted-1",
+        snapshot_key=snapshot_key,
+        failed_version=8,
+        failure_reason=reason,
+        ctx=ExecutionContext(application_id="app_1", attempt=1),
+    )
+
+
+async def test_diagnose_reports_already_applied_page() -> None:
+    """실측 사고(2026-08-24) 재현 — 이 판정이 사람에게 그대로 보여야 ❌ 를 고를 수 있다."""
+    store = InMemoryBlobStore()
+    await store.put("snap/applied.html", _ALREADY_APPLIED_PAGE)
+
+    diagnosis = await _activities(store).diagnose_recipe_failure(_diag_req("snap/applied.html"))
+
+    assert diagnosis.verdict is PageVerdict.ALREADY_APPLIED
+    assert "이미 지원한 공고" in diagnosis.summary
+
+
+async def test_diagnose_survives_missing_snapshot() -> None:
+    """스냅샷 조회 실패가 확인 절차를 막으면 안 된다 — 판정만 "페이지 없음"으로 떨어진다."""
+    diagnosis = await _activities(InMemoryBlobStore()).diagnose_recipe_failure(_diag_req("gone"))
+    assert diagnosis.verdict is PageVerdict.PAGE_NOT_LOADED
+
+
+async def test_diff_prompt_carries_the_page_diagnosis() -> None:
+    """LLM 도 같은 판정을 본다 — 멀쩡한 selector 를 헤집지 말라는 근거로 쓰인다."""
+    store = InMemoryBlobStore()
+    await store.put("snap/applied.html", _ALREADY_APPLIED_PAGE)
+    llm = _PromptSpyLLM()
+    activities = RepairActivities(llm, InMemoryRecipeSource({PLATFORM: _previous()}), store)
+
+    await activities.propose_recipe_diff(_diag_req("snap/applied.html"))
+
+    prompt, cache_prefix = llm.prompts[0]
+    assert "[페이지 판정]" in cache_prefix + prompt
+    assert "이미 지원한 공고" in cache_prefix + prompt

@@ -99,7 +99,10 @@ class AutomationRecipe(BaseModel):
 
     platform: str
     version: int = Field(ge=1)
-    status: Literal["draft", "candidate", "active", "deprecated"]
+    # quarantined = 사람이 "이 recipe 는 진짜 깨졌다"고 판정한 상태(§2.4). active/candidate 와
+    # 달리 `RecipeSource.active()` 가 안 집어가므로, 수선/해제 전까지 그 플랫폼 지원은 실행
+    # 자체가 시작되지 않는다 — "의심만으로 막지 않고, 사람이 확정하면 확실히 막는다".
+    status: Literal["draft", "candidate", "active", "quarantined", "deprecated"]
     form_hash: str
     actions: list[Action] = Field(min_length=1, max_length=120)
     expected_elements: list[str] = Field(default_factory=list)

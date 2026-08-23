@@ -2,10 +2,14 @@ import asyncio
 import json
 from pathlib import Path
 
+from auto_apply.adapters.recipe._status import no_live_reason
 from auto_apply.contracts.recipe import AutomationRecipe
 from auto_apply.domain.errors import PolicyViolation
 
 _LIVE_STATUSES = ("active", "candidate")
+# promote() 가 함께 내리는 상태들 — quarantined 가 여기 있어야 수선 성공이 곧 격리 해제가
+# 된다(§2.4a). 안 그러면 새 버전이 active 가 돼도 옛 버전이 격리 상태로 영원히 남는다.
+_DEMOTABLE_STATUSES = ("active", "quarantined")
 
 
 class JsonFileRecipeSource:
@@ -37,10 +41,25 @@ class JsonFileRecipeSource:
         return await asyncio.to_thread(_read_all)
 
     async def active(self, platform: str) -> AutomationRecipe:
-        live = [r for r in await self.versions(platform) if r.status in _LIVE_STATUSES]
+        versions = await self.versions(platform)
+        live = [r for r in versions if r.status in _LIVE_STATUSES]
         if not live:
-            raise PolicyViolation(f"{platform}: active recipe 가 없다")
+            raise PolicyViolation(no_live_reason(platform, versions))
         return max(live, key=lambda r: r.version)
+
+    async def quarantine(self, platform: str) -> AutomationRecipe:
+        target = await self.active(platform)
+        quarantined = target.model_copy(update={"status": "quarantined"})
+        await asyncio.to_thread(self._write, quarantined)
+        return quarantined
+
+    async def unquarantine(self, platform: str) -> AutomationRecipe:
+        held = [r for r in await self.versions(platform) if r.status == "quarantined"]
+        if not held:
+            raise PolicyViolation(f"{platform}: 격리된 recipe 가 없다")
+        restored = max(held, key=lambda r: r.version).model_copy(update={"status": "candidate"})
+        await asyncio.to_thread(self._write, restored)
+        return restored
 
     async def save(self, recipe: AutomationRecipe) -> AutomationRecipe:
         if recipe.status == "active":
@@ -65,14 +84,19 @@ class JsonFileRecipeSource:
 
         promoted = target.model_copy(update={"status": "active"})
         demoted = [
-            r.model_copy(update={"status": "deprecated"}) for r in versions if r.status == "active"
+            r.model_copy(update={"status": "deprecated"})
+            for r in versions
+            if r.status in _DEMOTABLE_STATUSES
         ]
 
         def _write_all() -> None:
             for recipe in (promoted, *demoted):
-                self._path(platform, recipe.version).write_text(
-                    json.dumps(recipe.model_dump(mode="json"))
-                )
+                self._write(recipe)
 
         await asyncio.to_thread(_write_all)
         return promoted
+
+    def _write(self, recipe: AutomationRecipe) -> None:
+        self._path(recipe.platform, recipe.version).write_text(
+            json.dumps(recipe.model_dump(mode="json"))
+        )

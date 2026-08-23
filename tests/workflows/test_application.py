@@ -685,6 +685,28 @@ async def test_no_active_recipe_goes_to_needs_human_not_silent_crash(env: Workfl
     assert needs_human_events[0].application_id == APP_ID
 
 
+async def test_quarantined_recipe_blocks_submission_with_a_readable_reason(
+    env: WorkflowEnvironment,
+):
+    """§2.4a: 사람이 "진짜 깨졌다"를 확정하면 그 플랫폼 지원은 실행 전에 막혀야 한다 —
+
+    그리고 그 사유가 "active recipe 가 없다"가 아니라 "격리 상태다 + 어떻게 푸는가"여야
+    사람이 텔레그램에서 바로 조치할 수 있다.
+    """
+    h = Harness()
+    await h.recipes.quarantine("fixture")
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal())
+        result = await handle.result()
+
+    assert result.state is ApplicationState.NEEDS_HUMAN
+    assert "격리(quarantined)" in result.reason
+    assert "unquarantine_recipe" in result.reason
+    assert h.attempts(APP_ID) == []  # 브라우저 실행 자체가 시작되지 않았다
+
+
 async def test_recipe_failure_goes_to_needs_human(env: WorkflowEnvironment):
     """DOM 변경 상황. RecipeExecutionError 는 repair(§2.4) 를 한 번 시도하지만, 이 테스트는
 

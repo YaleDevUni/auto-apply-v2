@@ -114,7 +114,11 @@ def build_guide_patch_prompt(guide: str, feedback: str, job: JobRef) -> str:
 
 
 def build_recipe_diff_prompt(
-    previous: AutomationRecipe, snapshot_html: str, failure_detail: str
+    previous: AutomationRecipe,
+    snapshot_html: str,
+    failure_detail: str,
+    *,
+    page_diagnosis: str = "",
 ) -> str:
     """recipe 수선 제안 프롬프트 (§2.4 node B).
 
@@ -131,11 +135,25 @@ def build_recipe_diff_prompt(
     ("Timeout Nms exceeded")로 낸다. 이 둘을 프롬프트 지시로 뭉뚱그리면 후자(진짜 셀렉터 문제)
     를 못 고치게 막을 위험이 있고, LLM 이 그 지시를 얼마나 충실히 따를지도 보장이 없다 — 실제
     실패 사유와 DOM 을 그대로 보여주고 판단은 LLM 에게 맡긴다.
+
+    `page_diagnosis`는 `domain/recipe_diagnosis.diagnose_page`가 스냅샷을 보고 낸 판정
+    한 줄이다(§2.4a) — "이미 지원한 공고라 패널이 안 열렸다" 같은, recipe 와 무관한 실패를
+    LLM 이 selector 문제로 오해하고 멀쩡한 selector 를 헤집는 걸 막는다. 실측(2026-08-24):
+    `지원완료` 페이지에서 난 wait_for timeout 을 두 라운드 내내 selector 문제로 취급했다.
+    지시가 아니라 근거로 준다 — 판정이 틀렸을 수도 있으므로 DOM 을 보고 뒤집으라고 명시한다.
     """
     actions_json = previous.model_dump_json(include={"actions", "success_signals"}, indent=2)
     snapshot = snapshot_html[:_SNAPSHOT_CHAR_LIMIT]
     truncated_note = (
         "\n(스냅샷이 길어 앞부분만 잘랐다)" if len(snapshot_html) > _SNAPSHOT_CHAR_LIMIT else ""
+    )
+    diagnosis_section = (
+        f"\n[페이지 판정] (코드가 스냅샷을 보고 낸 추정이다 — DOM 과 안 맞으면 무시해라)\n"
+        f"{page_diagnosis}\n"
+        "이 판정대로 recipe 와 무관한 실패(이미 지원함/로그인 만료/마감)라면, selector 를 "
+        "억지로 바꾸지 말고 [실패한 recipe]의 actions 를 그대로 다시 내라.\n"
+        if page_diagnosis
+        else ""
     )
     return (
         f"{previous.platform} 지원 폼에서 아래 [실패한 recipe]의 actions 를 실행하다 "
@@ -146,7 +164,8 @@ def build_recipe_diff_prompt(
         "value_ref 는 'profile.xxx'/'upload.xxx' 형태의 참조만 허용된다 — 실제 값(이메일 "
         "주소 등)을 리터럴로 쓰지 마라. success_signals 는 제출 완료를 판정하는 텍스트 목록이다 "
         "— DOM에서 실제로 보이는 문구가 있으면 그걸 반영하고, 없으면 원본 값을 유지해라.\n\n"
-        f"[실패 사유]\n{failure_detail}\n\n"
+        f"[실패 사유]\n{failure_detail}\n"
+        f"{diagnosis_section}\n"
         f"[실패한 recipe]\n{actions_json}\n\n"
         f"[현재 페이지 DOM]\n{snapshot}{truncated_note}"
     )

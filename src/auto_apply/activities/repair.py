@@ -12,9 +12,16 @@ from temporalio import activity
 
 from auto_apply.ai.prompts import build_recipe_diff_prompt, reprompt_error_suffix
 from auto_apply.ai.schemas import RecipeDiffSchema
-from auto_apply.contracts.dto import PromoteRecipeInput, RecipeDiffResult, RepairInput
+from auto_apply.contracts.dto import (
+    PromoteRecipeInput,
+    QuarantineRecipeInput,
+    RecipeDiffResult,
+    RepairDiagnosis,
+    RepairInput,
+)
 from auto_apply.contracts.recipe import AutomationRecipe
 from auto_apply.domain.errors import AutoApplyError, LLMSchemaViolation, PolicyViolation
+from auto_apply.domain.recipe_diagnosis import diagnose_page, hint_for
 from auto_apply.domain.recipe_repair import (
     FailureCategory,
     build_candidate_recipe,
@@ -60,18 +67,37 @@ class RepairActivities:
             if bumped is not None:
                 return RecipeDiffResult(candidate=bumped, previous=previous)
 
-        try:
-            snapshot_html = (await self._store.get(req.snapshot_key)).decode(
-                "utf-8", errors="replace"
-            )
-        except AutoApplyError:
-            snapshot_html = "(스냅샷을 불러오지 못했다)"
-
+        snapshot_html = await self._snapshot_html(req.snapshot_key)
+        verdict, evidence = diagnose_page(snapshot_html, req.failure_reason)
         prompt = build_recipe_diff_prompt(
-            previous, snapshot_html, req.failure_reason or "(사유 미상)"
+            previous,
+            snapshot_html,
+            req.failure_reason or "(사유 미상)",
+            page_diagnosis=f"{hint_for(verdict)} ({evidence})",
         )
         candidate = await self._propose_with_reprompt(prompt, previous, next_version)
         return RecipeDiffResult(candidate=candidate, previous=previous)
+
+    @activity.defn(name="diagnose_recipe_failure")
+    async def diagnose_recipe_failure(self, req: RepairInput) -> RepairDiagnosis:
+        """실패 시점 DOM 을 보고 "애초에 recipe 문제인가"를 판정한다 (§2.4a).
+
+        `AutomationRepairWorkflow` 가 사람에게 "진짜 깨진 거 맞나요?"를 묻기 전에 부른다 —
+        판정 자체가 수선을 건너뛰거나 강행하지 않는다. 판정은 순수 함수
+        (`domain/recipe_diagnosis.py`) 이고 여기서 하는 I/O 는 스냅샷 조회 하나뿐이다.
+        """
+        verdict, evidence = diagnose_page(
+            await self._snapshot_html(req.snapshot_key), req.failure_reason
+        )
+        return RepairDiagnosis(verdict=verdict, evidence=evidence, hint=hint_for(verdict))
+
+    async def _snapshot_html(self, snapshot_key: str) -> str:
+        try:
+            return (await self._store.get(snapshot_key)).decode("utf-8", errors="replace")
+        except AutoApplyError:
+            # 스냅샷이 없어도 수선/판정을 막지 않는다 — 판정은 PAGE_NOT_LOADED 로 떨어지고
+            # (짧은 문자열이라 domain 쪽 임계값에 걸린다) LLM 은 DOM 없이 실패 사유만 본다.
+            return "(스냅샷을 불러오지 못했다)"
 
     async def _propose_with_reprompt(
         self, prompt: str, previous: AutomationRecipe, version: int
@@ -105,9 +131,23 @@ class RepairActivities:
     async def save_recipe_candidate(self, recipe: AutomationRecipe) -> AutomationRecipe:
         return await self._recipes.save(recipe)
 
+    @activity.defn(name="quarantine_recipe")
+    async def quarantine_recipe(self, req: QuarantineRecipeInput) -> AutomationRecipe:
+        """사람이 "진짜 깨졌다"를 확정한 직후에만 불린다 (§2.4a) — 이 순간부터 그 플랫폼의
+
+        지원 실행은 `load_active_recipe` 단계에서 막힌다.
+        """
+        return await self._recipes.quarantine(req.platform)
+
     @activity.defn(name="promote_recipe")
     async def promote_recipe(self, req: PromoteRecipeInput) -> AutomationRecipe:
         return await self._recipes.promote(req.platform, req.version)
 
     def all(self) -> list[Callable[..., Any]]:
-        return [self.propose_recipe_diff, self.save_recipe_candidate, self.promote_recipe]
+        return [
+            self.diagnose_recipe_failure,
+            self.propose_recipe_diff,
+            self.save_recipe_candidate,
+            self.quarantine_recipe,
+            self.promote_recipe,
+        ]

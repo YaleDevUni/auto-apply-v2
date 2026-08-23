@@ -106,3 +106,46 @@ async def test_promote_candidate_deprecates_old_active(make_source):
     statuses = {r.version: r.status for r in await source.versions("fixture")}
     assert statuses == {1: "deprecated", 2: "active"}
     assert (await source.active("fixture")).version == 2
+
+
+# ── 격리 (§2.4a) ────────────────────────────────────────────────────────
+async def test_quarantine_blocks_active_lookup(make_source):
+    """사람이 "진짜 깨졌다"를 확정하면 그 플랫폼 지원이 아예 시작되지 않아야 한다."""
+    source = make_source("active")
+    held = await source.quarantine("fixture")
+    assert (held.version, held.status) == (1, "quarantined")
+    with pytest.raises(PolicyViolation, match="격리"):
+        await source.active("fixture")
+
+
+async def test_quarantine_without_live_recipe_is_rejected(make_source):
+    source = make_source("deprecated")
+    with pytest.raises(PolicyViolation):
+        await source.quarantine("fixture")
+
+
+async def test_unquarantine_returns_to_candidate_not_active(make_source):
+    """해제는 active 가 아니라 candidate 로 돌린다 — 다음 실행이 SUPERVISED 로 돌아야 한다."""
+    source = make_source("active")
+    await source.quarantine("fixture")
+
+    restored = await source.unquarantine("fixture")
+    assert (restored.version, restored.status) == (1, "candidate")
+    assert (await source.active("fixture")).status == "candidate"
+
+
+async def test_unquarantine_without_quarantined_version_is_rejected(make_source):
+    with pytest.raises(PolicyViolation):
+        await make_source("active").unquarantine("fixture")
+
+
+async def test_promote_lifts_quarantine_of_old_version(make_source):
+    """수선이 승격까지 성공하면 격리도 같이 풀린다 — 안 그러면 옛 버전이 영영 격리로 남는다."""
+    source = make_source("active")
+    await source.quarantine("fixture")
+    await source.save(_v2("candidate"))
+
+    await source.promote("fixture", 2)
+
+    statuses = {r.version: r.status for r in await source.versions("fixture")}
+    assert statuses == {1: "deprecated", 2: "active"}

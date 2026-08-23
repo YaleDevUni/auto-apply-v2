@@ -1,7 +1,9 @@
+from auto_apply.adapters.recipe._status import no_live_reason
 from auto_apply.contracts.recipe import AutomationRecipe
 from auto_apply.domain.errors import PolicyViolation
 
 _LIVE_STATUSES = ("active", "candidate")
+_DEMOTABLE_STATUSES = ("active", "quarantined")
 
 
 class InMemoryRecipeSource:
@@ -23,10 +25,24 @@ class InMemoryRecipeSource:
         return [by_version[v] for v in sorted(by_version)]
 
     async def active(self, platform: str) -> AutomationRecipe:
-        live = [r for r in await self.versions(platform) if r.status in _LIVE_STATUSES]
+        versions = await self.versions(platform)
+        live = [r for r in versions if r.status in _LIVE_STATUSES]
         if not live:
-            raise PolicyViolation(f"{platform}: active recipe 가 없다")
+            raise PolicyViolation(no_live_reason(platform, versions))
         return max(live, key=lambda r: r.version)
+
+    async def quarantine(self, platform: str) -> AutomationRecipe:
+        quarantined = (await self.active(platform)).model_copy(update={"status": "quarantined"})
+        self._by_platform[platform][quarantined.version] = quarantined
+        return quarantined
+
+    async def unquarantine(self, platform: str) -> AutomationRecipe:
+        held = [r for r in await self.versions(platform) if r.status == "quarantined"]
+        if not held:
+            raise PolicyViolation(f"{platform}: 격리된 recipe 가 없다")
+        restored = max(held, key=lambda r: r.version).model_copy(update={"status": "candidate"})
+        self._by_platform[platform][restored.version] = restored
+        return restored
 
     async def save(self, recipe: AutomationRecipe) -> AutomationRecipe:
         if recipe.status == "active":
@@ -46,6 +62,6 @@ class InMemoryRecipeSource:
         promoted = target.model_copy(update={"status": "active"})
         by_version[version] = promoted
         for v, r in list(by_version.items()):
-            if v != version and r.status == "active":
+            if v != version and r.status in _DEMOTABLE_STATUSES:
                 by_version[v] = r.model_copy(update={"status": "deprecated"})
         return promoted

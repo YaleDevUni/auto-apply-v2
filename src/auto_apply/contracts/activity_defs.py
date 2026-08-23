@@ -24,8 +24,10 @@ from auto_apply.contracts.dto import (
     PersistState,
     PromoteRecipeInput,
     ProposeGuidePatchRequest,
+    QuarantineRecipeInput,
     RecipeDiffResult,
     RenderedPdf,
+    RepairDiagnosis,
     RepairInput,
     ResumeDraft,
     ReviewRequest,
@@ -129,6 +131,15 @@ async def start_actionable_applications(cmd: ApplyIntakeInput) -> ApplyIntakeRes
     raise NotImplementedError(_ONLY)
 
 
+@activity.defn(name="diagnose_recipe_failure")
+async def diagnose_recipe_failure(req: RepairInput) -> RepairDiagnosis:
+    """실패 시점 DOM 으로 "애초에 recipe 문제인가"를 판정한다 (§2.4a) — 사람에게 "진짜
+
+    깨졌나요?"를 묻기 전의 근거 수집이다. 판정이 수선 여부를 대신 결정하지 않는다.
+    """
+    raise NotImplementedError(_ONLY)
+
+
 @activity.defn(name="propose_recipe_diff")
 async def propose_recipe_diff(req: RepairInput) -> RecipeDiffResult:
     """LLM diff 제안 (§2.4 node B). `previous`도 같이 돌려줘 워크플로우가 재조회 없이
@@ -141,6 +152,15 @@ async def propose_recipe_diff(req: RepairInput) -> RecipeDiffResult:
 @activity.defn(name="save_recipe_candidate")
 async def save_recipe_candidate(recipe: AutomationRecipe) -> AutomationRecipe:
     """샌드박스 dry-run 을 통과한 draft 를 candidate 로 이력에 추가한다 (§2.4 node G)."""
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="quarantine_recipe")
+async def quarantine_recipe(req: QuarantineRecipeInput) -> AutomationRecipe:
+    """사람이 "진짜 깨졌다"를 확정한 뒤에만 호출된다 (§2.4a) — 이 시점부터 그 플랫폼의
+
+    지원 실행이 `load_active_recipe` 에서 막힌다.
+    """
     raise NotImplementedError(_ONLY)
 
 

@@ -144,11 +144,16 @@ class _NonceSpy:
     # dry-run-indicator-backlog: 승인 요청에 실린 mode 배지 값을 워크플로우 테스트에서
     # 검증하기 위한 로그.
     requests: list[DecisionRequest] = field(default_factory=list)
+    # (요청, nonce) 짝. `last_ticket` 은 application_id 하나만 키로 쓰는데, 한 워크플로우가
+    # 같은 id 로 승인을 두 번 요청하면(§2.4a: recipe 파손 확정 → 승격 승인) 뒤엣것이
+    # 앞엣것을 덮어써서 "어느 요청의 nonce 인가"를 구분할 수 없다 — 그래서 순서대로 다 남긴다.
+    issued: list[tuple[DecisionRequest, str]] = field(default_factory=list)
 
     async def request_decision(self, req: DecisionRequest) -> DecisionTicket:
         self.requests.append(req)
         ticket = await self.inner.request_decision(req)
         self.last_ticket[req.application_id] = ticket.nonce
+        self.issued.append((req, ticket.nonce))
         return ticket
 
     async def notify(self, event: NotifyEvent) -> None:
@@ -236,6 +241,25 @@ class Harness:
     # container() 의 기본 registry(FixturePlatformAdapter 하나)를 덮어쓸 때만 채운다 — apply_by_url
     # 처럼 platform 이 "wanted" 인 어댑터가 필요한 테스트용(apply_intake.py 의 wanted 한정 체크).
     registry: PlatformRegistry | None = None
+    # activities() 와 container() 가 같은 인스턴스를 봐야 하는 것들. recipe 는 §2.4a 격리
+    # (quarantine) 이후 상태를 테스트가 직접 확인해야 해서, blob store 는 테스트가 DOM
+    # 스냅샷을 미리 심어 판정(diagnose_recipe_failure)을 태우려면 필요해서 공유한다.
+    _recipes: InMemoryRecipeSource | None = None
+    _store: InMemoryBlobStore | None = None
+
+    @property
+    def recipes(self) -> InMemoryRecipeSource:
+        if self._recipes is None:
+            self._recipes = InMemoryRecipeSource(
+                {"fixture": sample_recipe(status=self.recipe_status)}
+            )
+        return self._recipes
+
+    @property
+    def store(self) -> InMemoryBlobStore:
+        if self._store is None:
+            self._store = InMemoryBlobStore()
+        return self._store
 
     def _shared_notifier(self, *, telegram: bool = False) -> _NonceSpy:
         """첫 호출이 종류를 정한다(이후는 메모이즈) — REVISE 텔레그램 흐름 테스트는
@@ -260,14 +284,14 @@ class Harness:
     def activities(self) -> list[object]:
         idgen = UuidIdGen()
         clock = SystemClock()
-        store = InMemoryBlobStore()
+        store = self.store
         adapter = FixturePlatformAdapter(
             eligible=self.eligible,
             reject_reason=self.reject_reason,
             verified=self.verified,
             description=self.job_description,
         )
-        recipes = InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)})
+        recipes = self.recipes
         rows = self.rows
         attempt_rows = self.attempt_rows
         schedule_config_rows = self.schedule_config_rows
@@ -304,14 +328,14 @@ class Harness:
         return [*app.all(), *resume.all(), *browser.all(), *guide_activities.all(), *repair.all()]
 
     def container(self, *, settings: Settings | None = None) -> Container:
-        """FastAPI 테스트용 `Container`. `activities()` 가 쓰는 것과 같은 `rows`/notifier 를
+        """FastAPI 테스트용 `Container`. `activities()` 가 쓰는 것과 같은 `rows`/notifier/
 
-        공유한다 — 그래야 워크플로우가 workers 쪽에서 persist 한 상태를 API 의 GET 이 그대로
-        읽고, 웹훅이 소비하는 nonce 도 activity 가 발급한 것과 일치한다.
+        recipes/store 를 공유한다 — 그래야 워크플로우가 workers 쪽에서 persist 한 상태를 API 의
+        GET 이 그대로 읽고, 웹훅이 소비하는 nonce 도 activity 가 발급한 것과 일치한다.
         """
         idgen = UuidIdGen()
         clock = SystemClock()
-        store = InMemoryBlobStore()
+        store = self.store
         llm = StubLLM(payloads=list(_RESUME_PAYLOADS))
         facts = StaticFactSource(_sample_facts())
         profile = _sample_profile()
@@ -337,7 +361,7 @@ class Harness:
             ),
             registry=self.registry
             or StaticPlatformRegistry([FixturePlatformAdapter(eligible=self.eligible)]),
-            recipes=InMemoryRecipeSource({"fixture": sample_recipe(status=self.recipe_status)}),
+            recipes=self.recipes,
             executor=ReplayExecutor(clock, fail_selectors=self.fail_selectors),
             generator=SimpleResumeGenerator(llm, idgen, facts, profile, portfolio, guide),
             reviewer=SimpleResumeReviewer(facts),

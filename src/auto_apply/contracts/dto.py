@@ -13,6 +13,7 @@ from auto_apply.domain.enums import (
     ExecutionMode,
     RevisionScope,
 )
+from auto_apply.domain.recipe_diagnosis import PageVerdict
 
 
 class _Frozen(BaseModel):
@@ -127,6 +128,12 @@ class DecisionRequest(_Frozen):
     # `wf_id = f"repair-{application_id}"`로 그대로 워크플로우 id 를 복원할 수 있다
     # (telegram/bridge.py).
     repair_promotion: bool = False
+    # True 면 AutomationRepairWorkflow 가 **수선을 시작하기 전에** 묻는 확인 요청이다(§2.4a) —
+    # "실행이 실패했다"가 곧 "recipe 가 깨졌다"는 아니라서(이미 지원한 공고/로그인 만료/마감
+    # 공고에서도 같은 실패가 난다) 사람이 판정한다. 승인하면 그때 recipe 가 격리(quarantined)
+    # 되고 그 플랫폼 제출이 멈춘다 — 승인 전까지는 recipe 가 active 그대로라 다른 지원 건은
+    # 계속 제출할 수 있다. `application_id` 는 repair_promotion 과 같이 `f"{platform}-{form_hash}"`.
+    repair_confirm: bool = False
     # True 면 SUPERVISED 실행 중 페이지 경계 체크포인트 승인 요청이다
     # (§ supervised-checkpoint-design) — guide_patch/repair_promotion 처럼 승인/거절 2버튼만.
     # `artifact_url`엔 체크포인트 스크린샷의 blob 키가 실린다.
@@ -297,6 +304,28 @@ class RecipeDiffResult(_Frozen):
 
     candidate: AutomationRecipe
     previous: AutomationRecipe
+
+
+class RepairDiagnosis(_Frozen):
+    """diagnose_recipe_failure activity 의 반환값 (§2.4a).
+
+    실패 시점 DOM 스냅샷을 `domain.recipe_diagnosis.diagnose_page`로 판정한 결과.
+    워크플로우가 이걸 사람에게 보여주고 "진짜 recipe 가 깨졌나?"를 묻는다 — 자동으로
+    수선을 건너뛰거나 강행하는 데 쓰지 않는다.
+    """
+
+    verdict: PageVerdict
+    evidence: str = ""
+    hint: str = ""
+
+    @property
+    def summary(self) -> str:
+        return f"{self.hint} ({self.evidence})" if self.evidence else self.hint
+
+
+class QuarantineRecipeInput(_Frozen):
+    platform: str
+    reason: str = ""
 
 
 class PromoteRecipeInput(_Frozen):

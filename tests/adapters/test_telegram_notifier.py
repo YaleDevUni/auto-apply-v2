@@ -302,6 +302,32 @@ async def test_repair_promotion_decision_has_only_approve_and_hold_buttons() -> 
     assert hold_btn.callback_data == f"pr:fixture-h-fixture-1:{ticket.nonce}"
 
 
+async def test_repair_confirm_decision_has_only_two_verdict_buttons() -> None:
+    """ "이 recipe 진짜 깨졌나?"(§2.4a) — 승인/거절이 아니라 판정 2지선다이고, 실행 모드와도
+
+    무관해 배지를 안 붙인다. qa 를 누르면 제출이 멈추므로 그 사실이 버튼 라벨에 드러나야 한다.
+    """
+    bot = FakeBot()
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="fixture-h-fixture-1",
+        workflow_id="repair-fixture-h-fixture-1",
+        title="fixture recipe v1 실행 실패 — 진짜 깨진 건가요?",
+        summary="이미 지원한 공고로 보인다",
+        repair_confirm=True,
+    )
+
+    ticket = await notifier.request_decision(req)
+
+    assert not str(bot.sent[0]["text"]).startswith("🧪")  # 모드 배지 없음
+    markup = bot.sent[0]["reply_markup"]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    broken_btn, fine_btn = markup.inline_keyboard[0]
+    assert broken_btn.callback_data == f"qa:fixture-h-fixture-1:{ticket.nonce}"
+    assert fine_btn.callback_data == f"qr:fixture-h-fixture-1:{ticket.nonce}"
+    assert "제출 멈추고" in str(broken_btn.text)
+
+
 async def test_checkpoint_decision_has_no_mode_badge() -> None:
     """체크포인트 승인도 실행 모드와 무관해 배지를 안 붙인다 — 이미 SUPERVISED 도중임이 자명하다."""
     bot = FakeBot()

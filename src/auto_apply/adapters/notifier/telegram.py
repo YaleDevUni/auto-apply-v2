@@ -107,6 +107,8 @@ class TelegramNotifier:
             keyboard = _guide_patch_keyboard(req, nonce)
         elif req.repair_promotion:
             keyboard = _repair_keyboard(req, nonce)
+        elif req.repair_confirm:
+            keyboard = _repair_confirm_keyboard(req, nonce)
         elif req.checkpoint:
             keyboard = _checkpoint_keyboard(req, nonce)
         else:
@@ -268,7 +270,7 @@ def _mode_badge(req: DecisionRequest) -> str:
     뜻이라(`workflows/application.py` `_peek_mode`) "확인 불가"로 명시해 사람이 안심하지
     않게 한다.
     """
-    if req.guide_patch or req.repair_promotion or req.checkpoint:
+    if req.guide_patch or req.repair_promotion or req.repair_confirm or req.checkpoint:
         return ""
     labels = {
         ExecutionMode.DRY_RUN: "🧪 DRY RUN — 실제 제출 안 함",
@@ -286,7 +288,7 @@ def _caution_section(req: DecisionRequest) -> str:
     (wanted-application-caution-indicators-backlog). 중첩 승인(guide_patch/repair_promotion/
     checkpoint)은 실제 지원 실행과 무관해 붙이지 않는다 — `_mode_badge`와 같은 이유.
     """
-    if req.guide_patch or req.repair_promotion or req.checkpoint:
+    if req.guide_patch or req.repair_promotion or req.repair_confirm or req.checkpoint:
         return ""
     lines = []
     if req.caution_documents:
@@ -320,6 +322,27 @@ def _repair_keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("✅ 승격", callback_data=f"pa:{req.application_id}:{nonce}"),
                 InlineKeyboardButton("❌ 보류", callback_data=f"pr:{req.application_id}:{nonce}"),
+            ]
+        ]
+    )
+
+
+def _repair_confirm_keyboard(req: DecisionRequest, nonce: str) -> InlineKeyboardMarkup:
+    """수선을 시작하기 전의 확인 (§2.4a). 승인/보류가 아니라 **판정**이라 라벨을 그렇게 쓴다 —
+
+    "✅ 승인"으로 보이면 사람이 "수선해도 좋다" 정도로 읽고 제출이 멈춘다는 부작용을 놓친다.
+    `req.application_id`는 `_repair_keyboard`와 같이 `f"{platform}-{form_hash}"`다.
+    """
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🔧 진짜 깨짐 — 제출 멈추고 수선",
+                    callback_data=f"qa:{req.application_id}:{nonce}",
+                ),
+                InlineKeyboardButton(
+                    "👌 아님 — 그대로 둠", callback_data=f"qr:{req.application_id}:{nonce}"
+                ),
             ]
         ]
     )

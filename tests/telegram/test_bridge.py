@@ -7,6 +7,7 @@ nonce 소비·signal 전달까지 포함한 end-to-end 는 tests/api/test_telegr
 import pytest
 
 from auto_apply.telegram.bridge import _GUIDE_REVISE_TAG_RE as GUIDE_REVISE_TAG_RE
+from auto_apply.telegram.bridge import _REPAIR_ACTIONS as REPAIR_ACTIONS
 from auto_apply.telegram.bridge import _REVISE_TAG_RE as REVISE_TAG_RE
 from auto_apply.telegram.bridge import MalformedCallback, _parse, _parse_scope_choice
 
@@ -97,3 +98,17 @@ def test_guide_revise_tag_regex_extracts_application_id_nonce():
 
 def test_guide_revise_tag_regex_does_not_match_plain_text():
     assert GUIDE_REVISE_TAG_RE.search("그냥 일반 대화 메시지입니다") is None
+
+
+def test_parse_accepts_repair_confirm_actions():
+    """qa/qr("이 recipe 진짜 깨졌나?" 확정/부정, §2.4a) — pa/pr 과 같은 id 규칙을 쓴다."""
+    assert _parse("qa:fixture-h1:nonce_1") == ("qa", "fixture-h1", "nonce_1")
+    assert _parse("qr:fixture-h1:nonce_1") == ("qr", "fixture-h1", "nonce_1")
+
+
+def test_repair_confirm_actions_target_the_repair_workflow():
+    """qa/qr 이 `application-*` 이 아니라 `repair-*` 로 가야 한다 — 지원 건 승인으로 새면
+
+    "recipe 가 깨졌다"는 판정이 엉뚱한 워크플로우의 승인으로 소비된다.
+    """
+    assert {"qa", "qr"} <= REPAIR_ACTIONS

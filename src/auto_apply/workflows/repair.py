@@ -1,14 +1,20 @@
-"""Recipe 수선 워크플로우 (ARCHITECTURE.md §2.4).
+"""Recipe 수선 워크플로우 (ARCHITECTURE.md §2.4, §2.4a).
 
 `ApplicationWorkflow`가 RecipeExecutionError 를 만나면 child workflow 로 이 워크플로우를 부른다
 (id=`repair-{platform}-{form_hash}`, 동시에 같은 폼이 실패한 다른 지원과 dedupe 된다 —
 workflows/_repair.py 참고). 이 파일의 규칙은 `_execution.py`/`_revision.py`와 같다 —
 contracts/domain 만 import, workflow.execute_activity 를 직접 쓴다.
 
+**첫 단계는 LLM 이 아니라 사람이다 (§2.4a).** "실행이 실패했다"가 곧 "recipe 가 깨졌다"는
+아니다 — 이미 지원한 공고/로그인 만료/마감 공고에서도 똑같은 selector timeout 이 난다. 그래서
+스냅샷 판정(`diagnose_recipe_failure`)을 근거로 붙여 사람에게 먼저 묻고, 사람이 확정했을
+때만 recipe 를 격리(제출 중단)하고 수선을 시작한다. 확정 전에는 아무것도 안 바꾸므로 다른
+지원 건은 계속 제출된다.
+
 정책 검증(§2.4 node D)은 `domain/recipe_policy.check_recipe_policy`가 순수 함수라 activity 없이
 여기서 직접 부른다 — `propose_recipe_diff`가 `previous`를 같이 돌려주는 이유가 그거다.
 샌드박스 dry-run(node E)은 새 실행 모드가 필요 없다 — 기존 `ExecutionMode.DRY_RUN`(submit
-직전까지만)을 그대로 쓴다.
+직전까지만)을 그대로 쓴다. 사람에게 보낼 문구는 `_repair_messages.py`(순수 함수)에 있다.
 """
 
 from datetime import timedelta
@@ -18,27 +24,32 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
 from auto_apply.contracts.activity_defs import (
+    diagnose_recipe_failure,
     execute_application,
     notify,
     promote_recipe,
     propose_recipe_diff,
+    quarantine_recipe,
     request_approval,
     save_recipe_candidate,
 )
 from auto_apply.contracts.dto import (
     ApproveSignal,
-    DecisionRequest,
     ExecuteInput,
     NotifyEvent,
     PromoteRecipeInput,
+    QuarantineRecipeInput,
     RejectSignal,
+    RepairDiagnosis,
     RepairInput,
     RepairResult,
 )
 from auto_apply.contracts.recipe import AutomationRecipe
 from auto_apply.domain.enums import ExecutionMode
 from auto_apply.domain.errors import NON_RETRYABLE
+from auto_apply.domain.recipe_diagnosis import PageVerdict
 from auto_apply.domain.recipe_policy import check_recipe_policy
+from auto_apply.workflows import _repair_messages as msg
 from auto_apply.workflows._errors import activity_failure
 
 QUEUE_DEFAULT = "default"
@@ -49,6 +60,9 @@ QUEUE_BROWSER = "browser"
 # 다시 시도한다. 그래도 안 되면 사람에게 넘긴다(무한 루프 방지, MAX_REVIEW_ROUNDS 와 같은 이유).
 MAX_SANDBOX_ATTEMPTS = 2
 _PROMOTION_TIMEOUT_HOURS = 72
+# 승격 승인(72h)보다 짧다 — 이 단계는 무응답의 기본값("아무것도 안 한다")이 안전한 쪽이고,
+# 대기하는 동안 트리거가 된 지원 건이 REPAIRING 에 묶여 있기 때문이다(§2.4a).
+_CONFIRM_TIMEOUT_HOURS = 24
 _AI_RETRY = RetryPolicy(
     maximum_attempts=3,
     initial_interval=timedelta(seconds=2),
@@ -60,8 +74,14 @@ _QUICK = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
 @workflow.defn
 class AutomationRepairWorkflow:
     def __init__(self) -> None:
+        # 확인(§2.4a)과 승격(§2.4)은 슬롯/nonce 를 따로 둔다 — 하나로 합치면 "수선해도 된다"
+        # 클릭이 "새 recipe 를 active 로 올려도 된다"로 잘못 소비될 수 있다
+        # (ApplicationWorkflow 가 본 승인과 가이드 patch 승인을 분리한 것과 같은 이유).
+        self._confirmed: bool | None = None
+        self._confirm_nonce: str | None = None
         self._decision: bool | None = None
         self._nonce: str | None = None
+        self._quarantined = False
 
     @workflow.run
     async def run(self, req: RepairInput) -> RepairResult:
@@ -70,17 +90,14 @@ class AutomationRepairWorkflow:
         failed_action_index = req.failed_action_index
         candidate: AutomationRecipe | None = None
 
-        await workflow.execute_activity(
-            notify,
-            NotifyEvent(
-                kind="RECIPE_REPAIR_STARTED",
-                application_id=f"{req.platform}-{req.form_hash}",
-                message=f"{req.platform} recipe v{req.failed_version} 수선 시작",
-            ),
-            task_queue=QUEUE_DEFAULT,
-            start_to_close_timeout=timedelta(minutes=2),
-            retry_policy=_QUICK,
-        )
+        diagnosis = await self._diagnose(req)
+        if not await self._await_broken_confirmation(req, diagnosis):
+            await self._notify(msg.stand_down_event(req, diagnosis))
+            return RepairResult(
+                promoted=False,
+                reason=f"사람이 recipe 문제가 아니라고 판단했다 ({diagnosis.summary})",
+            )
+        await self._quarantine(req)
 
         for attempt in range(1, MAX_SANDBOX_ATTEMPTS + 1):
             try:
@@ -149,9 +166,7 @@ class AutomationRepairWorkflow:
         )
 
         if not await self._await_promotion(req, saved):
-            return RepairResult(
-                promoted=False, new_version=saved.version, reason="사람이 승격을 승인하지 않았다"
-            )
+            return await self._give_up(req, "사람이 승격을 승인하지 않았다", version=saved.version)
 
         promoted = await workflow.execute_activity(
             promote_recipe,
@@ -160,23 +175,79 @@ class AutomationRepairWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=_QUICK,
         )
+        # promote() 가 옛 active/quarantined 버전을 함께 deprecated 로 내린다 — 승격이 곧
+        # 격리 해제다(ports/recipe_source.py).
         return RepairResult(promoted=True, new_version=promoted.version)
 
+    # ────────────────────── §2.4a 사람 확인 · 격리 ──────────────────────
+    async def _diagnose(self, req: RepairInput) -> RepairDiagnosis:
+        """판정 실패가 확인 절차 자체를 막아선 안 된다 — 스냅샷을 못 읽어도 사람에게는
+
+        물어봐야 한다. 그래서 실패하면 "판정 불가"로 떨어뜨리고 계속 간다.
+        """
+        try:
+            return await workflow.execute_activity(
+                diagnose_recipe_failure,
+                req,
+                task_queue=QUEUE_AI,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_QUICK,
+            )
+        except ActivityError as e:
+            _, reason = activity_failure(e)
+            return RepairDiagnosis(
+                verdict=PageVerdict.RECIPE_SUSPECTED, hint=f"페이지 판정 실패: {reason}"
+            )
+
+    async def _await_broken_confirmation(
+        self, req: RepairInput, diagnosis: RepairDiagnosis
+    ) -> bool:
+        ticket = await workflow.execute_activity(
+            request_approval,
+            msg.confirm_request(req, workflow.info().workflow_id, diagnosis),
+            task_queue=QUEUE_DEFAULT,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=_QUICK,
+        )
+        self._confirm_nonce = ticket.nonce
+        try:
+            await workflow.wait_condition(
+                lambda: self._confirmed is not None,
+                timeout=timedelta(hours=_CONFIRM_TIMEOUT_HOURS),
+            )
+        except TimeoutError:
+            return False  # 무응답의 기본값은 "아무것도 안 한다" — 제출을 막지 않는다
+        assert self._confirmed is not None
+        return self._confirmed
+
+    async def _quarantine(self, req: RepairInput) -> None:
+        """격리 실패가 수선을 막지는 않는다 — 제출이 안 멈춘 채로 수선만 진행하고, 그 사실을
+
+        사람에게 알린다. 여기서 워크플로우를 죽이면 "깨졌다고 확정했는데 아무 일도 안 일어남"이
+        된다.
+        """
+        held: AutomationRecipe | None = None
+        try:
+            held = await workflow.execute_activity(
+                quarantine_recipe,
+                QuarantineRecipeInput(
+                    platform=req.platform,
+                    reason=f"v{req.failed_version} 실행 실패를 사람이 확정: {req.failure_reason}",
+                ),
+                task_queue=QUEUE_AI,
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_QUICK,
+            )
+        except ActivityError:
+            held = None
+        self._quarantined = held is not None
+        await self._notify(msg.started_event(req, held))
+
+    # ────────────────────────── §2.4 승격 승인 ──────────────────────────
     async def _await_promotion(self, req: RepairInput, candidate: AutomationRecipe) -> bool:
         ticket = await workflow.execute_activity(
             request_approval,
-            DecisionRequest(
-                # DecisionRequest.application_id 문서 참고 — "{platform}-{form_hash}" 를 담아야
-                # telegram/bridge.py 가 wf_id 를 복원할 수 있다.
-                application_id=f"{req.platform}-{req.form_hash}",
-                workflow_id=workflow.info().workflow_id,
-                title=f"{req.platform} recipe v{candidate.version} 승격 승인",
-                summary=(
-                    f"actions {len(candidate.actions)}개, "
-                    f"success_signals={candidate.success_signals}"
-                ),
-                repair_promotion=True,
-            ),
+            msg.promotion_request(req, workflow.info().workflow_id, candidate),
             task_queue=QUEUE_DEFAULT,
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_QUICK,
@@ -192,21 +263,33 @@ class AutomationRepairWorkflow:
         assert self._decision is not None
         return self._decision
 
-    async def _give_up(self, req: RepairInput, reason: str) -> RepairResult:
+    async def _give_up(
+        self, req: RepairInput, reason: str, *, version: int | None = None
+    ) -> RepairResult:
+        await self._notify(msg.failed_event(req, reason, quarantined=self._quarantined))
+        return RepairResult(promoted=False, new_version=version, reason=reason)
+
+    async def _notify(self, event: NotifyEvent) -> None:
         await workflow.execute_activity(
             notify,
-            NotifyEvent(
-                kind="RECIPE_REPAIR_FAILED",
-                message=f"{req.platform}({req.form_hash}) recipe 수선 실패: {reason}",
-            ),
+            event,
             task_queue=QUEUE_DEFAULT,
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_QUICK,
         )
-        return RepairResult(promoted=False, reason=reason)
 
-    def _nonce_ok(self, nonce: str) -> bool:
-        return not nonce or nonce == self._nonce
+    # ─────────────────────────── signals ───────────────────────────
+    @workflow.signal
+    def confirm_broken(self, sig: ApproveSignal) -> None:
+        """ "진짜 깨졌다" — 격리 + 수선 시작 (§2.4a). 텔레그램 `qa` 콜백."""
+        if self._confirmed is None and (not sig.nonce or sig.nonce == self._confirm_nonce):
+            self._confirmed = True
+
+    @workflow.signal
+    def deny_broken(self, sig: RejectSignal) -> None:
+        """ "recipe 문제가 아니다" — 아무것도 안 바꾸고 끝낸다. 텔레그램 `qr` 콜백."""
+        if self._confirmed is None and (not sig.nonce or sig.nonce == self._confirm_nonce):
+            self._confirmed = False
 
     @workflow.signal
     def approve(self, sig: ApproveSignal) -> None:
@@ -217,3 +300,6 @@ class AutomationRepairWorkflow:
     def reject(self, sig: RejectSignal) -> None:
         if self._decision is None and self._nonce_ok(sig.nonce):
             self._decision = False
+
+    def _nonce_ok(self, nonce: str) -> bool:
+        return not nonce or nonce == self._nonce

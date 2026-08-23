@@ -17,6 +17,7 @@
   └ 수정요청 → scope 선택 [이번만][항상][취소]  vc
   └ scope 선택 → ForceReply 자유 텍스트         (태그 파싱)
 가이드 patch 2차 승인 [반영][무시][취소]        ga / gr / gc / gv
+recipe 파손 확정 [🔧 진짜 깨짐][👌 아님]        qa / qr   → repair-{...} 워크플로우 (§2.4a)
 recipe 승격 승인 [승격][보류]                   pa / pr   → repair-{...} 워크플로우
 SUPERVISED 체크포인트 [✅ 계속][❌ 중단]         ca / cr   → CheckpointStore (signal 아님)
 워크플로우/프로세스 이상 알림                    (버튼 없음, §11.2d)
@@ -60,6 +61,14 @@ SUPERVISED 체크포인트 [✅ 계속][❌ 중단]         ca / cr   → Checkp
   별도 LLM 콜보다 싸다). 근거 fact_id가 필요한 서술이 아니라 공고에 대한 메타 코멘트라
   `ground_check`가 검증하지 않는다. 셋 다 본 승인 요청에만 채워지고, 가이드 patch/repair
   승격/체크포인트 같은 중첩 승인은 실행과 무관해 안 붙는다(`_mode_badge`와 같은 조건).
+- **recipe 파손 확정(§2.4a)**: 수선 에이전트를 돌리기 전에 "이 recipe 진짜 깨진 건가요?"를
+  먼저 묻는다 — 실행 실패의 상당수가 recipe 와 무관하기 때문이다(이미 지원한 공고/로그인
+  만료/마감). 메시지에는 실패 시점 DOM 판정(`domain/recipe_diagnosis`)을 근거로 붙인다.
+  `qa`(확정)를 누르면 그 즉시 recipe 가 격리돼 **그 플랫폼 제출이 멈추고** 수선이 시작되므로,
+  버튼 라벨과 본문에 그 부작용을 그대로 적는다. `qr`/무응답(24h)이면 아무것도 안 바뀌어 다른
+  지원 건은 계속 제출된다. 격리 해제는 승격 성공 또는 채팅 도구 `unquarantine_recipe`.
+  `pa`/`pr`과 같은 워크플로우를 겨누지만 슬롯·nonce 는 분리돼 있다 — "수선해도 된다" 클릭이
+  "새 recipe 를 active 로 올려도 된다"로 소비되면 안 된다.
 - **체크포인트 승인(§2.4c)**: SUPERVISED 실행 중 페이지 경계마다 스크린샷 + "✅ 계속/❌ 중단"
   2버튼(`ca`/`cr`)을 보낸다. 다른 콜백과 달리 워크플로우 signal이 아니라
   `checkpoint_store.record_decision`을 직접 호출한다 — 기다리는 게 워크플로우가 아니라

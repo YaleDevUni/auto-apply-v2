@@ -32,6 +32,7 @@
 | §2.2 | `ApplicationWorkflow` — 상태 기계 · 승인 · durable timer · REVISE | [`02-application-workflow.md`](architecture/02-application-workflow.md) |
 | §2.3 | `ResumeWorkflow` — Fact 기반 생성 · `ground_check` · 블록 구조 · PDF | [`02-3-resume-pipeline.md`](architecture/02-3-resume-pipeline.md) |
 | §2.4 | `AutomationRepairWorkflow` — Recipe 자기수선 | [`02-4-repair-and-supervision.md`](architecture/02-4-repair-and-supervision.md) |
+| §2.4a | 수선 전 사람 확인(`repair_confirm`) · recipe 격리(quarantine) | [`02-4-repair-and-supervision.md`](architecture/02-4-repair-and-supervision.md) |
 | §2.4b | 외부 ATS/자체구축 폼 — `WebAgentExecutor`(Aside, **동결**) | [`02-4-repair-and-supervision.md`](architecture/02-4-repair-and-supervision.md) |
 | §2.4c | SUPERVISED 페이지 경계 체크포인트 — `CheckpointWaiter` | [`02-4-repair-and-supervision.md`](architecture/02-4-repair-and-supervision.md) |
 | §3 | Browser Automation — Recipe는 코드가 아니라 데이터 · 세션/로그인 · 실행 엔진 2종 | [`03-browser-automation.md`](architecture/03-browser-automation.md) |
