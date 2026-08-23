@@ -54,10 +54,16 @@ async def test_unhandled_error_alerts_and_returns_500(client):
 
 
 async def test_telegram_webhook_failure_speaks_to_the_person_who_pressed_the_button(client):
+    """웹훅은 실패해도 200 을 돌려준다 — 500 을 주면 텔레그램이 같은 update 를 재전송해서
+
+    poison update 하나가 같은 API_ERROR 알림을 계속 쏟아낸다(/code-review finding #5).
+    이미 이 알림이 "다시 시도해주세요"로 사람에게 안내하므로, 텔레그램에게는 수신 확인만
+    해주고 재전송을 유도하지 않는다.
+    """
     ac, notifier = client
 
     resp = await ac.post("/telegram/webhook", content=b"not-json")
 
-    assert resp.status_code == 500
+    assert resp.status_code == 200
     assert [e.kind for e in notifier.events] == ["API_ERROR"]
     assert "다시 시도해주세요" in notifier.events[0].message
