@@ -15,6 +15,9 @@ CLAUDE.md 절대규칙 4("되돌릴 수 없는 행위는 사람 승인 뒤에서
 못 건드린다"가 진짜 불변식이다. `apply_by_url`은 추가로 플랫폼을 wanted 로만 한정한다
 (`apply_intake._APPLY_BY_URL_PLATFORMS` 참고 — saramin 은 아직 임의 링크를 사람 개입 없이
 실행 트리거하기엔 라이브 검증이 부족하다는 판단).
+
+`collect_now`(`_agent_tools_collect.py`)는 이 셋과 달리 `JobCollectionWorkflow`만 시작한다 —
+지원(`ApplicationWorkflow`)과 아예 무관해서 위 불변식 논의 대상도 아니다.
 """
 
 from collections.abc import Awaitable, Callable
@@ -26,6 +29,7 @@ from temporalio.service import RPCError
 from auto_apply.apply_intake import apply_by_url, start_actionable_applications
 from auto_apply.bootstrap import Container
 from auto_apply.domain.chat_agent import ToolCatalogEntry
+from auto_apply.telegram._agent_tools_collect import COLLECT_TOOLS
 from auto_apply.telegram._agent_tools_schedule import SCHEDULE_TOOLS
 from auto_apply.workflows.application import ApplicationWorkflow
 
@@ -214,6 +218,8 @@ TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
     # 공고 수집/자동 지원 Schedule 관리(schedule_status/set_schedule_enabled)는
     # _agent_tools_schedule.py 에서 구현하고 여기서 병합만 한다(§ 그 파일 docstring).
     **SCHEDULE_TOOLS,
+    # 공고 수집 즉시 실행(collect_now)은 _agent_tools_collect.py 에서 구현(§ 그 파일 docstring).
+    **COLLECT_TOOLS,
 }
 
 # 실측(2026-08-21): "지원시작 2건정도" 한 턴에서 chat_llm(Haiku, 저렴한 분류 모델)이
