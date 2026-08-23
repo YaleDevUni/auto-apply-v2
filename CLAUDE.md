@@ -531,3 +531,13 @@ URL을 `apply_by_url`과 같은 시작 경로(`_start_workflow`, ALLOW_DUPLICATE
 바꿨다(캐시에 없으면 기존처럼 application_id만). 실제 최종 제출은 이 경로로 재시작된
 워크플로우 안에서도 여전히 사람의 텔레그램 승인 뒤에만 일어난다. 구현·유닛 테스트·
 `make check` 통과 완료.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

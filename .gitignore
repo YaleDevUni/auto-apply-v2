@@ -50,3 +50,7 @@ playwright-report/
 
 # Claude Code local overrides
 .claude/settings.local.json
+
+# graphify (지식 그래프, 로컬에서 재생성 — graphify . --code-only)
+graphify-out/
+.claude/settings.json.graphify-bak
