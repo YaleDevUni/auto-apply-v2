@@ -1,6 +1,6 @@
 """JobCollectionWorkflow → collect_platform_jobs 이름 매칭 + 플랫폼별 fan-out 검증.
 
-@pytest.mark.integration — Temporal test server 바이너리가 필요하다 (§ test_ping.py).
+Temporal test server 바이너리만 있으면 돈다 — 마커 없이 기본 실행 (§ test_ping.py).
 """
 
 import pytest
@@ -23,7 +23,7 @@ from auto_apply.temporal_config import DATA_CONVERTER
 from auto_apply.workflows.job_collection import JobCollectionWorkflow
 from tests.conftest import sample_recipe
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.temporal
 
 CFG = MatchingConfig(
     tracks={"dev": TrackRule(label="개발", weight=100, keywords=["백엔드"])},

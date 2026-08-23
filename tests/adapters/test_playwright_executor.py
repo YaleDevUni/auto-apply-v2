@@ -18,7 +18,7 @@ from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.domain.enums import AttemptOutcome, ExecutionMode
 from auto_apply.domain.errors import RecipeExecutionError
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.native
 
 _UPLOAD_FORM_HTML = """
 <!doctype html><html><body>

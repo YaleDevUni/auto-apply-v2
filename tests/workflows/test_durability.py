@@ -16,7 +16,7 @@ from auto_apply.workflows.application import ApplicationWorkflow
 from tests.conftest import Harness
 from tests.workflows.test_application import APP_ID, _cmd, _start, _wait_state, _Workers
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.temporal
 
 
 @pytest.fixture

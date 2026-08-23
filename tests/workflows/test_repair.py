@@ -18,7 +18,7 @@ from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_AI, QUEUE_BROWSER, 
 from auto_apply.workflows.repair import AutomationRepairWorkflow
 from tests.conftest import JOB_URL, Harness
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.temporal
 
 PLATFORM = "fixture"
 # tests.conftest.sample_recipe() 의 form_hash 와 맞춰야 repair dedupe id(§2.4)가 겹친다.

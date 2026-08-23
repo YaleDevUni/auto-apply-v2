@@ -27,7 +27,7 @@ from auto_apply.workflows.repair import AutomationRepairWorkflow
 from auto_apply.workflows.resume import ResumeWorkflow
 from tests.conftest import JOB_URL, Harness
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.temporal
 
 APP_ID = "app_1"
 

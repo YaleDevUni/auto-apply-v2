@@ -8,7 +8,7 @@ ports/executor.py 의 docstring 이 계약이다:
 
 ReplayExecutor 는 진짜 브라우저 없이 이 계약을 재현하는 대역이므로, 같은 시나리오를
 PlaywrightExecutor 에도 그대로 돌려서 두 구현이 같은 계약을 지키는지 확인한다.
-브라우저를 띄우므로 전체를 integration 으로 표시한다.
+브라우저를 띄우므로 전체를 native 로 표시한다.
 """
 
 from dataclasses import dataclass
@@ -27,7 +27,7 @@ from auto_apply.domain.enums import AttemptOutcome, ExecutionMode
 from auto_apply.domain.errors import AuthRequired, CaptchaEncountered, RecipeExecutionError
 from auto_apply.ports.executor import RecipeExecutor
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.native
 
 _PROFILE = {"email": "a@b.com"}
 _TEMPLATED_PROFILE = {"target_label": "Node"}

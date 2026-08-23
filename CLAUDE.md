@@ -12,9 +12,10 @@
 make setup     # uv sync + .env 생성
 make up        # 인프라 기동 (postgres/temporal/temporal-ui/minio) → UI: localhost:8080
 make migrate   # Alembic 마이그레이션 적용 (REPOSITORY=postgres 일 때)
-make check     # lint + type + arch + test  ← 커밋 전 필수
-make test      # 단위/계약 테스트 (인프라 불필요)
-make test-all  # 통합 테스트 포함
+make check     # lint + type + arch + test  ← 커밋 전 필수 (워크플로우 테스트 포함, ~2분)
+make test      # 단위/계약/워크플로우 테스트 (docker·브라우저 불필요)
+make test-fast # 개발 중 빠른 반복 — Temporal 을 띄우는 테스트까지 뺀다 (~5초, 게이트 아님)
+make test-all  # 전체 (make up + playwright/weasyprint 필요)
 make api       # FastAPI dev server
 QUEUE=ai make worker
 ```
@@ -75,8 +76,14 @@ api         라우터는 컨테이너에서 꺼내 쓴다
 - 검증 결과를 보고할 때는 **실제 출력**을 근거로 말한다. 실패했으면 실패했다고 말한다.
 - 새 port를 만들면 contract test, workflow를 만들면 `WorkflowEnvironment` 테스트,
   LLM/Recipe 스키마를 건드리면 회귀 테스트를 함께 만든다.
-- 테스트가 인프라를 필요로 하면 `@pytest.mark.integration`을 붙인다. 기본 `make test`는
-  Docker 없이 항상 돌아야 한다.
+- 테스트 마커는 **"무엇이 있어야 도는가"로만** 가른다. 아무것도 안 붙이면 기본 실행이다.
+  - `docker` — `make up` 인프라(postgres/minio) 필요
+  - `native` — 이 머신에 설치된 외부 바이너리/시스템 라이브러리 필요 (playwright 브라우저,
+    agent-browser CLI, weasyprint 의 cairo/pango)
+  - `temporal` — Temporal 테스트 서버를 띄운다. **Docker 가 아니므로 `make check` 에서 돈다** —
+    느릴 뿐이라 빠른 반복용 `make test-fast` 에서만 빠진다.
+  예전엔 `integration` 하나가 "Docker 필요"와 "Temporal 서버만 필요"를 뭉쳐서, 규칙이
+  요구하는 워크플로우 테스트를 규칙의 게이트가 한 개도 안 돌리고 있었다(2026-08-23 수정).
 
 **커밋 규칙 (개발 초기 단계)**
 

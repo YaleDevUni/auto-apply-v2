@@ -36,10 +36,13 @@ type: ## 타입 체크
 arch: ## 계층 규칙 검사 (ARCHITECTURE.md §11.7)
 	uv run lint-imports
 
-test: ## 단위/계약 테스트 (인프라 불필요)
-	uv run pytest -m "not integration"
+test: ## 단위/계약/워크플로우 테스트 (docker·브라우저 불필요) — make check 가 쓰는 게이트
+	uv run pytest -m "not docker and not native"
 
-test-all: ## 통합 테스트 포함 (make up 필요)
+test-fast: ## 개발 중 빠른 반복용 — Temporal 을 띄우는 테스트까지 뺀다 (게이트 아님)
+	uv run pytest -m "not docker and not native and not temporal"
+
+test-all: ## 전체 (make up + playwright/weasyprint 설치 필요)
 	uv run pytest
 
 check: lint type arch test ## 커밋 전 전체 검사
@@ -59,4 +62,4 @@ watchdog: ## 워크플로우 능동 감시 (FAILED/TERMINATED/TIMED_OUT → 알�
 resume-cleanup: ## wanted 이력서 첨부파일 정리 (기본 dry-run, ARGS="--yes" 로 실제 삭제)
 	uv run python -m auto_apply.resume_cleanup $(ARGS)
 
-.PHONY: help setup up down reset migrate fmt lint type arch test test-all check api worker telegram-listen watchdog resume-cleanup
+.PHONY: help setup up down reset migrate fmt lint type arch test test-fast test-all check api worker telegram-listen watchdog resume-cleanup

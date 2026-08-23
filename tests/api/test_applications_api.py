@@ -19,7 +19,7 @@ from auto_apply.temporal_config import DATA_CONVERTER
 from tests.conftest import JOB_URL, Harness
 from tests.workflows.test_application import _wait_state, _Workers
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.temporal
 
 
 @pytest.fixture

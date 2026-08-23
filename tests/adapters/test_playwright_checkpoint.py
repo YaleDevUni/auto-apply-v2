@@ -20,7 +20,7 @@ from auto_apply.contracts.recipe import Action, ActionType, AutomationRecipe
 from auto_apply.domain.enums import AttemptOutcome, ExecutionMode
 from auto_apply.domain.errors import CheckpointDeclined
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.native
 
 _FORM_HTML = (
     '<form id="form"><input id="email"/><button id="submit" type="button">보내기</button></form>'

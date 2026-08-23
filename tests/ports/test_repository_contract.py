@@ -1,8 +1,8 @@
 """ApplicationRepository contract test — 멱등성이 계약의 핵심이다 (§4.1).
 
 activity 는 최소 1회 실행이므로 같은 값으로 두 번 불려도 결과가 같아야 한다.
-postgres 파라미터만 실제 DB 라운드트립이라 `integration`으로 표시한다 — `make test`(인프라
-불필요)는 memory/file 만 돌고, postgres 는 `make up` 이 떠 있는 `make test-all`에서만 돈다.
+postgres 파라미터만 실제 DB 라운드트립이라 `docker`로 표시한다 — `make test`는 memory/file 만
+돌고, postgres 는 `make up` 이 떠 있는 `make test-all`에서만 돈다.
 """
 
 from datetime import UTC, datetime
@@ -24,7 +24,7 @@ from auto_apply.ports.repository import UnitOfWork
 _PG_TABLES = "application_state_history, jobs, application_attempts, schedule_configs"
 
 
-@pytest.fixture(params=["memory", "file", pytest.param("postgres", marks=pytest.mark.integration)])
+@pytest.fixture(params=["memory", "file", pytest.param("postgres", marks=pytest.mark.docker)])
 async def uow_factory(request: pytest.FixtureRequest, tmp_path):
     if request.param == "memory":
         rows: dict = {}

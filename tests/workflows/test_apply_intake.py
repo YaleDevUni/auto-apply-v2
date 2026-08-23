@@ -6,7 +6,7 @@
 (`tests/workflows/test_resume.py`와 같은 패턴 — 로컬 `@activity.defn(name=...)` 스텁으로
 activities 계층 없이 워크플로우만 격리한다).
 
-@pytest.mark.integration — Temporal test server 바이너리가 필요하다 (§ test_ping.py).
+Temporal test server 바이너리만 있으면 돈다 — 마커 없이 기본 실행 (§ test_ping.py).
 """
 
 import pytest
@@ -19,7 +19,7 @@ from auto_apply.contracts.dto import ApplyIntakeInput, ApplyIntakeResult, Notify
 from auto_apply.temporal_config import DATA_CONVERTER
 from auto_apply.workflows.apply_intake import ApplyIntakeWorkflow
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.temporal
 
 _calls: list[ApplyIntakeInput] = []
 _notified: list[NotifyEvent] = []

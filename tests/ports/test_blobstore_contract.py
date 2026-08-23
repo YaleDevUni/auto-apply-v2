@@ -19,7 +19,7 @@ from auto_apply.domain.errors import BlobNotFound
 from auto_apply.ports.storage import BlobStore
 
 
-@pytest.fixture(params=["memory", "local", pytest.param("s3", marks=pytest.mark.integration)])
+@pytest.fixture(params=["memory", "local", pytest.param("s3", marks=pytest.mark.docker)])
 def store(request: pytest.FixtureRequest, tmp_path) -> BlobStore:
     if request.param == "memory":
         return InMemoryBlobStore()

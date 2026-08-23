@@ -3,7 +3,7 @@
 Temporal Schedule RPC(create_schedule/get_schedule_handle().describe/pause/unpause) 를 최소로
 흉내내는 `_FakeClient`로 도구 함수를 직접 부른다 — `schedule.py`의 `ensure_*_schedule`이 실제로
 쓰는 RPC 왕복(create_schedule → ScheduleAlreadyRunningError → update)은
-`tests/test_schedule.py`의 `@pytest.mark.integration` 왕복 테스트가 실제 Temporal 로
+`tests/test_schedule.py`의 왕복 테스트가 실제 Temporal 로
 이미 검증한다. `TOOLS` 레지스트리에 잘 병합됐는지는 `handle_chat` 을 한 번 거치는 라우팅
 테스트 하나로 확인한다(`tests/telegram/test_agent.py`와 같은 패턴).
 """

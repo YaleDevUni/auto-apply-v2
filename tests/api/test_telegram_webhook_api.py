@@ -24,7 +24,7 @@ from tests.conftest import Harness
 from tests.workflows.test_application import APP_ID, _cmd, _wait_state, _Workers
 from tests.workflows.test_repair import _FIXED_DIFF, FORM_HASH, PLATFORM, _req
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.temporal
 
 ALLOWED_CHAT_ID = 42
 

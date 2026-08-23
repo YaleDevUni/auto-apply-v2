@@ -94,8 +94,15 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # 워크플로우 테스트가 멈추면 CI 를 붙잡지 않고 실패하게 한다
 addopts = "-q --strict-markers --timeout=120"
+# 마커는 "무엇이 있어야 도는가"로만 가른다. 예전엔 integration 하나가 Docker 필요와
+# "Temporal 테스트 서버 바이너리만 필요"를 뭉쳐서, 아무 인프라 없이도 도는 워크플로우 테스트
+# 66개가 커밋 전 게이트(make check)에서 통째로 빠져 있었다 — 정작 CLAUDE.md 는 워크플로우를
+# 만들면 WorkflowEnvironment 테스트를 쓰라고 요구한다. 마커가 없는 테스트는 전부 기본 실행이다
+# (temporalio 가 테스트 서버 바이너리를 캐시에 자동으로 받아둔다).
 markers = [
-    "integration: 외부 인프라(Temporal/DB/S3/네트워크)가 필요한 테스트",
+    "docker: `make up` 인프라(postgres/minio)가 있어야 도는 테스트",
+    "native: 이 머신에 설치된 외부 바이너리·시스템 라이브러리가 있어야 도는 테스트 (playwright 브라우저, agent-browser CLI, weasyprint 의 cairo/pango)",
+    "temporal: Temporal 테스트 서버를 띄우는 테스트 — Docker 는 불필요하므로 make check 에 포함된다. 테스트당 서버를 새로 띄워 느리니 빠른 반복은 make test-fast 로 뺀다",
 ]
 
 # ---------------------------------------------------------------- import-linter

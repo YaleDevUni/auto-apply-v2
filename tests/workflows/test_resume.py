@@ -27,7 +27,7 @@ from auto_apply.domain.errors import LLMAuthRequired, LLMExecutionError, LLMQuot
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_AI, QUEUE_DEFAULT
 from auto_apply.workflows.resume import ResumeWorkflow
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.temporal
 
 _JOB = JobRef(job_id="j1", platform="fixture", url="https://x", title="백엔드", company="테스트")
 

@@ -2,7 +2,7 @@
 
 순수 함수(`build_query`/`to_hit`/`format_message`)는 인프라 없이 검증한다. `poll_once`의
 실제 동작(visibility 조회 + 중복 억제)은 real Temporal dev server가 필요해서
-`@pytest.mark.integration`이다 — `test_schedule.py`와 같은 이유로 시간 스킵 서버가 아니라
+real Temporal dev server 가 필요하다 — `test_schedule.py`와 같은 이유로 시간 스킵 서버가 아니라
 `start_local()`을 쓴다(Standard SQL visibility의 `ExecutionStatus`/`CloseTime` 필터가
 time-skipping 서버에도 있는지 보증되지 않는다 — 실제 동작을 보증하는 쪽을 택했다).
 """
@@ -135,7 +135,7 @@ async def test_poll_once_notifies_and_advances_watermark_on_new_hit():
     assert watermark == datetime(2026, 8, 20, 5, 0, 0, tzinfo=UTC)
 
 
-@pytest.mark.integration
+@pytest.mark.temporal
 async def test_poll_once_finds_a_real_failed_workflow_via_visibility_api():
     async with await WorkflowEnvironment.start_local(data_converter=DATA_CONVERTER) as env:
         client: Client = env.client

@@ -332,8 +332,8 @@ flowchart LR
   환경에서 weasyprint가 요구하는 libgobject/pango/cairo dlopen에 `DYLD_FALLBACK_LIBRARY_PATH`가
   필요해서 어댑터 모듈 로드 시점에 보정한다 — 사용자 셸 설정에 기대면 `make api`/`make worker`가
   새 셸에서 조용히 깨진다. weasyprint 렌더 테스트는 시스템 라이브러리(cairo/pango/glib)가 있어야
-  돌아서 `@pytest.mark.integration`(`make test-all`, `make up` 불필요 — Docker가 아니라 시스템
-  라이브러리 문제라서 별도다)이고, `PDF_RENDERER` 기본값은 `weasyprint`다(`stub`는 JSON 덤프로
+  돌아서 `@pytest.mark.native`(`make test-all`, `make up` 불필요 — Docker가 아니라 시스템
+  라이브러리 문제라 마커를 따로 둔다)이고, `PDF_RENDERER` 기본값은 `weasyprint`다(`stub`는 JSON 덤프로
   남겨뒀다 — 인프라 없는 개발 환경을 위한 대역).
 
   **개인 프로젝트 GitHub 링크 (2026-08-22 연장)** — 전엔 프로젝트 URL을 `content` 원문
@@ -1588,3 +1588,5 @@ port에서 새는 것은 보통 반환값이 아니라 예외다.
 - [ ] 모든 port에 구현이 2개 이상 (실제 + 테스트 대역)
 - [ ] 어댑터 생성 코드가 `bootstrap.py` 밖에 없다
 - [ ] port 시그니처에 벤더 타입이 노출되지 않는다 (`boto3` 객체, Anthropic `Message` 등)
+- [ ] 테스트 마커가 "무엇이 있어야 도는가"와 맞다 — `docker`(make up) / `native`(브라우저·시스템
+      라이브러리) / `temporal`(테스트 서버, Docker 불필요라 `make check`에 포함) / 무마커(기본)
