@@ -656,6 +656,9 @@ auto-apply-v2/
 │   │   ├── guide_patch.py                             치환 쌍 적용 (1회 매치 시에만)
 │   │   ├── login_flow.py                              CAPTCHA·추가인증 감지 = 안전장치 본체
 │   │   ├── chat_agent.py                              도구 카탈로그 → 프롬프트 조립
+│   │   ├── recipe_repair.py                           실패 분류 · goto timeout 자동 상향
+│   │   ├── alerting.py                                조용한 실패 판정 (임계치를 테스트로 고정)
+│   │   ├── schedule_cron.py                           build_cron — LLM 은 정수만, 조립은 코드
 │   │   └── errors.py                                  NON_RETRYABLE 목록
 │   │
 │   ├── contracts/       ★ workflow-safe DTO + activity stub (벤더 SDK 금지)
@@ -668,7 +671,7 @@ auto-apply-v2/
 │   │   ├── _execution.py     실행 + 검증 + 감사 로그   ┐ application.py 한 파일에
 │   │   ├── _revision.py      REVISE 재생성 · 가이드 patch │ 다 넣으면 책임이 흐려져
 │   │   ├── _repair.py        수선 child 기동 · dedupe   ┘ 분리했습니다
-│   │   ├── resume.py · repair.py · job_collection.py
+│   │   ├── resume.py · repair.py · job_collection.py · apply_intake.py
 │   ├── activities/      모든 I/O 가 여기에만 존재합니다
 │   ├── telegram/        bridge(콜백 라우팅) · listener(롱폴링) · agent(ReAct) · _agent_tools
 │   ├── api/             FastAPI 라우터 — 컨테이너에서 꺼내 씁니다
@@ -676,8 +679,11 @@ auto-apply-v2/
 │   ├── bootstrap.py     ★ composition root: 어댑터를 생성하는 유일한 파일
 │   ├── worker.py        --queue {default|ai|browser}
 │   ├── watchdog.py      워크플로우 능동 감시
-│   ├── schedule.py      공고 수집 Schedule 등록/삭제
-│   ├── apply_intake.py  캐시 기반 지원 후보 선정 (채팅 에이전트 도구가 사용)
+│   ├── schedule.py      공고 수집 · 자동 지원 Schedule 등록/삭제
+│   ├── schedule_config.py  Schedule 설정의 원천은 DB — .env 는 최초 시드일 뿐
+│   ├── apply_intake.py  캐시 기반 지원 후보 선정 (채팅 도구 · cron 이 공유)
+│   ├── pending_decisions.py  승인 대기 중인 지원 건 전수 조회 + 일괄 재전송
+│   ├── process_alerts.py  상주 프로세스 크래시를 텔레그램으로 알립니다
 │   └── resume_cleanup.py  플랫폼 고아 첨부파일 정리 (기본 dry-run)
 │
 ├── scripts/
@@ -688,9 +694,10 @@ auto-apply-v2/
 └── tests/
     ├── ports/       ★ contract test — 모든 구현체에 동일 스위트
     ├── workflows/   Temporal test env (시간 스킵 → 72시간 대기를 즉시 검증)
-    ├── recipes/     고정 HTML fixture 대상 executor 테스트
     ├── schemas/     LLM 출력 스키마 회귀 테스트
-    └── domain/      순수 함수 테스트
+    ├── domain/      순수 함수 테스트 (가장 빠르고 가장 많다)
+    ├── adapters/ activities/ api/ telegram/ contracts/ ai/
+    └── fixtures/    고정 HTML · 녹화된 LLM 응답
 ```
 
 `scripts/explore_platform.sh`는 사고 대응의 산물입니다. 라이브 탐색 중 실제 지원이 잘못 제출된 적이 있었고
@@ -710,7 +717,7 @@ make check   # lint + type + arch + test  ← 커밋 전 필수
 | `lint` | ruff | pycodestyle · pyflakes · isort · bugbear · **ANN(타입 애노테이션 강제)** · **TID252(상대 import 금지)** |
 | `type` | mypy `strict` | `warn_unreachable` 포함, pydantic 플러그인 |
 | `arch` | import-linter | [§2-3](#2-3-계층-구조와-의존-방향)의 계층 계약 7개 |
-| `test` | pytest | 전체 **681개**, `make check`가 도는 것(Docker/네이티브 바이너리 불필요) **614개** (그중 17개는 동결된 기능이라 skip — [§7](#7-의도적으로-하지-않은-것)) |
+| `test` | pytest | 전체 **715개**, `make check`가 도는 것(Docker/네이티브 바이너리 불필요) **648개** — 631 통과 + 17 skip(동결된 기능 — [§7](#7-의도적으로-하지-않은-것)) |
 
 **테스트 전략의 원칙**
 
@@ -824,7 +831,8 @@ make resume-cleanup ARGS="--yes"   # 실제 삭제
 | **M2** | 완료 | Playwright executor · RecipeSource · 실행 모드 분기 · `application_attempts` 감사 로그 · Postgres/Alembic |
 | **M3** | 완료 | Fact 기반 이력서 생성 · `ground_check` · 경력/프로젝트 블록 구조 · WeasyPrint PDF · claude CLI 어댑터 · REVISE 3갈래 |
 | **M4** | 완료 | `AutomationRepairWorkflow` 전 구간 (LLM diff → 정책 검증 → 샌드박스 dry-run → candidate 저장 → 승격 승인) |
-| **부가** | 완료 | 공고 수집 Schedule · watchdog · SUPERVISED 체크포인트 · `/recipes` 엔드포인트 · S3BlobStore · Telegram 채팅 에이전트 |
+| **M5** | 진행 중 | 다중 플랫폼 — `PlatformAdapter`/`JobSource` 2번째 구현(saramin)까지. 자소서 문항 있는 공고의 라이브 검증과 rate limit 실측이 남았습니다 |
+| **부가** | 완료 | 공고 수집·자동 지원 Schedule(설정은 DB, 텔레그램에서 변경) · watchdog + 알림 사각지대 4종 · SUPERVISED 체크포인트 · `/recipes` 엔드포인트 · S3BlobStore · Telegram 채팅 에이전트(도구 12개) · 승인 대기 일괄 재전송 |
 
 수집 → 판정 → 이력서 생성 → PDF → 승인 → 예약 → 실행 → 제출 검증까지의 전 구간이
 실제 채용 플랫폼(wanted) 계정을 대상으로 end-to-end 검증을 마친 상태입니다.
@@ -834,6 +842,7 @@ make resume-cleanup ARGS="--yes"   # 실제 삭제
 
 ## 더 읽을거리
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — 설계 근거 전문(약 1,400줄). 이 README의 각 절이 참조하는 원본입니다
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — 설계 근거 전문의 **색인**. 본문은
+  [`docs/architecture/`](docs/architecture/) 아래에 절(§N) 단위로 나뉘어 있습니다. 이 README의 각 절이 참조하는 원본입니다
 - [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — 운영 절차
 - [`CLAUDE.md`](CLAUDE.md) — 이 저장소에서 코드를 작성할 때 지켜야 하는 규칙과 그 이유
