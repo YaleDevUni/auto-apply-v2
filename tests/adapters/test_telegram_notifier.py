@@ -6,6 +6,9 @@ tests/api/test_telegram_webhook_api.py 참고. 여기서는 Telegram 고유 표�
 형식, chat_id 브로드캐스트)만 본다.
 """
 
+import pytest
+from telegram.error import BadRequest
+
 from auto_apply.adapters.clock.system import UuidIdGen
 from auto_apply.adapters.notifier.telegram import TelegramNotifier
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
@@ -442,6 +445,39 @@ async def test_answer_callback_query_clears_client_loading_spinner() -> None:
     await notifier.answer_callback_query("cbq_1")
 
     assert bot.answered == ["cbq_1"]
+
+
+async def test_answer_callback_query_swallows_stale_query_error() -> None:
+    """회귀 테스트: 리스너가 꺼져 있던 동안 눌린 버튼은 재기동 후 `BadRequest("Query is too
+
+    old...")`를 던진다(라이브 실측) — 실패가 아니라 정상 상황이라 삼켜야
+    `handle_callback_query`(bridge.py)가 뒤이은 실제 승인/거절 처리를 계속 진행한다.
+    """
+
+    class _StaleBot(FakeBot):
+        async def answer_callback_query(
+            self, callback_query_id: str, text: str | None = None
+        ) -> object:
+            raise BadRequest("Query is too old and response timeout expired or query id is invalid")
+
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=_StaleBot())
+
+    await notifier.answer_callback_query("cbq_1")  # 예외 없이 끝나면 충분하다
+
+
+async def test_answer_callback_query_reraises_unknown_bad_request() -> None:
+    """모르는 `BadRequest`는 삼키지 않는다 — 원래 알림 경로로 사람에게 보여야 한다."""
+
+    class _BrokenBot(FakeBot):
+        async def answer_callback_query(
+            self, callback_query_id: str, text: str | None = None
+        ) -> object:
+            raise BadRequest("Chat not found")
+
+    notifier = TelegramNotifier("token", frozenset({111}), UuidIdGen(), bot=_BrokenBot())
+
+    with pytest.raises(BadRequest):
+        await notifier.answer_callback_query("cbq_1")
 
 
 async def test_notify_sends_plain_message_without_keyboard() -> None:

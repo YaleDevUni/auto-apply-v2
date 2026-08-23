@@ -24,6 +24,7 @@ REVISE(수정요청) 흐름의 scope 선택/자유 텍스트 피드백 요청(`s
 from typing import Protocol
 
 import structlog
+from telegram.error import BadRequest
 
 from auto_apply.contracts.dto import DecisionRequest, DecisionTicket, NotifyEvent
 from auto_apply.domain.enums import ExecutionMode, RevisionScope
@@ -216,8 +217,22 @@ class TelegramNotifier:
         Telegram 은 `callback_query`마다 `answerCallbackQuery`를 호출해줘야 클라이언트가
         로딩 상태를 해제한다 — 안 부르면 이후 어떤 메시지가 와도 그 스피너는 안 꺼진다
         (버튼을 눌렀는데 계속 로딩만 뜨는 문제, 라이브 스모크테스트로 실측).
+
+        리스너가 꺼져 있던 동안 눌린 버튼은 재기동 후 여기서 `BadRequest("Query is too
+        old...")`를 던진다(라이브 실측, telegram/listener.py 참고) — 이건 실패가 아니라
+        스피너를 꺼줄 대상 자체가 이미 사라진 정상적인 상황이라 삼킨다. 여기서 삼켜야
+        `handle_callback_query`(bridge.py)가 이 라인 이후의 실제 승인/거절 처리까지 계속
+        진행한다 — 예전엔 여기서 그대로 던져서 재기동 직후 밀린 버튼마다
+        `TELEGRAM_INBOUND_FAILED` 알림이 사람에게 쏟아졌고, 그 버튼이 실은 담고 있던
+        실제 액션(승인/거절 등)조차 처리되지 않은 채 버려졌다. 알려지지 않은 다른
+        `BadRequest`는 그대로 올려서 원래 알림 경로가 사람에게 보이게 둔다.
         """
-        await self._bot.answer_callback_query(callback_query_id)
+        try:
+            await self._bot.answer_callback_query(callback_query_id)
+        except BadRequest as e:
+            if "too old" not in str(e).lower():
+                raise
+            log.warning("telegram.notifier.stale_callback_query", error=str(e))
 
     async def send_guide_feedback_prompt(self, application_id: str, nonce: str) -> None:
         """가이드 patch 💬 코멘트 버튼을 누른 뒤 — 자유 텍스트 코멘트를 ForceReply 로 받는다.
