@@ -28,8 +28,6 @@ from auto_apply.schedule import (
 )
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_DEFAULT
 
-pytestmark = pytest.mark.temporal
-
 
 def test_build_schedule_uses_given_cron_and_platforms():
     schedule = build_job_collection_schedule("0 9 * * *", ["wanted", "saramin"])
@@ -41,6 +39,7 @@ def test_build_schedule_uses_given_cron_and_platforms():
     assert schedule.policy.overlap is ScheduleOverlapPolicy.SKIP
 
 
+@pytest.mark.temporal
 async def test_ensure_creates_then_updates_and_delete_removes_it():
     async with await WorkflowEnvironment.start_local(data_converter=DATA_CONVERTER) as env:
         client = env.client
@@ -64,6 +63,7 @@ async def test_ensure_creates_then_updates_and_delete_removes_it():
             await handle.describe()
 
 
+@pytest.mark.temporal
 async def test_ensure_update_preserves_paused_state():
     """시각/건수만 바꾸는 update가 꺼둔 Schedule을 조용히 다시 켜면 안 된다(§ apply-schedule).
 
@@ -93,6 +93,7 @@ def test_build_apply_intake_schedule_uses_given_cron_and_count():
     assert schedule.policy.overlap is ScheduleOverlapPolicy.SKIP
 
 
+@pytest.mark.temporal
 async def test_ensure_apply_intake_creates_then_updates_and_delete_removes_it():
     async with await WorkflowEnvironment.start_local(data_converter=DATA_CONVERTER) as env:
         client = env.client
