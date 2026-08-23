@@ -31,11 +31,13 @@ class BrowserActivities:
                 inp.recipe, inp.ctx, inp.mode, heartbeat=activity.heartbeat
             )
         except RecipeExecutionError as e:
-            # details 로 snapshot_key / form_hash 를 넘겨 RepairWorkflow(M4) 가 쓸 수 있게 한다
+            # details 로 snapshot_key / form_hash / failed_action_index 를 넘겨
+            # RepairWorkflow(M4) 가 쓸 수 있게 한다.
             raise ApplicationError(
                 str(e),
                 e.snapshot_key,
                 e.form_hash,
+                e.failed_action_index,
                 type=type(e).__name__,
                 non_retryable=True,
             ) from e

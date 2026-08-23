@@ -277,6 +277,15 @@ class RepairInput(_Frozen):
     # 그대로 넘긴다. dedupe(동시에 같은 폼이 실패한 다른 지원)로 다른 실행 컨텍스트가
     # 있었어도 먼저 도착한 실행의 컨텍스트로 검증한다 — 셀렉터가 맞는지는 데이터와 무관하다.
     ctx: ExecutionContext
+    # `activity_failure()`가 만든 실패 사유 문자열 그대로(§2.4 node B 프롬프트의 [실패 사유]).
+    # 이게 없으면 LLM이 왜 실패했는지 전혀 모른 채 diff 를 낸다 — 실제로 propose_recipe_diff 가
+    # 이 필드 없이 form_hash 를 대신 프롬프트에 넣던 버그가 timeout 실패를 셀렉터 문제로 오진하게
+    # 만든 사고로 이어졌다(메모리 wanted-goto-timeout-misdiagnosed-as-recipe-bug).
+    failure_reason: str = ""
+    # 실패한 action 의 recipe.actions 인덱스 (RecipeExecutionError.failed_action_index).
+    # propose_recipe_diff 가 "이 실패가 goto 액션의 timeout 인가"를 결정론적으로 판정할 때만
+    # 쓴다(domain/recipe_repair.bump_goto_timeout) — 없으면 그 판정을 건너뛰고 LLM 경로로 간다.
+    failed_action_index: int | None = None
 
 
 class RecipeDiffResult(_Frozen):

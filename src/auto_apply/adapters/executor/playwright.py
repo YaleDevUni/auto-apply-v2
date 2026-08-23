@@ -170,6 +170,7 @@ class PlaywrightExecutor:
                 f"{action.type} 실패 ({action.selector}): {e}",
                 snapshot_key=snapshot_key,
                 form_hash=recipe.form_hash,
+                failed_action_index=index,
             ) from e
 
     async def _dispatch(

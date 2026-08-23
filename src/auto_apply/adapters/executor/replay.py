@@ -60,7 +60,10 @@ class ReplayExecutor:
                     if action.optional:
                         continue
                     raise RecipeExecutionError(
-                        str(e), snapshot_key=snapshot_key, form_hash=recipe.form_hash
+                        str(e),
+                        snapshot_key=snapshot_key,
+                        form_hash=recipe.form_hash,
+                        failed_action_index=i,
                     ) from e
                 if selector in self._fail_selectors:
                     if action.optional:
@@ -69,6 +72,7 @@ class ReplayExecutor:
                         f"selector 를 찾을 수 없다: {selector}",
                         snapshot_key=snapshot_key,
                         form_hash=recipe.form_hash,
+                        failed_action_index=i,
                     )
             if action.type is ActionType.FILL and action.value_ref:
                 key = action.value_ref.removeprefix("profile.")
@@ -79,6 +83,7 @@ class ReplayExecutor:
                         f"프로필에 값이 없다: {action.value_ref}",
                         snapshot_key=snapshot_key,
                         form_hash=recipe.form_hash,
+                        failed_action_index=i,
                     )
             if action.type is ActionType.SUBMIT and mode is ExecutionMode.DRY_RUN:
                 # dry_run 은 submit 직전까지만 (§2.4)
