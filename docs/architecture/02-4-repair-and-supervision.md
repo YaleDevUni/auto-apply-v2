@@ -229,7 +229,21 @@ flowchart TB
   (§11 레이어 규칙, temporalio는 contracts에서만 허용). `heartbeat_timeout=30초`가 이미
   `execute_application` activity 호출에 걸려 있어(`workflows/_execution.py`) 체크포인트
   대기 중 heartbeat를 안 하면 30초 뒤 타임아웃/재시도가 난다 — 그래서 필수다. 체크포인트를
-  안 쓰는 구현(`ReplayExecutor`/`AgentBrowserExecutor`)은 시그니처만 맞추고 무시한다.
+  안 쓰는 구현(`ReplayExecutor`)은 시그니처만 맞추고 무시한다.
+- **액션마다 heartbeat 를 보낸다** (2026-08-24 수정). 원래는 위 체크포인트 대기 중에만
+  `heartbeat()` 를 불렀는데, `heartbeat_timeout=30초` 는 체크포인트와 무관하게 activity 전체에
+  걸려 있다 — 그래서 액션 타임아웃이 누적돼 30초를 넘긴 실행은 진짜 실패 사유
+  (`RecipeExecutionError` + 스냅샷 키 + `failed_action_index`)를 못 남기고 "activity Heartbeat
+  timeout" 으로 죽었고, 수선(§2.4)에는 고칠 단서가 하나도 안 갔다. 실측(2026-08-24): 수선의
+  샌드박스 dry-run 이 goto 20s + click(optional) 4s + wait_for 15s = 39초라 매번 이렇게
+  죽었다(최종 사유 `샌드박스 dry-run 실패: unknown: activity Heartbeat timeout`). 이제 두
+  실행기 다 액션 루프 첫 줄에서 `heartbeat(f"{i:02d}:{action.type}")` 를 보낸다 — SUPERVISED
+  여부·체크포인트 유무와 무관하다.
+- **DOM 스냅샷 키에 `application_id` 를 넣는다** (같은 날 수정). 예전 키
+  `dom-snapshots/{platform}/{form_hash}/attempt-{n}-{i}.html` 는 지원 건마다 겹쳐서, 나중에
+  시작된 다른 지원이 방금 실패한 스냅샷을 덮어썼다 — 수선이 그 키로 DOM 을 읽어 판단하므로
+  남의 페이지를 보고 진단할 수 있었다(실제로 실측 스냅샷 디렉터리에 지원 건이 다른 파일들이
+  같은 이름으로 계속 덮여 있었다).
   `ExecutionMode.DRY_RUN`(샌드박스, repair의 `MAX_SANDBOX_ATTEMPTS` 루프 포함)은 조건에
   `mode is SUPERVISED`가 이미 있어 체크포인트 로직과 자동으로 무관하다.
 - Telegram 쪽은 `DecisionRequest.checkpoint`(중첩 승인, 승인/거절 2버튼만 — guide_patch/

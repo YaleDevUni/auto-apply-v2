@@ -122,6 +122,10 @@ class AgentBrowserExecutor:
         artifacts: list[str] = []
         state_applied = False
         for i, action in enumerate(recipe.actions):
+            # PlaywrightExecutor 와 같은 이유로 액션마다 생존신호를 보낸다 — activity 의
+            # heartbeat_timeout(30초)이 진짜 실패 사유를 가리는 걸 막는다(그 파일 주석 참고).
+            if heartbeat is not None:
+                heartbeat(f"{i:02d}:{action.type}")
             if action.type is ActionType.SUBMIT:
                 if mode is ExecutionMode.DRY_RUN:
                     # PlaywrightExecutor 와 같은 계약: 누르지 않되 대상이 있는지는 확인한다.
@@ -436,7 +440,8 @@ class AgentBrowserExecutor:
         self, session: str, recipe: AutomationRecipe, ctx: ExecutionContext, index: int
     ) -> str:
         key = (
-            f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/attempt-{ctx.attempt}-{index}.html"
+            f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/"
+            f"{ctx.application_id}/attempt-{ctx.attempt}-{index}.html"
         )
         try:
             html = await self._eval(session, "document.documentElement.outerHTML", timeout_s=10.0)

@@ -93,6 +93,15 @@ class PlaywrightExecutor:
     ) -> ExecutionResult:
         artifacts: list[str] = []
         for i, action in enumerate(recipe.actions):
+            # 액션마다 생존신호를 보낸다. activity 에 heartbeat_timeout=30초 가 걸려 있는데
+            # (workflows/_execution.py, workflows/repair.py) 예전엔 SUPERVISED 체크포인트에서만
+            # heartbeat 를 보내서, 액션 타임아웃이 누적돼 30초를 넘기는 실행이 진짜 실패 사유
+            # (RecipeExecutionError)를 못 남기고 "activity Heartbeat timeout" 으로 죽었다 —
+            # 그러면 수선 쪽엔 스냅샷도 failed_action_index 도 안 실려서 아무것도 못 고친다
+            # (실측 2026-08-24: 샌드박스 dry-run 이 goto 20s + click 4s + wait_for 15s 로
+            # 39초가 걸려 매번 이렇게 죽었다).
+            if heartbeat is not None:
+                heartbeat(f"{i:02d}:{action.type}")
             if action.type is ActionType.SUBMIT:
                 if mode is ExecutionMode.DRY_RUN:
                     # 누르지는 않지만 "대상이 실제로 있는지"는 확인하고 끝낸다. 이 확인이 없으면
@@ -252,8 +261,12 @@ class PlaywrightExecutor:
     async def _snapshot(
         self, page: Page, recipe: AutomationRecipe, ctx: ExecutionContext, index: int
     ) -> str:
+        # application_id 를 경로에 넣는다 — 예전 키(`attempt-{n}-{i}.html`)는 지원 건마다
+        # 겹쳐서, 나중에 시작된 다른 지원이 방금 실패한 스냅샷을 덮어썼다. 수선(§2.4)이 그
+        # 키로 DOM 을 읽어 판단하므로 남의 페이지를 보고 진단할 수 있었다.
         key = (
-            f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/attempt-{ctx.attempt}-{index}.html"
+            f"dom-snapshots/{recipe.platform}/{recipe.form_hash}/"
+            f"{ctx.application_id}/attempt-{ctx.attempt}-{index}.html"
         )
         try:
             html = await page.content()
