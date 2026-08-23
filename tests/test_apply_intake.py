@@ -15,7 +15,12 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
 from auto_apply.adapters.platform.registry import StaticPlatformRegistry
-from auto_apply.apply_intake import JOB_CACHE_TTL, apply_by_url, start_actionable_applications
+from auto_apply.apply_intake import (
+    JOB_CACHE_TTL,
+    apply_by_url,
+    retry_application,
+    start_actionable_applications,
+)
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import PersistState
 from auto_apply.contracts.job import ApplicabilityVerdict, JobPosting, JobRecord, ScreeningVerdict
@@ -359,6 +364,60 @@ async def test_apply_by_url_allows_retry_after_expired():
 
     assert result.outcome == "started"
     assert len(client.started) == 1
+
+
+async def test_retry_application_starts_workflow_using_cached_job_url():
+    """application_id 만으로 job 캐시에서 URL을 역으로 찾아 재시작한다 — URL 없이 쓰는 게
+
+    `apply_by_url`과의 차이(모듈 docstring 참고).
+    """
+    record = _record(platform_job_id="1", company="A사", title="백엔드")
+    app_id = canonical_key("A사", "백엔드")
+    job_rows = {(record.job.platform, record.job.platform_job_id): record}
+    state_rows = _state(app_id, ApplicationState.NEEDS_HUMAN)
+    c = _container(job_rows, state_rows=state_rows)
+    client = _FakeClient()
+
+    result = await retry_application(app_id, c, client)
+
+    assert result.outcome == "started"
+    assert result.label == "A사 - 백엔드"
+    assert client.started[0]["cmd"].job_url == record.job.url
+
+
+async def test_retry_application_reports_not_found_for_unknown_id():
+    c = _container({})
+    result = await retry_application("no-such-id", c, _FakeClient())
+
+    assert result.outcome == "not_found"
+
+
+async def test_retry_application_refuses_when_history_is_not_retryable():
+    """RUNNING/COMPLETED 등 `_RETRYABLE_STATES` 밖의 이력은 재시도 대상이 아니다."""
+    record = _record(platform_job_id="1", company="A사", title="백엔드")
+    app_id = canonical_key("A사", "백엔드")
+    job_rows = {(record.job.platform, record.job.platform_job_id): record}
+    state_rows = _state(app_id, ApplicationState.EXECUTING)
+    c = _container(job_rows, state_rows=state_rows)
+    client = _FakeClient()
+
+    result = await retry_application(app_id, c, client)
+
+    assert result.outcome == "duplicate"
+    assert result.label == "A사 - 백엔드"
+    assert client.started == []
+
+
+async def test_retry_application_asks_for_url_when_job_cache_is_gone():
+    """상태는 재시도 가능한데 job 캐시엔 없는 경우(오래돼 덮어써짐 등) — apply_by_url로 안내."""
+    app_id = canonical_key("A사", "백엔드")
+    state_rows = _state(app_id, ApplicationState.NEEDS_HUMAN)
+    c = _container({}, state_rows=state_rows)
+
+    result = await retry_application(app_id, c, _FakeClient())
+
+    assert result.outcome == "not_found"
+    assert "apply_by_url" in (result.detail or "")
 
 
 @pytest.mark.temporal

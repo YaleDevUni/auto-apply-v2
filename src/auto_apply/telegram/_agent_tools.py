@@ -19,6 +19,10 @@
 `resend_pending_decision`/`resend_all_pending_decisions`(`_agent_tools_resend.py`)도
 워크플로우를 직접 mutate 하지 않는다 — 기존 승인 버튼의 nonce를 그대로 실어 원래 버튼과
 동일하게 동작하는 메시지를 다시 보낼 뿐이다(그 파일 docstring 참고).
+
+`retry_application`(`_agent_tools_retry.py`)도 `apply_by_url`과 같은 시작 경로를 타지만
+URL 대신 application_id 만 있으면 된다 — job 캐시에서 URL을 역으로 찾는다(그 파일 docstring
+참고, 2026-08-23).
 """
 
 from collections.abc import Awaitable, Callable
@@ -28,8 +32,10 @@ from temporalio.client import Client
 from auto_apply.apply_intake import apply_by_url, start_actionable_applications
 from auto_apply.bootstrap import Container
 from auto_apply.domain.chat_agent import ToolCatalogEntry
+from auto_apply.domain.job_identity import canonical_key
 from auto_apply.telegram._agent_tools_collect import COLLECT_TOOLS
 from auto_apply.telegram._agent_tools_resend import RESEND_TOOLS
+from auto_apply.telegram._agent_tools_retry import RETRY_TOOLS
 from auto_apply.telegram._agent_tools_schedule import SCHEDULE_TOOLS
 
 ToolHandler = Callable[[dict[str, str], Container, Client], Awaitable[str]]
@@ -69,11 +75,20 @@ async def _list_applications(args: dict[str, str], c: Container, _client: Client
     limit = _parse_limit(args.get("limit", ""))
     async with c.uow() as uow:
         summaries = await uow.applications.list_recent(limit=limit)
-    if not summaries:
-        return "지원 건이 없습니다."
-    lines = [
-        f"{s.application_id}: {s.state}" + (f" ({s.reason})" if s.reason else "") for s in summaries
-    ]
+        if not summaries:
+            return "지원 건이 없습니다."
+        # application_id 는 canonical_key 해시라 사람이 읽고 뭔지 알 수 없다(2026-08-23,
+        # 해시만 보고는 어떤 공고인지 몰라 재시도도 못 시키던 상황에서 드러난 갭) — job
+        # 캐시에서 회사/직무를 역으로 찾아 붙인다. 캐시에 없으면(오래돼 덮어써짐 등)
+        # application_id 만 보여준다 — best-effort 라 항상 채워지진 않는다.
+        jobs_by_id = {
+            canonical_key(r.job.company, r.job.title): r.job for r in await uow.jobs.actionable()
+        }
+    lines = []
+    for s in summaries:
+        job = jobs_by_id.get(s.application_id)
+        head = f"{job.company} - {job.title} [{s.application_id}]" if job else s.application_id
+        lines.append(head + f": {s.state}" + (f" ({s.reason})" if s.reason else ""))
     return "\n".join(lines)
 
 
@@ -188,6 +203,9 @@ TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
     # 승인 버튼 재전송(resend_pending_decision/resend_all_pending_decisions)은
     # _agent_tools_resend.py 에서 구현(§ 그 파일 docstring).
     **RESEND_TOOLS,
+    # application_id 만으로 재시도(retry_application)는 _agent_tools_retry.py 에서 구현
+    # (§ 그 파일 docstring).
+    **RETRY_TOOLS,
 }
 
 # 실측(2026-08-21): "지원시작 2건정도" 한 턴에서 chat_llm(Haiku, 저렴한 분류 모델)이

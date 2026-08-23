@@ -221,6 +221,66 @@ async def apply_by_url(url: str, c: Container, client: Client) -> ApplyByUrlResu
     return ApplyByUrlResult(outcome="duplicate", label=label)
 
 
+async def find_job_by_application_id(application_id: str, c: Container) -> JobRecord | None:
+    """`application_id`(canonical_key)로 job 캐시(`uow.jobs.actionable()`)에서 원 공고를
+
+    역으로 찾는다. `retry_application`과 `telegram/_agent_tools.py`의 목록 표시(회사/직무)가
+    함께 쓴다 — canonical_key 는 job 쪽에 역인덱스가 없어(§ `JobRepository` port) 선형
+    스캔이다. 채팅에서 사람이 직접 트리거하는 저빈도 호출(목록 조회 1회, 재시도 1건)이라
+    감수한다. `_fresh_actionable`(24시간 TTL)을 거치지 않는다 — 오래된 캐시라도 사람이 이미
+    application_id 를 알고 "이거 다시 시도해줘"라고 지정한 이상 `apply_by_url`이 오래된
+    URL을 그대로 재사용하는 것과 같은 논리로 걸림돌이 되면 안 된다.
+    """
+    async with c.uow() as uow:
+        records = await uow.jobs.actionable()
+    for record in records:
+        if canonical_key(record.job.company, record.job.title) == application_id:
+            return record
+    return None
+
+
+async def retry_application(application_id: str, c: Container, client: Client) -> ApplyByUrlResult:
+    """`application_id` 하나만으로 실패 이력(NEEDS_HUMAN/EXPIRED/REJECTED)을 재시도한다.
+
+    `apply_by_url`은 사람이 URL을 직접 줘야 하는데, 실패한 지원 건의 application_id(해시)만
+    알고 원 공고 링크는 모르는 경우가 있다(2026-08-23, claude CLI 한도초과로 NEEDS_HUMAN
+    떨어진 지원 건을 한도 해결 뒤 재시도하려는데 텔레그램에서 URL을 다시 못 찾던 상황).
+    `find_job_by_application_id`로 job 캐시에서 URL을 역으로 찾아 `apply_by_url`과 같은
+    시작 경로(`_start_workflow`, ALLOW_DUPLICATE)를 탄다. 캐시에서 못 찾으면(수집 후 오래돼
+    다른 공고로 덮어써졌거나 이 세션의 캐시에 애초에 없던 경우) `apply_by_url`로 URL을 직접
+    달라고 안내한다 — 이 경우까지 구제하려면 application 레코드 자체에 job_url을 영속해야
+    하는데(스키마 변경, 3개 백엔드) 이번 요청 범위를 넘어선다고 판단해 보류했다.
+    """
+    async with c.uow() as uow:
+        states = await uow.applications.latest_states([application_id])
+    state = states.get(application_id)
+    if state is None:
+        return ApplyByUrlResult(
+            outcome="not_found", detail="지원 이력이 없는 application_id입니다."
+        )
+
+    record = await find_job_by_application_id(application_id, c)
+    if state not in _RETRYABLE_STATES:
+        # label 은 표시용 best-effort — 캐시에 없으면 application_id 로 대신한다(그래도
+        # "재시도 불가"라는 결론엔 영향 없다).
+        return ApplyByUrlResult(
+            outcome="duplicate",
+            label=f"{record.job.company} - {record.job.title}" if record else application_id,
+        )
+    if record is None:
+        return ApplyByUrlResult(
+            outcome="not_found",
+            detail=(
+                f"{application_id}: 원 공고를 캐시에서 못 찾았습니다 — "
+                "apply_by_url로 공고 링크를 직접 알려주세요."
+            ),
+        )
+    label = f"{record.job.company} - {record.job.title}"
+    if await _start_workflow(application_id, record.job.url, c, client):
+        return ApplyByUrlResult(outcome="started", label=label)
+    return ApplyByUrlResult(outcome="duplicate", label=label)
+
+
 async def start_actionable_applications(
     count: int,
     c: Container,

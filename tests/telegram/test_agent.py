@@ -449,3 +449,90 @@ async def test_apply_by_url_tool_rejects_non_wanted_link():
 
     assert client.started == []
     assert [e.message for e in notifier.notified] == ["원티드 링크만 지원해요."]
+
+
+async def test_retry_application_tool_starts_workflow_from_cached_job():
+    """application_id 만으로(URL 없이) job 캐시에서 URL을 찾아 재시작한다(2026-08-23)."""
+    from auto_apply.domain.job_identity import canonical_key
+
+    notifier = _FakeNotifier()
+    job_rows = _actionable_job_rows()
+    app_id = canonical_key("A사", "백엔드")
+    harness = Harness(job_rows=job_rows)
+    harness.rows[app_id] = [
+        PersistState(
+            application_id=app_id, workflow_run_id="run_1", state=ApplicationState.NEEDS_HUMAN
+        )
+    ]
+    c = _container(
+        [
+            {
+                "action": "call_tool",
+                "tool": "retry_application",
+                "tool_args": {"application_id": app_id},
+            },
+            {"action": "respond", "response": "다시 시작했어요."},
+        ],
+        notifier=notifier,
+        harness=harness,
+    )
+    client = _FakeClient()
+
+    await handle_chat(f"{app_id} 다시 시도해줘", c, client)
+
+    assert len(client.started) == 1
+    assert [e.message for e in notifier.notified] == ["다시 시작했어요."]
+
+
+async def test_retry_application_tool_reports_not_found():
+    notifier = _FakeNotifier()
+    c = _container(
+        [
+            {
+                "action": "call_tool",
+                "tool": "retry_application",
+                "tool_args": {"application_id": "no-such-id"},
+            },
+            {"action": "respond", "response": "그런 지원 건이 없어요."},
+        ],
+        notifier=notifier,
+    )
+    client = _FakeClient()
+
+    await handle_chat("no-such-id 다시 시도해줘", c, client)
+
+    assert client.started == []
+    assert [e.message for e in notifier.notified] == ["그런 지원 건이 없어요."]
+
+
+async def test_list_applications_tool_shows_company_and_title_when_cached():
+    """application_id 해시만으로는 어떤 공고인지 알 수 없어서, job 캐시에 있으면 회사/직무를
+
+    붙여서 보여준다(2026-08-23, 해시만 보여서 재시도도 못 시키던 상황에서 드러난 갭). 도구
+    핸들러(`TOOLS`)를 직접 호출한다 — StubLLM 은 프롬프트/관찰 결과를 기록하지 않아
+    `handle_chat`을 거치면 실제 반환 문자열을 확인할 수 없다.
+    """
+    from auto_apply.domain.job_identity import canonical_key
+    from auto_apply.telegram._agent_tools import TOOLS
+
+    app_id = canonical_key("A사", "백엔드")
+    other_id = "no-job-cached"
+    harness = Harness(job_rows=_actionable_job_rows())
+    harness.rows[app_id] = [
+        PersistState(
+            application_id=app_id, workflow_run_id="run_1", state=ApplicationState.NEEDS_HUMAN
+        )
+    ]
+    harness.rows[other_id] = [
+        PersistState(
+            application_id=other_id, workflow_run_id="run_1", state=ApplicationState.REJECTED
+        )
+    ]
+    c = harness.container(settings=Settings(storage="memory", llm_provider="stub"))
+    _, _, handler = TOOLS["list_applications"]
+
+    result = await handler({}, c, _FakeClient())
+
+    assert "A사 - 백엔드" in result  # 캐시에 있는 건 회사/직무가 붙는다
+    assert app_id in result  # application_id 도 여전히 함께 보여준다(재시도 등에 쓰라고)
+    assert other_id in result  # 캐시에 없는 건 application_id 만(예외 없이) 보여준다

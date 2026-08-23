@@ -512,3 +512,22 @@ Notifier port 표면에 없는 TelegramNotifier 전용 메서드라(§11.6) 여�
 공유한다. 유닛 테스트(fake client) + `WorkflowType`/`ExecutionStatus` visibility 필터 자체가
 실제로 동작하는지 확인하는 실제 Temporal 서버 통합 테스트(watchdog.py의 실측 테스트와 같은
 이유로 `start_local()`, `@pytest.mark.temporal`)까지 구현·`make check` 통과 완료.
+
+**application_id만으로 재시도 + 목록에 회사/직무 표시** (2026-08-23) — claude CLI 한도초과로
+NEEDS_HUMAN 떨어진 지원 건을, 한도 해결(계정 전환) 뒤 텔레그램에서 재시도하려던 실제 사용
+중 발견한 갭. `list_applications`/`get_application`이 canonical_key 해시(application_id)만
+보여줘서 어떤 공고인지 알 방법이 없었고, `apply_by_url`은 URL을 알아야만 재시도가 되는데
+해시만 봐서는 원 공고 링크를 되찾을 수 없었다(공고 수집 캐시가 24시간 TTL로 걸러지는 건
+`start_actionable_applications`의 자동 선정 로직뿐이고 `jobs` 테이블 자체엔 TTL이 없다는
+걸 확인 — `apply_intake.find_job_by_application_id`가 그 저장소를 canonical_key로
+역스캔한다, 별도 인덱스 없이 선형 스캔이지만 채팅에서 사람이 직접 트리거하는 저빈도
+호출이라 감수). 새 `apply_intake.retry_application(application_id)`가 이 역조회로 찾은
+URL을 `apply_by_url`과 같은 시작 경로(`_start_workflow`, ALLOW_DUPLICATE)에 그대로
+태운다 — 캐시에서 못 찾으면(오래돼 다른 공고로 덮어써짐 등) `apply_by_url`로 URL을 직접
+달라고 안내한다(그 경우까지 구제하려면 application 레코드 자체에 job_url을 영속해야 해서
+스키마 변경이 필요해지는데, 이번 요청 범위를 넘어선다고 판단해 보류). 텔레그램 채팅 도구
+`retry_application`(`telegram/_agent_tools_retry.py`, `_agent_tools_resend.py`와 같은
+분리 이유)으로 노출했고, `list_applications`도 같은 job 캐시에서 회사/직무를 찾아 붙이도록
+바꿨다(캐시에 없으면 기존처럼 application_id만). 실제 최종 제출은 이 경로로 재시작된
+워크플로우 안에서도 여전히 사람의 텔레그램 승인 뒤에만 일어난다. 구현·유닛 테스트·
+`make check` 통과 완료.
