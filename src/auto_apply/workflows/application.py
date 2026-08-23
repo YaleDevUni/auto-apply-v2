@@ -83,6 +83,10 @@ class ApplicationWorkflow:
         self._scheduled_at: datetime | None = None
         self._cancelled = False
         self._attempts = 0
+        # pending_decision query 가 원래 승인 메시지를 그대로 재구성해 돌려주려면 필요하다
+        # (§ contracts/dto.py PendingDecisionView 참고) — request_approval activity 에 보낸
+        # DecisionRequest 를 그대로 보관해 뒀다가 재전송 때 다시 쓴다.
+        self._last_request: DecisionRequest | None = None
 
     # ─────────────────────────── run ───────────────────────────
     @workflow.run
@@ -236,21 +240,24 @@ class ApplicationWorkflow:
         content = generated.draft.content
         raw_notes = content.get("caution_notes", [])
         notes = [str(n) for n in raw_notes] if isinstance(raw_notes, list) else []
+        request = DecisionRequest(
+            application_id=cmd.application_id,
+            workflow_id=workflow.info().workflow_id,
+            title=f"{job.company} / {job.title} 지원 승인",
+            summary=job.url,
+            artifact_url=generated.pdf.blob_key,
+            mode=mode,
+            # 승인 버튼을 누르기 전 정보 비대칭을 줄이는 배지 셋(§ wanted-application-
+            # caution-indicators-backlog) — mode 배지와 같은 동기.
+            caution_documents=_caution_documents(f"{job.title}\n{job.description}"),
+            portfolio_filename=str(content.get("portfolio_filename", "")),
+            caution_notes=notes,
+        )
+        # pending_decision query 가 재전송 때 그대로 재구성할 수 있게 보관한다(§ __init__).
+        self._last_request = request
         ticket = await workflow.execute_activity(
             request_approval,
-            DecisionRequest(
-                application_id=cmd.application_id,
-                workflow_id=workflow.info().workflow_id,
-                title=f"{job.company} / {job.title} 지원 승인",
-                summary=job.url,
-                artifact_url=generated.pdf.blob_key,
-                mode=mode,
-                # 승인 버튼을 누르기 전 정보 비대칭을 줄이는 배지 셋(§ wanted-application-
-                # caution-indicators-backlog) — mode 배지와 같은 동기.
-                caution_documents=_caution_documents(f"{job.title}\n{job.description}"),
-                portfolio_filename=str(content.get("portfolio_filename", "")),
-                caution_notes=notes,
-            ),
+            request,
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_QUICK,
         )
@@ -493,4 +500,5 @@ class ApplicationWorkflow:
         """
         pending = self._decision is None and self._decision_nonce is not None
         nonce = self._decision_nonce if pending and self._decision_nonce else ""
-        return PendingDecisionView(has_pending=pending, nonce=nonce)
+        request = self._last_request if pending else None
+        return PendingDecisionView(has_pending=pending, nonce=nonce, request=request)

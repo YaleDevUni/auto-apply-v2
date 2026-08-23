@@ -217,6 +217,10 @@ async def test_pending_decision_query_exposes_nonce_while_awaiting_then_clears(
         pending = await handle.query(ApplicationWorkflow.pending_decision)
         assert pending.has_pending is True
         assert pending.nonce == real_nonce
+        # 재기동 후 밀린 승인을 일괄 재전송할 때 해시(application_id)만 봐선 어떤 공고인지
+        # 알 수 없어서 원래 DecisionRequest 를 그대로 노출한다(§ pending_decisions.py).
+        assert pending.request is not None
+        assert pending.request.title == "Fixture Inc. / 백엔드 엔지니어 지원 승인"
 
         await handle.signal(ApplicationWorkflow.reject, RejectSignal())
         await handle.result()
@@ -224,6 +228,7 @@ async def test_pending_decision_query_exposes_nonce_while_awaiting_then_clears(
         pending_after = await handle.query(ApplicationWorkflow.pending_decision)
         assert pending_after.has_pending is False
         assert pending_after.nonce == ""
+        assert pending_after.request is None
 
 
 async def test_duplicate_approval_is_idempotent(env: WorkflowEnvironment):

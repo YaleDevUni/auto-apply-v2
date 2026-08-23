@@ -10,11 +10,20 @@ from dataclasses import dataclass, replace
 from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.bootstrap import Container
 from auto_apply.config import Settings
-from auto_apply.contracts.dto import PendingDecisionView
+from auto_apply.contracts.dto import DecisionRequest, PendingDecisionView
 from auto_apply.telegram._agent_tools_resend import _resend_all_pending_decisions
 from auto_apply.telegram.agent import handle_chat
 from tests.conftest import Harness
 from tests.telegram.test_agent import _FakeNotifier
+
+
+def _req(application_id: str, title: str = "회사 / 직무 지원 승인") -> DecisionRequest:
+    return DecisionRequest(
+        application_id=application_id,
+        workflow_id=f"application-{application_id}",
+        title=title,
+        summary="https://fixture.local/jobs/1",
+    )
 
 
 @dataclass
@@ -56,9 +65,9 @@ async def test_resend_all_pending_decisions_resends_every_pending_one():
     c = _container()
     client = _FakeClient(
         {
-            "app_1": PendingDecisionView(has_pending=True, nonce="n1"),
+            "app_1": PendingDecisionView(has_pending=True, nonce="n1", request=_req("app_1")),
             "app_2": PendingDecisionView(has_pending=False),
-            "app_3": PendingDecisionView(has_pending=True, nonce="n3"),
+            "app_3": PendingDecisionView(has_pending=True, nonce="n3", request=_req("app_3")),
         }
     )
     c = replace(c, notifier=notifier)
@@ -91,7 +100,9 @@ async def test_resend_all_pending_decisions_tool_is_wired_into_chat_agent():
         ]
     )
     c = replace(_container(), llm=stub, chat_llm=stub, notifier=notifier)
-    client = _FakeClient({"app_1": PendingDecisionView(has_pending=True, nonce="n1")})
+    client = _FakeClient(
+        {"app_1": PendingDecisionView(has_pending=True, nonce="n1", request=_req("app_1"))}
+    )
 
     await handle_chat("승인 기다리는 거 다시 보여줘", c, client)
 

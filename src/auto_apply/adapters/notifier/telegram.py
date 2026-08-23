@@ -79,20 +79,44 @@ class TelegramNotifier:
         ticket = DecisionTicket(
             ticket_id=self._idgen.new_id("tkt"), nonce=self._idgen.new_id("nonce")
         )
+        await self._send_decision(req, ticket.nonce)
+        log.info(
+            "telegram.decision_requested",
+            application_id=req.application_id,
+            guide_patch=req.guide_patch,
+            checkpoint=req.checkpoint,
+        )
+        return ticket
+
+    async def resend_decision(self, request: DecisionRequest, nonce: str) -> None:
+        """대기 중인 승인 요청을 원래 메시지 그대로(모드 배지·공고 링크·PDF·주의사항 포함) 다시
+
+        보낸다 — 새 nonce 를 발급하지 않는다. 텔레그램 채팅 에이전트의 `resend_pending_decision`
+        도구가 쓴다(telegram/agent.py). 워크플로우가 이미 들고 있는 nonce
+        (`ApplicationWorkflow.pending_decision` query)를 그대로 실어 원래 버튼과 동일하게
+        동작하는 메시지를 다시 보낸다 — 자연어 요청이 실제 승인/거절을 대신하지 않는다
+        (CLAUDE.md 절대규칙 4). application_id(해시) 한 줄만 보내던 최초 버전(2026-08-23)은
+        사람이 뭘 승인하는지 알 수 없다는 지적을 받아, `request_decision`과 같은 렌더링을
+        재사용해 원래 받았던 것과 동일한 메시지로 바꿨다.
+        """
+        prefix = "🔁 (재전송) "
+        await self._send_decision(request, nonce, prefix=prefix)
+
+    async def _send_decision(self, req: DecisionRequest, nonce: str, *, prefix: str = "") -> None:
         if req.guide_patch:
-            keyboard = _guide_patch_keyboard(req, ticket.nonce)
+            keyboard = _guide_patch_keyboard(req, nonce)
         elif req.repair_promotion:
-            keyboard = _repair_keyboard(req, ticket.nonce)
+            keyboard = _repair_keyboard(req, nonce)
         elif req.checkpoint:
-            keyboard = _checkpoint_keyboard(req, ticket.nonce)
+            keyboard = _checkpoint_keyboard(req, nonce)
         else:
-            keyboard = _keyboard(req.application_id, ticket.nonce)
+            keyboard = _keyboard(req.application_id, nonce)
         # 평문으로 보낸다 — title/summary/artifact_url 은 스크래핑된 공고 데이터라 마크다운
         # 특수문자(_ * ` 등)를 언제든 포함할 수 있다. parse_mode 를 쓰면 그런 문자가 섞일 때마다
         # "can't find end of the entity" 로 전송 자체가 실패한다 (라이브 스모크테스트로 확인).
         # summary 에는 공고 링크(job.url)가 이미 실려 온다(workflows/application.py 참고) —
         # 승인 여부를 판단하려면 원본 공고를 다시 확인할 수 있어야 해서다.
-        text = f"{_mode_badge(req)}{req.title}\n{req.summary}{_caution_section(req)}"
+        text = f"{prefix}{_mode_badge(req)}{req.title}\n{req.summary}{_caution_section(req)}"
         filename = (
             f"checkpoint_{req.application_id}.png"
             if req.checkpoint
@@ -110,14 +134,6 @@ class TelegramNotifier:
                 )
             else:
                 await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
-        log.info(
-            "telegram.decision_requested",
-            application_id=req.application_id,
-            guide_patch=req.guide_patch,
-            checkpoint=req.checkpoint,
-            attached=attachment is not None,
-        )
-        return ticket
 
     async def _fetch_attachment(self, blob_key: str | None) -> bytes | None:
         """승인 버튼을 누르기 전에 실물(이력서 PDF/체크포인트 스크린샷)을 볼 수 있어야 한다는 요구.
@@ -196,20 +212,6 @@ class TelegramNotifier:
             await self._bot.send_message(
                 chat_id=chat_id, text=cancel_text, reply_markup=cancel_keyboard
             )
-
-    async def resend_decision(self, application_id: str, nonce: str) -> None:
-        """대기 중인 승인 요청의 버튼을 다시 보낸다 — 새 nonce 를 발급하지 않는다.
-
-        텔레그램 채팅 에이전트의 `resend_pending_decision` 도구가 쓴다(telegram/agent.py).
-        새 워크플로우 signal 을 만드는 대신 워크플로우가 이미 들고 있는 nonce
-        (`ApplicationWorkflow.pending_decision` query)를 그대로 실어 원래 버튼과 동일하게
-        동작하는 메시지를 다시 보낸다 — 자연어 요청이 실제 승인/거절을 대신하지 않는다
-        (CLAUDE.md 절대규칙 4).
-        """
-        keyboard = _keyboard(application_id, nonce)
-        text = f"⏳ 대기 중인 승인 요청을 다시 보냅니다: {application_id}"
-        for chat_id in self._chat_ids:
-            await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
 
     async def answer_callback_query(self, callback_query_id: str) -> None:
         """버튼을 눌렀을 때 뜨는 "불러오는 중" 스피너를 즉시 꺼준다.

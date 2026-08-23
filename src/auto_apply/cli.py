@@ -100,7 +100,7 @@ async def _run(args: argparse.Namespace) -> None:
             print("대기 중인 승인이 없습니다.")
         else:
             for p in pending:
-                print(f"resent: {p.application_id}")
+                print(f"resent: {p.label} ({p.application_id})")
         return
 
     wf_id = f"application-{args.id}"

@@ -97,17 +97,6 @@ class StateView(_Frozen):
     attempts: int = 0
 
 
-class PendingDecisionView(_Frozen):
-    """워크플로우 query 응답. 텔레그램 채팅 에이전트의 `resend_pending_decision` 도구가 쓴다
-
-    (telegram/agent.py). nonce 는 워크플로우 밖으로 나가는 유일한 통로가 이 query 다 — signal
-    검증(§6)과 달리 여기선 그냥 읽어서 기존 버튼을 다시 보내는 데만 쓴다.
-    """
-
-    has_pending: bool
-    nonce: str = ""
-
-
 class ApplicationSummary(_Frozen):
     """`ApplicationRepository.list_recent`의 반환 항목 — 지원 건 1개의 최신 상태 스냅샷."""
 
@@ -162,6 +151,21 @@ class DecisionTicket(_Frozen):
 
     ticket_id: str
     nonce: str
+
+
+class PendingDecisionView(_Frozen):
+    """워크플로우 query 응답. 텔레그램 채팅 에이전트의 `resend_pending_decision` 도구가 쓴다
+
+    (telegram/agent.py). nonce 는 워크플로우 밖으로 나가는 유일한 통로가 이 query 다 — signal
+    검증(§6)과 달리 여기선 그냥 읽어서 기존 버튼을 다시 보내는 데만 쓴다. `request`는 애초에
+    `request_approval` activity 로 보냈던 그 `DecisionRequest`를 그대로 담는다 —
+    application_id(해시) 한 줄만 다시 보내던 걸(2026-08-23 최초 시도) 사람이 지적해, 재전송이
+    회사/직무/공고 링크/PDF/주의사항까지 원래 메시지와 동일하게 보이도록 바꿨다.
+    """
+
+    has_pending: bool
+    nonce: str = ""
+    request: DecisionRequest | None = None
 
 
 class NotifyEvent(_Frozen):

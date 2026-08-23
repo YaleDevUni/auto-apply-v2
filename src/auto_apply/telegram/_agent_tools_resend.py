@@ -11,6 +11,12 @@
 에 있다 — `cli.py`의 `resend-pending` 명령과 이 도구가 같은 코드를 공유한다(그 파일
 docstring 참고). `_agent_tools.py`가 이미 200줄을 넘어서(§ CLAUDE.md "한 파일 = 한 책임")
 `_agent_tools_schedule.py`/`_agent_tools_collect.py`와 같은 이유로 새 파일로 뺐다.
+
+텔레그램으로 다시 보내는 메시지 자체는 application_id(해시) 한 줄이 아니라 원래
+승인 요청과 동일한 내용(모드 배지·회사/직무·공고 링크·PDF·주의사항)이다(2026-08-23) —
+해시만 봐서는 리스너 재기동 후 뭐가 밀려있는지, 뭘 승인하는 건지 사람이 알 수 없었다는
+지적으로 바꿨다(`pending_decisions.PendingDecision.label`/`TelegramNotifier.resend_decision`
+참고). 이 파일의 두 도구가 채팅에 남기는 텍스트 응답은 그 label(공고 제목)만 짧게 보여준다.
 """
 
 from collections.abc import Awaitable, Callable
@@ -34,13 +40,13 @@ async def _resend_pending_decision(args: dict[str, str], c: Container, client: C
         view = await handle.query(ApplicationWorkflow.pending_decision)
     except RPCError as e:
         return f"{application_id}: 워크플로우를 찾을 수 없습니다 ({e.message})"
-    if not view.has_pending:
+    if not view.has_pending or view.request is None:
         return f"{application_id}: 대기 중인 승인이 없습니다."
     # 이 함수는 c.settings.notifier == "telegram" 일 때만 불린다(bridge.handle_message 가 먼저
     # 걸러준다) — bridge.py 의 `_telegram(c)` 와 같은 불변식.
     assert isinstance(c.notifier, ResendableNotifier)
-    await c.notifier.resend_decision(application_id, view.nonce)
-    return f"{application_id}: 승인 버튼을 다시 보냈습니다."
+    await c.notifier.resend_decision(view.request, view.nonce)
+    return f"{view.request.title} ({application_id}): 승인 버튼을 다시 보냈습니다."
 
 
 async def _resend_all_pending_decisions(_args: dict[str, str], c: Container, client: Client) -> str:
@@ -49,7 +55,7 @@ async def _resend_all_pending_decisions(_args: dict[str, str], c: Container, cli
     if not pending:
         return "대기 중인 승인이 없습니다."
     lines = [f"{len(pending)}건의 승인 버튼을 다시 보냈습니다:"]
-    lines += [f"  - {p.application_id}" for p in pending]
+    lines += [f"  - {p.label} ({p.application_id})" for p in pending]
     return "\n".join(lines)
 
 

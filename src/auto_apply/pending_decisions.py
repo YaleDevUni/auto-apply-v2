@@ -17,6 +17,11 @@ FAILED/TERMINATED로 *닫힌* 워크플로우를 찾는 것과 반대로, 이건
 이라는 단어를 모르는 port") 여기서도 구조적 Protocol로만 가리킨다 — `telegram/_agent_tools.py`
 의 `_ResendableNotifier`, `telegram/bridge.py`의 `_RevisableNotifier`와 같은 패턴. 호출측이
 `c.settings.notifier == "telegram"`을 먼저 걸러야 한다는 불변식도 동일하다.
+
+재전송은 `pending_decision` query가 돌려주는 원래 `DecisionRequest`를 그대로 다시 보낸다
+(2026-08-23) — application_id(해시) 한 줄만 보내던 최초 버전은 사람이 뭘 승인하는지 목록만
+봐서는 알 수 없다는 지적을 받았다. `TelegramNotifier.resend_decision`이
+`request_decision`과 같은 렌더링(모드 배지·공고 링크·PDF 첨부·주의사항)을 재사용한다.
 """
 
 from dataclasses import dataclass
@@ -26,6 +31,7 @@ import structlog
 from temporalio.client import Client
 from temporalio.service import RPCError
 
+from auto_apply.contracts.dto import DecisionRequest
 from auto_apply.workflows.application import ApplicationWorkflow
 
 log = structlog.get_logger(__name__)
@@ -40,11 +46,24 @@ _QUERY = "WorkflowType = 'ApplicationWorkflow' AND ExecutionStatus = 'Running'"
 class PendingDecision:
     application_id: str
     nonce: str
+    # pending_decision query 가 돌려준 원래 DecisionRequest — 재전송이 이걸 그대로 다시
+    # 렌더링한다. 대기 중이면 워크플로우가 항상 같이 채워주므로 실질적으로 None 이 되는
+    # 경우는 없다(방어적으로만 Optional).
+    request: DecisionRequest | None = None
+
+    @property
+    def label(self) -> str:
+        """사람이 읽을 만한 표시명(목록 출력용) — application_id(해시)만 봐선 어떤 공고인지
+
+        알 수 없다는 문제(2026-08-23, 사용자 지적)로 추가했다. request 가 없으면(이론상만
+        가능) application_id 로 fallback한다.
+        """
+        return self.request.title if self.request is not None else self.application_id
 
 
 @runtime_checkable
 class ResendableNotifier(Protocol):
-    async def resend_decision(self, application_id: str, nonce: str) -> None: ...
+    async def resend_decision(self, request: DecisionRequest, nonce: str) -> None: ...
 
 
 async def find_pending_decisions(client: Client) -> list[PendingDecision]:
@@ -61,7 +80,11 @@ async def find_pending_decisions(client: Client) -> list[PendingDecision]:
             log.warning("pending_decisions.query_failed", workflow_id=execution.id, error=e.message)
             continue
         if view.has_pending:
-            found.append(PendingDecision(application_id=application_id, nonce=view.nonce))
+            found.append(
+                PendingDecision(
+                    application_id=application_id, nonce=view.nonce, request=view.request
+                )
+            )
     return found
 
 
@@ -69,5 +92,6 @@ async def resend_all(client: Client, notifier: ResendableNotifier) -> list[Pendi
     """대기 중인 것들을 찾아 전부 재전송하고, 재전송한 목록을 그대로 돌려준다."""
     pending = await find_pending_decisions(client)
     for p in pending:
-        await notifier.resend_decision(p.application_id, p.nonce)
+        if p.request is not None:
+            await notifier.resend_decision(p.request, p.nonce)
     return pending

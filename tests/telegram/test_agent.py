@@ -11,12 +11,21 @@ from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.adapters.platform.fixture import FixturePlatformAdapter
 from auto_apply.adapters.platform.registry import StaticPlatformRegistry
 from auto_apply.config import Settings
-from auto_apply.contracts.dto import NotifyEvent, PendingDecisionView, PersistState
+from auto_apply.contracts.dto import DecisionRequest, NotifyEvent, PendingDecisionView, PersistState
 from auto_apply.contracts.job import ApplicabilityVerdict, JobPosting, JobRecord, ScreeningVerdict
 from auto_apply.domain.chat_agent import MAX_BLOCKED_STEPS, MAX_STEPS
 from auto_apply.domain.enums import ApplicationState
 from auto_apply.telegram.agent import handle_chat
 from tests.conftest import Harness
+
+
+def _req(application_id: str = "app_1") -> DecisionRequest:
+    return DecisionRequest(
+        application_id=application_id,
+        workflow_id=f"application-{application_id}",
+        title="회사 / 직무 지원 승인",
+        summary="https://fixture.local/jobs/1",
+    )
 
 
 class _FakeNotifier:
@@ -27,8 +36,8 @@ class _FakeNotifier:
     async def notify(self, event: NotifyEvent) -> None:
         self.notified.append(event)
 
-    async def resend_decision(self, application_id: str, nonce: str) -> None:
-        self.resent.append((application_id, nonce))
+    async def resend_decision(self, request: DecisionRequest, nonce: str) -> None:
+        self.resent.append((request.application_id, nonce))
 
 
 class _FakeHandle:
@@ -107,7 +116,11 @@ async def test_resend_pending_decision_calls_notifier_without_signaling_workflow
         ],
         notifier=notifier,
     )
-    client = _FakeClient(_FakeHandle(view=PendingDecisionView(has_pending=True, nonce="nonce_1")))
+    client = _FakeClient(
+        _FakeHandle(
+            view=PendingDecisionView(has_pending=True, nonce="nonce_1", request=_req("app_1"))
+        )
+    )
 
     await handle_chat("app_1 승인 버튼 다시 보내줘", c, client)
 
@@ -330,7 +343,11 @@ async def test_identical_tool_call_is_deduped_within_a_turn():
         ],
         notifier=notifier,
     )
-    client = _FakeClient(_FakeHandle(view=PendingDecisionView(has_pending=True, nonce="nonce_1")))
+    client = _FakeClient(
+        _FakeHandle(
+            view=PendingDecisionView(has_pending=True, nonce="nonce_1", request=_req("app_1"))
+        )
+    )
 
     await handle_chat("app_1 버튼 다시 보내줘", c, client)
 

@@ -549,13 +549,29 @@ async def test_request_decision_attaches_resume_pdf_when_store_has_it() -> None:
 
 
 async def test_resend_decision_reuses_the_given_nonce_with_original_buttons() -> None:
-    """resend_decision 은 새 nonce 를 만들지 않는다 — 원래 승인/거절/수정요청 버튼과 같은 콜백."""
+    """resend_decision 은 새 nonce 를 만들지 않는다 — 원래 승인/거절/수정요청 버튼과 같은 콜백.
+
+    메시지 내용도 request_decision 이 처음 보냈던 것과 동일해야 한다(모드 배지/제목/공고
+    링크/주의사항) — application_id 해시 한 줄만 보내던 최초 버전(2026-08-23)은 사람이 뭘
+    승인하는지 알 수 없다는 지적을 받아 바꿨다.
+    """
     bot = FakeBot()
     notifier = TelegramNotifier("token", frozenset({111, 222}), UuidIdGen(), bot=bot)
+    req = DecisionRequest(
+        application_id="app_1",
+        workflow_id="application-app_1",
+        title="Wanted / 백엔드 엔지니어 지원 승인",
+        summary="https://wanted.co.kr/jobs/1",
+        mode=ExecutionMode.LIVE,
+    )
 
-    await notifier.resend_decision("app_1", "nonce_1")
+    await notifier.resend_decision(req, "nonce_1")
 
     assert {m["chat_id"] for m in bot.sent} == {111, 222}
+    assert bot.sent[0]["text"] == (
+        "🔁 (재전송) 🚨 LIVE — 실제 제출\nWanted / 백엔드 엔지니어 지원 승인\n"
+        "https://wanted.co.kr/jobs/1"
+    )
     markup = bot.sent[0]["reply_markup"]
     assert isinstance(markup, InlineKeyboardMarkup)
     approve, reject, revise = markup.inline_keyboard[0]
