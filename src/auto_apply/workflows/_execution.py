@@ -56,6 +56,11 @@ class RepairTrigger:
     snapshot_key: str
     form_hash: str
     failed_version: int
+    failure_reason: str
+    # BrowserActivities 가 details=[snapshot_key, form_hash, failed_action_index] 로 실어
+    # 보낸다 — 옛 details 모양(2개)만 있는 경우를 대비해 None 허용(domain/recipe_repair.py
+    # bump_goto_timeout 이 없으면 결정론적 경로를 건너뛰고 LLM 경로로 떨어진다).
+    failed_action_index: int | None
 
 
 @dataclass(frozen=True)
@@ -198,11 +203,15 @@ async def _handle_execution_failure(
     failure_type, reason = activity_failure(e)
     snapshot_key = ""
     form_hash = ""
+    failed_action_index: int | None = None
     cause = e.cause
     if failure_type == "RecipeExecutionError" and isinstance(cause, ApplicationError):
-        # BrowserActivities 가 details=[snapshot_key, form_hash] 로 실어 보낸다 (§2.4 repair 용).
+        # BrowserActivities 가 details=[snapshot_key, form_hash, failed_action_index] 로 실어
+        # 보낸다 (§2.4 repair 용).
         snapshot_key = str(cause.details[0]) if cause.details else ""
         form_hash = str(cause.details[1]) if len(cause.details) > 1 else recipe.form_hash
+        if len(cause.details) > 2 and cause.details[2] is not None:
+            failed_action_index = int(cause.details[2])
 
     # 부분 제출 위험 방어 (§5): 실행 activity 가 실패해도 실제로는 submit 이 됐을 수 있다.
     # dry_run 은 애초에 submit 을 안 하니 확인할 게 없다.
@@ -233,7 +242,13 @@ async def _handle_execution_failure(
         detail=reason,
     )
     repair = (
-        RepairTrigger(snapshot_key=snapshot_key, form_hash=form_hash, failed_version=recipe.version)
+        RepairTrigger(
+            snapshot_key=snapshot_key,
+            form_hash=form_hash,
+            failed_version=recipe.version,
+            failure_reason=reason,
+            failed_action_index=failed_action_index,
+        )
         if failure_type == "RecipeExecutionError" and snapshot_key
         else None
     )

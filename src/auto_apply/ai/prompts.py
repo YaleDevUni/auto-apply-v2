@@ -122,6 +122,15 @@ def build_recipe_diff_prompt(
     한다 — 전체를 새로 설계하지 말고 실패한 지점만 고치라고 명시한다(Recipe/가이드 patch와 같은
     "최소 변경" 철학). `expected_elements`/`validation_rules`는 코드가 그대로 들고 가므로
     (domain/recipe_repair.py) 프롬프트에 안 보여준다 — LLM이 건드릴 필드가 아니다.
+
+    `failure_detail`은 실제 실패 사유 문자열(activity_failure()의 reason)이어야 한다 — 예전엔
+    `propose_recipe_diff`가 이 자리에 실수로 form_hash 를 넣고 있어서 LLM이 왜 실패했는지
+    전혀 모른 채 diff 를 냈다(메모리 wanted-goto-timeout-misdiagnosed-as-recipe-bug). "timeout
+    이면 selector 를 건드리지 마라" 류의 지시는 일부러 안 넣는다 — Playwright 는 페이지 로드가
+    느려 나는 timeout 과 selector 가 아예 틀려 대상이 안 나타나 나는 timeout 을 똑같은 문구
+    ("Timeout Nms exceeded")로 낸다. 이 둘을 프롬프트 지시로 뭉뚱그리면 후자(진짜 셀렉터 문제)
+    를 못 고치게 막을 위험이 있고, LLM 이 그 지시를 얼마나 충실히 따를지도 보장이 없다 — 실제
+    실패 사유와 DOM 을 그대로 보여주고 판단은 LLM 에게 맡긴다.
     """
     actions_json = previous.model_dump_json(include={"actions", "success_signals"}, indent=2)
     snapshot = snapshot_html[:_SNAPSHOT_CHAR_LIMIT]

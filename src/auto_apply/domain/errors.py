@@ -14,12 +14,21 @@ class TerminalError(AutoApplyError):
 
 
 class RecipeExecutionError(TerminalError):
-    """Recipe 가 현재 DOM 과 맞지 않음 → AutomationRepairWorkflow 로 넘긴다."""
+    """Recipe 가 현재 DOM 과 맞지 않음 → AutomationRepairWorkflow 로 넘긴다.
 
-    def __init__(self, message: str, *, snapshot_key: str, form_hash: str) -> None:
+    `failed_action_index`는 실패한 action 의 `recipe.actions` 인덱스다 — repair 가 "이 실패가
+    goto 액션에서 난 timeout 인가"를 결정론적으로 판정할 때 쓴다(domain/recipe_repair.py
+    `bump_goto_timeout`). goto 는 selector 가 아예 없는 액션이라, 이 인덱스로 그 사실을 코드가
+    직접 확인할 수 있으면 LLM 판단 없이도 안전하게 timeout_ms 만 올려볼 수 있다.
+    """
+
+    def __init__(
+        self, message: str, *, snapshot_key: str, form_hash: str, failed_action_index: int
+    ) -> None:
         super().__init__(message)
         self.snapshot_key = snapshot_key
         self.form_hash = form_hash
+        self.failed_action_index = failed_action_index
 
 
 class CaptchaEncountered(TerminalError):

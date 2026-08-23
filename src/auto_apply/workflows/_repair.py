@@ -37,6 +37,8 @@ async def run_repair(
                 form_hash=trigger.form_hash,
                 snapshot_key=trigger.snapshot_key,
                 failed_version=trigger.failed_version,
+                failure_reason=trigger.failure_reason,
+                failed_action_index=trigger.failed_action_index,
                 ctx=ctx,
             ),
             id=f"repair-{platform}-{trigger.form_hash}",

@@ -15,7 +15,12 @@ from auto_apply.ai.schemas import RecipeDiffSchema
 from auto_apply.contracts.dto import PromoteRecipeInput, RecipeDiffResult, RepairInput
 from auto_apply.contracts.recipe import AutomationRecipe
 from auto_apply.domain.errors import AutoApplyError, LLMSchemaViolation, PolicyViolation
-from auto_apply.domain.recipe_repair import build_candidate_recipe
+from auto_apply.domain.recipe_repair import (
+    FailureCategory,
+    build_candidate_recipe,
+    bump_goto_timeout,
+    classify_failure,
+)
 from auto_apply.ports.llm import LLMClient
 from auto_apply.ports.recipe_source import RecipeSource
 from auto_apply.ports.storage import BlobStore
@@ -45,6 +50,16 @@ class RepairActivities:
             raise PolicyViolation(f"{req.platform} v{req.failed_version}: 이전 버전을 찾을 수 없다")
         next_version = max((v.version for v in versions), default=req.failed_version) + 1
 
+        # goto 액션의 timeout 은 LLM 없이도 코드가 안전하게 판정할 수 있는 유일한 케이스다
+        # (domain/recipe_repair.bump_goto_timeout 참고) — 해당되면 LLM 호출 자체를 생략한다.
+        if (
+            classify_failure(req.failure_reason) is FailureCategory.TIMEOUT
+            and req.failed_action_index is not None
+        ):
+            bumped = bump_goto_timeout(previous, req.failed_action_index, version=next_version)
+            if bumped is not None:
+                return RecipeDiffResult(candidate=bumped, previous=previous)
+
         try:
             snapshot_html = (await self._store.get(req.snapshot_key)).decode(
                 "utf-8", errors="replace"
@@ -52,7 +67,9 @@ class RepairActivities:
         except AutoApplyError:
             snapshot_html = "(스냅샷을 불러오지 못했다)"
 
-        prompt = build_recipe_diff_prompt(previous, snapshot_html, req.form_hash)
+        prompt = build_recipe_diff_prompt(
+            previous, snapshot_html, req.failure_reason or "(사유 미상)"
+        )
         candidate = await self._propose_with_reprompt(prompt, previous, next_version)
         return RecipeDiffResult(candidate=candidate, previous=previous)
 

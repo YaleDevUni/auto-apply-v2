@@ -66,6 +66,8 @@ class AutomationRepairWorkflow:
     @workflow.run
     async def run(self, req: RepairInput) -> RepairResult:
         snapshot_key = req.snapshot_key
+        failure_reason = req.failure_reason
+        failed_action_index = req.failed_action_index
         candidate: AutomationRecipe | None = None
 
         await workflow.execute_activity(
@@ -89,6 +91,8 @@ class AutomationRepairWorkflow:
                         form_hash=req.form_hash,
                         snapshot_key=snapshot_key,
                         failed_version=req.failed_version,
+                        failure_reason=failure_reason,
+                        failed_action_index=failed_action_index,
                         ctx=req.ctx,
                     ),
                     task_queue=QUEUE_AI,
@@ -121,6 +125,14 @@ class AutomationRepairWorkflow:
                     cause = e.cause
                     if isinstance(cause, ApplicationError) and cause.details:
                         snapshot_key = str(cause.details[0])
+                        if len(cause.details) > 2 and cause.details[2] is not None:
+                            failed_action_index = int(cause.details[2])
+                        else:
+                            failed_action_index = None
+                    # 다음 시도의 [실패 사유]를 이번 샌드박스 실패로 갱신한다 — 안 갱신하면
+                    # 재프롬프트가 계속 최초 실패 사유(예: 이미 고쳐진 timeout)를 보고 판단해
+                    # 이번에 새로 난 실패(예: 다른 selector 문제)를 놓친다.
+                    failure_reason = reason
                     candidate = None
                     continue
                 return await self._give_up(req, f"샌드박스 dry-run 실패: {reason}")
