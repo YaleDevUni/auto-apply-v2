@@ -3,35 +3,34 @@
 워크플로우 시작)은 전부 여기 있다. `agent.py`가 이 파일을 계속 늘리면 "루프 오케스트레이션"과
 "도구 구현"이라는 다른 책임이 한 파일에 섞여서 분리했다(§ CLAUDE.md "한 파일 = 한 책임").
 
-행동성 도구 중 `resend_pending_decision`은 워크플로우를 직접 mutate 하지 않는다 — 기존 승인
-버튼의 nonce(`ApplicationWorkflow.pending_decision` query)를 그대로 실어 원래 버튼과 동일하게
-동작하는 메시지를 다시 보낼 뿐이다. `start_applications`/`apply_by_url`은 실제로
-`ApplicationWorkflow`를 새로 "시작"한다(전자는 2026-08-21 "상주 에이전트가 알아서 몇 건
-지원해줘" 요청, 후자는 같은 날 "링크 보내면 지원 프로세스 도는 기능 있냐"는 질문에서 이어진
-요청으로 설계·구현, `apply_intake.py`) — 하지만 그 워크플로우 자체가 실제 제출 전 텔레그램
-승인을 기다리게 돼 있어서 최종 submit은 여전히 사람이 버튼을 누르는 순간에만 일어난다. 즉
-CLAUDE.md 절대규칙 4("되돌릴 수 없는 행위는 사람 승인 뒤에서만")를 자연어 오인식 경로로
-우회하지 않는다는 불변식은 세 도구 모두 지킨다 — "워크플로우를 안 건드린다"가 아니라 "제출은
-못 건드린다"가 진짜 불변식이다. `apply_by_url`은 추가로 플랫폼을 wanted 로만 한정한다
-(`apply_intake._APPLY_BY_URL_PLATFORMS` 참고 — saramin 은 아직 임의 링크를 사람 개입 없이
-실행 트리거하기엔 라이브 검증이 부족하다는 판단).
+`start_applications`/`apply_by_url`은 실제로 `ApplicationWorkflow`를 새로 "시작"한다(전자는
+2026-08-21 "상주 에이전트가 알아서 몇 건 지원해줘" 요청, 후자는 같은 날 "링크 보내면 지원
+프로세스 도는 기능 있냐"는 질문에서 이어진 요청으로 설계·구현, `apply_intake.py`) — 하지만
+그 워크플로우 자체가 실제 제출 전 텔레그램 승인을 기다리게 돼 있어서 최종 submit은 여전히
+사람이 버튼을 누르는 순간에만 일어난다. 즉 CLAUDE.md 절대규칙 4("되돌릴 수 없는 행위는 사람
+승인 뒤에서만")를 자연어 오인식 경로로 우회하지 않는다는 불변식은 두 도구 모두 지킨다 —
+"워크플로우를 안 건드린다"가 아니라 "제출은 못 건드린다"가 진짜 불변식이다. `apply_by_url`은
+추가로 플랫폼을 wanted 로만 한정한다(`apply_intake._APPLY_BY_URL_PLATFORMS` 참고 — saramin 은
+아직 임의 링크를 사람 개입 없이 실행 트리거하기엔 라이브 검증이 부족하다는 판단).
 
-`collect_now`(`_agent_tools_collect.py`)는 이 셋과 달리 `JobCollectionWorkflow`만 시작한다 —
+`collect_now`(`_agent_tools_collect.py`)는 위 둘과 달리 `JobCollectionWorkflow`만 시작한다 —
 지원(`ApplicationWorkflow`)과 아예 무관해서 위 불변식 논의 대상도 아니다.
+
+`resend_pending_decision`/`resend_all_pending_decisions`(`_agent_tools_resend.py`)도
+워크플로우를 직접 mutate 하지 않는다 — 기존 승인 버튼의 nonce를 그대로 실어 원래 버튼과
+동일하게 동작하는 메시지를 다시 보낼 뿐이다(그 파일 docstring 참고).
 """
 
 from collections.abc import Awaitable, Callable
-from typing import Protocol, runtime_checkable
 
 from temporalio.client import Client
-from temporalio.service import RPCError
 
 from auto_apply.apply_intake import apply_by_url, start_actionable_applications
 from auto_apply.bootstrap import Container
 from auto_apply.domain.chat_agent import ToolCatalogEntry
 from auto_apply.telegram._agent_tools_collect import COLLECT_TOOLS
+from auto_apply.telegram._agent_tools_resend import RESEND_TOOLS
 from auto_apply.telegram._agent_tools_schedule import SCHEDULE_TOOLS
-from auto_apply.workflows.application import ApplicationWorkflow
 
 ToolHandler = Callable[[dict[str, str], Container, Client], Awaitable[str]]
 
@@ -44,16 +43,6 @@ _DEFAULT_LIMIT = 5
 _MIN_APPLY_COUNT = 1
 _MAX_APPLY_COUNT = 10
 _DEFAULT_APPLY_COUNT = 3
-
-
-@runtime_checkable
-class _ResendableNotifier(Protocol):
-    """`resend_pending_decision` 도구가 쓰는 구조적 계약 — telegram/bridge.py 의
-
-    `_RevisableNotifier`와 같은 이유로 구체 타입(`TelegramNotifier`)을 이름으로 가리키지 않는다.
-    """
-
-    async def resend_decision(self, application_id: str, nonce: str) -> None: ...
 
 
 def _parse_limit(raw: str) -> int:
@@ -117,24 +106,6 @@ async def _list_recipe_versions(args: dict[str, str], c: Container, _client: Cli
     return "\n".join(f"v{r.version}: {r.status}" for r in versions)
 
 
-async def _resend_pending_decision(args: dict[str, str], c: Container, client: Client) -> str:
-    application_id = args.get("application_id", "").strip()
-    if not application_id:
-        return "application_id가 필요합니다."
-    try:
-        handle = client.get_workflow_handle(f"application-{application_id}")
-        view = await handle.query(ApplicationWorkflow.pending_decision)
-    except RPCError as e:
-        return f"{application_id}: 워크플로우를 찾을 수 없습니다 ({e.message})"
-    if not view.has_pending:
-        return f"{application_id}: 대기 중인 승인이 없습니다."
-    # 이 함수는 c.settings.notifier == "telegram" 일 때만 불린다(bridge.handle_message 가 먼저
-    # 걸러준다) — bridge.py 의 `_telegram(c)` 와 같은 불변식.
-    assert isinstance(c.notifier, _ResendableNotifier)
-    await c.notifier.resend_decision(application_id, view.nonce)
-    return f"{application_id}: 승인 버튼을 다시 보냈습니다."
-
-
 async def _start_applications(args: dict[str, str], c: Container, client: Client) -> str:
     count = _parse_apply_count(args.get("count", ""))
     dry_run = _parse_bool(args.get("dry_run", ""))
@@ -190,12 +161,6 @@ TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
         ("platform",),
         _list_recipe_versions,
     ),
-    "resend_pending_decision": (
-        "승인 대기 중인 지원 건의 승인/거절/수정요청 버튼을 다시 보낸다"
-        " (직접 승인/거절하지 않는다 — 사람이 버튼을 눌러야 한다)",
-        ("application_id",),
-        _resend_pending_decision,
-    ),
     "start_applications": (
         "최근 24시간 내 수집된 지원 가능 공고 중 적합도 상위 N건에 대해 지원 워크플로우를 새로"
         " 시작한다(이미 시작했던 공고는 자동으로 건너뜀). '3건 지원해줘', '제출해줘 5개' 같은"
@@ -220,6 +185,9 @@ TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
     **SCHEDULE_TOOLS,
     # 공고 수집 즉시 실행(collect_now)은 _agent_tools_collect.py 에서 구현(§ 그 파일 docstring).
     **COLLECT_TOOLS,
+    # 승인 버튼 재전송(resend_pending_decision/resend_all_pending_decisions)은
+    # _agent_tools_resend.py 에서 구현(§ 그 파일 docstring).
+    **RESEND_TOOLS,
 }
 
 # 실측(2026-08-21): "지원시작 2건정도" 한 턴에서 chat_llm(Haiku, 저렴한 분류 모델)이

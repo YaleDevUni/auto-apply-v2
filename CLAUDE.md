@@ -494,3 +494,21 @@ hour, minute, count)`. 이 작업 중 라이브로 실측한 버그 둘: (1) `Sc
 (`test_ensure_update_preserves_paused_state`, 실제 Temporal로 검증). 구현·contract test(3
 백엔드)·Alembic 마이그레이션 upgrade/downgrade 왕복·유닛/통합 테스트·`make check` 통과 완료.
 자세한 설계는 ARCHITECTURE.md §11.2f(갱신본).
+
+**승인 대기 중인 지원 건 일괄 재전송** (2026-08-23) — 텔레그램 리스너가 SIGTERM으로 죽었다
+재기동된 직후 세션에서 나온 요청. 기존 `resend_pending_decision` 도구는 application_id를
+미리 알아야 했는데, 리스너가 잠깐 꺼져 있던 동안 눌렸을 버튼을 재기동 후 복구하려는 상황에선
+애초에 어떤 지원 건이 대기 중인지부터 모른다는 게 갭이었다. 새 `pending_decisions.py`(운영
+진입점, 새 port 없음 — `cli.py`/`watchdog.py`와 같은 계층)의 `find_pending_decisions`가
+Temporal visibility API(`WorkflowType = 'ApplicationWorkflow' AND ExecutionStatus =
+'Running'`)로 실행 중인 지원 워크플로우를 전부 훑어 각각의 `pending_decision` query가
+`has_pending`인 것만 추리고, `resend_all`이 그걸 전부 재전송한다 — watchdog.py가 *닫힌*
+워크플로우를 찾는 것과 반대로 이건 아직 RUNNING인 것 중에서 고른다. `resend_decision`은
+Notifier port 표면에 없는 TelegramNotifier 전용 메서드라(§11.6) 여기서도
+`telegram/bridge.py`의 `_RevisableNotifier`와 같은 구조적 Protocol(`ResendableNotifier`)로만
+가리킨다. `cli.py`의 `resend-pending` 명령(NOTIFIER=telegram 아니면 안내만 하고 끝)과 텔레그램
+채팅 도구 `resend_all_pending_decisions`(기존 단일 재전송 도구도 함께
+`telegram/_agent_tools_resend.py`로 옮김 — `_agent_tools.py`가 200줄을 넘어서)가 같은 로직을
+공유한다. 유닛 테스트(fake client) + `WorkflowType`/`ExecutionStatus` visibility 필터 자체가
+실제로 동작하는지 확인하는 실제 Temporal 서버 통합 테스트(watchdog.py의 실측 테스트와 같은
+이유로 `start_local()`, `@pytest.mark.temporal`)까지 구현·`make check` 통과 완료.

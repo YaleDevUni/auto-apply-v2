@@ -20,6 +20,7 @@ from auto_apply.contracts.dto import (
     StartApplication,
 )
 from auto_apply.contracts.job import CollectJobsInput
+from auto_apply.pending_decisions import ResendableNotifier, resend_all
 from auto_apply.schedule import delete_apply_intake_schedule, delete_job_collection_schedule
 from auto_apply.schedule_config import ensure as ensure_schedule
 from auto_apply.temporal_config import DATA_CONVERTER, QUEUE_DEFAULT
@@ -84,6 +85,22 @@ async def _run(args: argparse.Namespace) -> None:
     if args.command == "apply-unschedule":
         await delete_apply_intake_schedule(client)
         print("deleted")
+        return
+
+    if args.command == "resend-pending":
+        # resend_decision 은 TelegramNotifier 전용이라(§11.6) NOTIFIER=telegram 이 아니면
+        # 재전송할 대상 자체가 없다 — ConsoleNotifier 는 애초에 signal 명령을 그 자리에서
+        # 찍어주므로 "다시 보여줄" 개념이 없다(§ pending_decisions.py docstring).
+        container = build_container(cfg)
+        if not isinstance(container.notifier, ResendableNotifier):
+            print(f"NOTIFIER={cfg.notifier} 는 재전송을 지원하지 않습니다 (telegram만 가능).")
+            return
+        pending = await resend_all(client, container.notifier)
+        if not pending:
+            print("대기 중인 승인이 없습니다.")
+        else:
+            for p in pending:
+                print(f"resent: {p.application_id}")
         return
 
     wf_id = f"application-{args.id}"
@@ -180,6 +197,11 @@ def main() -> None:
         help="자동 지원 시작 Schedule 등록/갱신 (APPLY_SCHEDULE_CRON/_COUNT 사용, idempotent)",
     )
     sub.add_parser("apply-unschedule", help="자동 지원 시작 Schedule 삭제")
+
+    sub.add_parser(
+        "resend-pending",
+        help="승인 대기 중인 지원 건을 전부 찾아 승인/거절/수정요청 버튼을 다시 전송 (telegram만)",
+    )
 
     asyncio.run(_run(parser.parse_args()))
 
