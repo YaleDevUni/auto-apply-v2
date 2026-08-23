@@ -60,10 +60,10 @@ class _FakeClient:
 
 class _FakeNotifier:
     def __init__(self) -> None:
-        self.resent: list[tuple[str, str]] = []
+        self.resent: list[tuple[str, str, str]] = []
 
-    async def resend_decision(self, application_id: str, nonce: str) -> None:
-        self.resent.append((application_id, nonce))
+    async def resend_decision(self, application_id: str, nonce: str, *, label: str = "") -> None:
+        self.resent.append((application_id, nonce, label))
 
 
 async def test_find_pending_decisions_keeps_only_the_ones_with_a_pending_nonce():
@@ -118,11 +118,37 @@ async def test_resend_all_resends_every_pending_decision_and_returns_them():
 
     pending = await resend_all(client, notifier)  # type: ignore[arg-type]
 
-    assert sorted(notifier.resent) == [("app_1", "n1"), ("app_2", "n2")]
+    # company/title 이 없는 view 는 application_id 를 label 로 fallback 한다.
+    assert sorted(notifier.resent) == [("app_1", "n1", "app_1"), ("app_2", "n2", "app_2")]
     assert pending == [
         PendingDecision(application_id="app_1", nonce="n1"),
         PendingDecision(application_id="app_2", nonce="n2"),
     ]
+
+
+async def test_resend_all_uses_company_and_title_as_the_label_when_present():
+    """id 만 봐선 어떤 공고인지 알 수 없다는 문제 — company/title 이 있으면 그걸 label 로 쓴다."""
+    client = _FakeClient(
+        executions=[_FakeExecution(id="application-app_1", run_id="r1")],
+        handles={
+            "application-app_1": _FakeHandle(
+                PendingDecisionView(
+                    has_pending=True, nonce="n1", company="Fixture Inc.", title="백엔드 엔지니어"
+                )
+            ),
+        },
+    )
+    notifier = _FakeNotifier()
+
+    pending = await resend_all(client, notifier)  # type: ignore[arg-type]
+
+    assert notifier.resent == [("app_1", "n1", "Fixture Inc. - 백엔드 엔지니어")]
+    assert pending == [
+        PendingDecision(
+            application_id="app_1", nonce="n1", company="Fixture Inc.", title="백엔드 엔지니어"
+        )
+    ]
+    assert pending[0].label == "Fixture Inc. - 백엔드 엔지니어"
 
 
 async def test_resend_all_does_nothing_when_nothing_is_pending():

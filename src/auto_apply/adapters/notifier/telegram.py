@@ -197,17 +197,19 @@ class TelegramNotifier:
                 chat_id=chat_id, text=cancel_text, reply_markup=cancel_keyboard
             )
 
-    async def resend_decision(self, application_id: str, nonce: str) -> None:
+    async def resend_decision(self, application_id: str, nonce: str, *, label: str = "") -> None:
         """대기 중인 승인 요청의 버튼을 다시 보낸다 — 새 nonce 를 발급하지 않는다.
 
         텔레그램 채팅 에이전트의 `resend_pending_decision` 도구가 쓴다(telegram/agent.py).
         새 워크플로우 signal 을 만드는 대신 워크플로우가 이미 들고 있는 nonce
         (`ApplicationWorkflow.pending_decision` query)를 그대로 실어 원래 버튼과 동일하게
         동작하는 메시지를 다시 보낸다 — 자연어 요청이 실제 승인/거절을 대신하지 않는다
-        (CLAUDE.md 절대규칙 4).
+        (CLAUDE.md 절대규칙 4). `label`은 회사/직무처럼 사람이 읽을 수 있는 표시명이다
+        (`pending_decisions._label`) — application_id 는 해시라 목록만 보고는 어떤 공고인지
+        알 수 없었다(2026-08-23). 없으면 application_id로 표시한다.
         """
         keyboard = _keyboard(application_id, nonce)
-        text = f"⏳ 대기 중인 승인 요청을 다시 보냅니다: {application_id}"
+        text = f"⏳ 대기 중인 승인 요청을 다시 보냅니다: {label or application_id}"
         for chat_id in self._chat_ids:
             await self._bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
 

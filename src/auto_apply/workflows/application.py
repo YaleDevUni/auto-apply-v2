@@ -83,6 +83,9 @@ class ApplicationWorkflow:
         self._scheduled_at: datetime | None = None
         self._cancelled = False
         self._attempts = 0
+        # pending_decision query 가 사람이 읽을 수 있는 라벨(회사/직무)을 돌려주려면 필요하다
+        # (§ contracts/dto.py PendingDecisionView 참고) — job 자체는 run() 지역변수라 별도 보관.
+        self._job: JobRef | None = None
 
     # ─────────────────────────── run ───────────────────────────
     @workflow.run
@@ -93,6 +96,7 @@ class ApplicationWorkflow:
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_QUICK,
         )
+        self._job = job
 
         await self._persist(cmd, ApplicationState.EVALUATING)
         verdict = await workflow.execute_activity(
@@ -493,4 +497,6 @@ class ApplicationWorkflow:
         """
         pending = self._decision is None and self._decision_nonce is not None
         nonce = self._decision_nonce if pending and self._decision_nonce else ""
-        return PendingDecisionView(has_pending=pending, nonce=nonce)
+        company = self._job.company if self._job else ""
+        title = self._job.title if self._job else ""
+        return PendingDecisionView(has_pending=pending, nonce=nonce, company=company, title=title)

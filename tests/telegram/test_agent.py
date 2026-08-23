@@ -27,7 +27,7 @@ class _FakeNotifier:
     async def notify(self, event: NotifyEvent) -> None:
         self.notified.append(event)
 
-    async def resend_decision(self, application_id: str, nonce: str) -> None:
+    async def resend_decision(self, application_id: str, nonce: str, *, label: str = "") -> None:
         self.resent.append((application_id, nonce))
 
 

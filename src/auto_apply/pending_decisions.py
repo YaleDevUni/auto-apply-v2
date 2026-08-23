@@ -36,15 +36,33 @@ _WORKFLOW_ID_PREFIX = "application-"
 _QUERY = "WorkflowType = 'ApplicationWorkflow' AND ExecutionStatus = 'Running'"
 
 
+def decision_label(company: str, title: str, application_id: str) -> str:
+    """사람이 읽을 만한 표시명. 회사/직무 정보가 없으면(오래된 워크플로우 등)
+
+    application_id(해시)로 fallback한다 — 예전엔 이게 유일한 표시값이라 목록을 봐도 어떤
+    공고인지 알 수 없었다(2026-08-23, 사용자 지적).
+    """
+    parts = [p for p in (company, title) if p]
+    return " - ".join(parts) if parts else application_id
+
+
 @dataclass(frozen=True)
 class PendingDecision:
     application_id: str
     nonce: str
+    company: str = ""
+    title: str = ""
+
+    @property
+    def label(self) -> str:
+        return decision_label(self.company, self.title, self.application_id)
 
 
 @runtime_checkable
 class ResendableNotifier(Protocol):
-    async def resend_decision(self, application_id: str, nonce: str) -> None: ...
+    async def resend_decision(
+        self, application_id: str, nonce: str, *, label: str = ""
+    ) -> None: ...
 
 
 async def find_pending_decisions(client: Client) -> list[PendingDecision]:
@@ -61,7 +79,14 @@ async def find_pending_decisions(client: Client) -> list[PendingDecision]:
             log.warning("pending_decisions.query_failed", workflow_id=execution.id, error=e.message)
             continue
         if view.has_pending:
-            found.append(PendingDecision(application_id=application_id, nonce=view.nonce))
+            found.append(
+                PendingDecision(
+                    application_id=application_id,
+                    nonce=view.nonce,
+                    company=view.company,
+                    title=view.title,
+                )
+            )
     return found
 
 
@@ -69,5 +94,5 @@ async def resend_all(client: Client, notifier: ResendableNotifier) -> list[Pendi
     """대기 중인 것들을 찾아 전부 재전송하고, 재전송한 목록을 그대로 돌려준다."""
     pending = await find_pending_decisions(client)
     for p in pending:
-        await notifier.resend_decision(p.application_id, p.nonce)
+        await notifier.resend_decision(p.application_id, p.nonce, label=p.label)
     return pending

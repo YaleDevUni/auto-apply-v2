@@ -101,11 +101,16 @@ class PendingDecisionView(_Frozen):
     """워크플로우 query 응답. 텔레그램 채팅 에이전트의 `resend_pending_decision` 도구가 쓴다
 
     (telegram/agent.py). nonce 는 워크플로우 밖으로 나가는 유일한 통로가 이 query 다 — signal
-    검증(§6)과 달리 여기선 그냥 읽어서 기존 버튼을 다시 보내는 데만 쓴다.
+    검증(§6)과 달리 여기선 그냥 읽어서 기존 버튼을 다시 보내는 데만 쓴다. company/title은
+    application_id(해시)만 봐선 어떤 공고인지 알 수 없다는 문제(재기동 후 일괄 재전송 시 사람이
+    읽는 목록에 해시만 뜨던 것) 때문에 추가했다 — `ApplicationWorkflow`가 `collect_job`으로 이미
+    받아둔 job 정보를 그대로 노출할 뿐, 새로 조회하지 않는다.
     """
 
     has_pending: bool
     nonce: str = ""
+    company: str = ""
+    title: str = ""
 
 
 class ApplicationSummary(_Frozen):
