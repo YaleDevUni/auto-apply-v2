@@ -98,18 +98,26 @@ async def poll_once(
     async for execution in client.list_workflows(build_query(since)):
         hit = to_hit(execution)
         key = (hit.workflow_id, hit.run_id)
-        if hit.close_time and hit.close_time > watermark:
-            watermark = hit.close_time
         if key in seen:
+            if hit.close_time and hit.close_time > watermark:
+                watermark = hit.close_time
             continue
-        seen.add(key)
         log.warning(
             "watchdog.unhealthy_workflow",
             workflow_id=hit.workflow_id,
             run_id=hit.run_id,
             status=hit.status,
         )
+        # notify()가 실패하면 여기서 예외가 위로 던져진다 — seen/watermark 를 그 *뒤*에
+        # 갱신하는 게 핵심이다. notify 전에 seen 에 넣어버리면, 알림이 안 나갔는데도 다음
+        # 폴링이 "이미 처리함"으로 skip 해서 알림이 영영 유실된다(그 폴링 자체는 예외 없이
+        # 끝나서 바깥의 연속 실패 카운트도 리셋돼 blind_alert 임계치에도 안 닿는다).
+        # 실패한 hit 은 seen 에도 안 들어가고 watermark 도 안 전진하므로, 다음 폴링에서
+        # (같은 since 이하 구간이 다시 조회되어) 그대로 재시도된다.
         await notifier.notify(NotifyEvent(kind="WORKFLOW_UNHEALTHY", message=format_message(hit)))
+        seen.add(key)
+        if hit.close_time and hit.close_time > watermark:
+            watermark = hit.close_time
     return watermark
 
 

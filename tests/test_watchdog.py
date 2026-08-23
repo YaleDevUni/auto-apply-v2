@@ -135,6 +135,54 @@ async def test_poll_once_notifies_and_advances_watermark_on_new_hit():
     assert watermark == datetime(2026, 8, 20, 5, 0, 0, tzinfo=UTC)
 
 
+async def test_poll_once_retries_hit_on_next_poll_when_notify_fails():
+    """notify() 가 실패하면 seen/watermark 를 전진시키지 않아야 다음 폴링이 재시도한다.
+
+    notify 전에 seen 에 넣어버리면, 텔레그램이 잠깐 죽은 사이 알림이 영영 유실된다
+    (watchdog.py:poll_once 의 주석 참고).
+    """
+    hit_key = ("application-3", "run-3")
+
+    class _OneHitClient:
+        def list_workflows(self, query: str) -> object:
+            async def _iter():
+                yield _FakeExecution(
+                    id="application-3",
+                    run_id="run-3",
+                    status=_FakeStatus("FAILED"),
+                    close_time=datetime(2026, 8, 20, 6, 0, 0, tzinfo=UTC),
+                )
+
+            return _iter()
+
+    class _FailOnceNotifier:
+        def __init__(self) -> None:
+            self.events: list = []
+            self._calls = 0
+
+        async def notify(self, event) -> None:
+            self._calls += 1
+            if self._calls == 1:
+                raise RuntimeError("telegram down")
+            self.events.append(event)
+
+    notifier = _FailOnceNotifier()
+    since = datetime(2026, 8, 19, tzinfo=UTC)
+    seen: set[tuple[str, str]] = set()
+
+    with pytest.raises(RuntimeError):
+        await poll_once(_OneHitClient(), notifier, since, seen)  # type: ignore[arg-type]
+
+    assert hit_key not in seen  # 실패한 hit 은 seen 에 안 들어간다
+    assert notifier.events == []
+
+    watermark = await poll_once(_OneHitClient(), notifier, since, seen)  # type: ignore[arg-type]
+
+    assert len(notifier.events) == 1  # 다음 폴링에서 재시도되어 실제로 알림이 나갔다
+    assert hit_key in seen
+    assert watermark == datetime(2026, 8, 20, 6, 0, 0, tzinfo=UTC)
+
+
 @pytest.mark.temporal
 async def test_poll_once_finds_a_real_failed_workflow_via_visibility_api():
     async with await WorkflowEnvironment.start_local(data_converter=DATA_CONVERTER) as env:
