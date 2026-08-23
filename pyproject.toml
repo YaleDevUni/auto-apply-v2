@@ -171,9 +171,28 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+# 운영 진입점 계층(telegram/·cli·watchdog·worker·schedule*·apply_intake·process_alerts·
+# resume_cleanup)은 원래 어떤 계약에도 안 걸려 있었다. 계층 규칙이 강한 곳(domain/ports/
+# workflows)을 피해 새 기능이 전부 이 무규칙 지대로 흘러드는 압력이 있어서(채팅 도구·스케줄·
+# 자동 지원이 실제로 그렇게 자랐다), 규칙을 새로 만들지 않고 **이미 있는 계약 하나**를 이
+# 층까지 넓히는 쪽을 택했다 — "어댑터를 만드는 곳은 bootstrap 하나"(CLAUDE.md 절대규칙급)는
+# 이 층에도 그대로 성립해야 하는 불변식이다. 그 외에는 자유롭게 둔다(이 층은 Temporal Client
+# SDK 를 직접 쓰는 게 정상이고, workflows/activities 를 import 하는 것도 정상이다).
 name = "어댑터 생성은 bootstrap 에서만"
 type = "forbidden"
 # bootstrap 을 '거쳐서' 닿는 것은 정상이다. 직접 import 만 금지한다.
 allow_indirect_imports = true
-source_modules = ["auto_apply.api", "auto_apply.activities"]
+source_modules = [
+    "auto_apply.api",
+    "auto_apply.activities",
+    "auto_apply.telegram",
+    "auto_apply.cli",
+    "auto_apply.watchdog",
+    "auto_apply.worker",
+    "auto_apply.schedule",
+    "auto_apply.schedule_config",
+    "auto_apply.apply_intake",
+    "auto_apply.process_alerts",
+    "auto_apply.resume_cleanup",
+]
 forbidden_modules = ["auto_apply.adapters"]

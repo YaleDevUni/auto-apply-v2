@@ -1586,7 +1586,12 @@ port에서 새는 것은 보통 반환값이 아니라 예외다.
 - [ ] `workflows/`가 `contracts/` 외의 내부 모듈을 import 하지 않는다
 - [ ] 새 외부 의존성을 넣을 때 port를 먼저 정의했다
 - [ ] 모든 port에 구현이 2개 이상 (실제 + 테스트 대역)
-- [ ] 어댑터 생성 코드가 `bootstrap.py` 밖에 없다
+- [ ] 어댑터 생성 코드가 `bootstrap.py` 밖에 없다 — **운영 진입점 계층**(`telegram/`·`cli`·
+      `watchdog`·`worker`·`schedule*`·`apply_intake`·`process_alerts`·`resume_cleanup`)도
+      포함이다. 이 층은 원래 어떤 계약에도 안 걸려 있어서, 규칙이 강한 계층을 피해 새 기능이
+      전부 이쪽으로 흘러드는 압력이 있었다(채팅 도구·스케줄·자동 지원이 실제로 그렇게 자랐다).
+      새 규칙을 만드는 대신 이 계약 하나만 넓혀 걸었다(2026-08-23) — 나머지는 자유다:
+      Temporal Client SDK 직접 사용도, `workflows`/`activities` import도 정상이다.
 - [ ] port 시그니처에 벤더 타입이 노출되지 않는다 (`boto3` 객체, Anthropic `Message` 등)
 - [ ] 테스트 마커가 "무엇이 있어야 도는가"와 맞다 — `docker`(make up) / `native`(브라우저·시스템
       라이브러리) / `temporal`(테스트 서버, Docker 불필요라 `make check`에 포함) / 무마커(기본)

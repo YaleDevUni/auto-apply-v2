@@ -42,6 +42,9 @@ activities  port 주입받는 activity 구현
 workflows   contracts/domain 만 import
 bootstrap   ★ 어댑터를 생성하는 유일한 파일
 api         라우터는 컨테이너에서 꺼내 쓴다
+운영 진입점  telegram/·cli·watchdog·worker·schedule*·apply_intake·process_alerts·
+            resume_cleanup — Temporal Client SDK 를 직접 써도 되고 workflows 를 import 해도
+            된다. 단 **어댑터는 직접 만들지 않는다**(bootstrap 경유) — 이 층에 거는 유일한 계약
 ```
 
 ## 새 외부 의존성을 추가할 때 (순서를 지킬 것)
