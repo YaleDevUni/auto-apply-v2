@@ -7,8 +7,15 @@
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 from auto_apply.ai.schemas import AgentStep
+
+# 실제로 실행됐는지(done/failed)와 이번 턴에 중복이라 아예 안 돈 것(blocked)을 구분한다 —
+# 셋 다 "✅"로 뭉뚱그리면 모델이 실패한 도구 호출도 성공으로 읽고 사용자에게 그렇게 답한다
+# (/code-review finding #3: start_applications 가 실패했는데 "지원을 시작했습니다"로 답함).
+ToolCallStatus = Literal["done", "failed", "blocked"]
+_STATUS_GLYPH: dict[ToolCallStatus, str] = {"done": "✅", "failed": "⚠️", "blocked": "🔁"}
 
 # 실제로 진전을 낸 스텝(도구를 실행했거나 respond 한 스텝)의 상한. 원래 4였는데 "스케줄
 # 시각 바꾸고 켜줘"처럼 도구 2개가 필요한 요청이 매번 소진됐다(실측 2026-08-22).
@@ -54,8 +61,8 @@ def catalog_prefix(catalog: list[ToolCatalogEntry]) -> str:
     return "\n".join(lines)
 
 
-def build_prompt(user_text: str, transcript: list[tuple[AgentStep, str]]) -> str:
-    """이번 턴의 사용자 원문 + 지금까지 이번 턴에서 부른 (도구 호출, 관찰 결과) 를 이어붙인다.
+def build_prompt(user_text: str, transcript: list[tuple[AgentStep, str, ToolCallStatus]]) -> str:
+    """이번 턴의 사용자 원문 + 지금까지 이번 턴에서 부른 (도구 호출, 관찰 결과, 상태) 를 이어붙인다.
 
     `catalog_prefix`는 여기 안 들어간다 — `cache_prefix`로 따로 실려서 캐시 경계가 갈린다.
 
@@ -66,19 +73,25 @@ def build_prompt(user_text: str, transcript: list[tuple[AgentStep, str]]) -> str
     다시 고른다 — 실측(2026-08-22, claude CLI + haiku, 서로 다른 복합 요청 3건): 로그 형식은
     매번 중복 호출 3~4회, 아래 체크리스트 형식은 3건 모두 중복 0회였다. 중복은 코드가 막아
     실행되진 않지만(telegram/agent.py) 스텝 예산과 LLM 호출비를 태운다.
+
+    상태별로 다른 글리프를 쓴다 — 셋 다 ✅ 로 적으면 모델이 실패한 호출도 성공으로 읽는다
+    (finding #3). done(실제 성공)만 ✅, failed(실행됐지만 예외)는 ⚠️, blocked(이번 턴 중복이라
+    아예 안 돈 호출)는 🔁 로 구분한다.
     """
     lines = [f"사용자 요청: {user_text}", ""]
     if not transcript:
         lines.append("아직 아무 도구도 실행하지 않았습니다.")
         return "\n".join(lines)
-    lines.append("이미 완료한 도구 호출 (다시 부르면 무시됩니다):")
-    for i, (step, observation) in enumerate(transcript, 1):
-        lines.append(f"{i}. ✅ {step.tool}({step.tool_args})")
+    lines.append("지금까지 이번 턴에서 부른 도구 호출입니다 (다시 부르면 무시됩니다):")
+    for i, (step, observation, status) in enumerate(transcript, 1):
+        lines.append(f"{i}. {_STATUS_GLYPH[status]} {step.tool}({step.tool_args})")
         lines.append(f"   결과: {observation}")
     lines += [
         "",
-        "위 목록에 있는 호출은 이미 끝났습니다. 사용자 요청 중 아직 실행하지 않은 것이 남아"
-        ' 있으면 그 도구만 부르고, 남은 게 없으면 action="respond" 로 결과를 정리해 답하세요.',
+        "✅ 는 성공, ⚠️ 는 실패, 🔁 는 중복이라 실행되지 않은 호출입니다. 이미 나온 호출은"
+        " 다시 부르지 마세요 — ⚠️/🔁 라고 다른 인자로 다시 시도하지 말고, 실패했다면 실패했다고"
+        " 있는 그대로 답하세요. 사용자 요청 중 아직 시도하지 않은 것이 남아 있으면 그 도구만"
+        ' 부르고, 남은 게 없으면 action="respond" 로 결과를 정리해 답하세요.',
     ]
     return "\n".join(lines)
 

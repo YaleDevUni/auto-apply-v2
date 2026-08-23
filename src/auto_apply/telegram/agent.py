@@ -25,6 +25,7 @@ from auto_apply.contracts.dto import NotifyEvent
 from auto_apply.domain.chat_agent import (
     MAX_BLOCKED_STEPS,
     MAX_STEPS,
+    ToolCallStatus,
     build_fallback_message,
     build_prompt,
     catalog_prefix,
@@ -59,7 +60,7 @@ async def handle_chat(text: str, c: Container, client: Client) -> None:
     메시지를 보내고 조용히 끝난다(webhook 라우트가 500 을 내지 않도록).
     """
     prefix = catalog_prefix(catalog())
-    transcript: list[tuple[AgentStep, str]] = []
+    transcript: list[tuple[AgentStep, str, ToolCallStatus]] = []
     # 실측(2026-08-21, telegram-chat-agent-loop-duplicate-start-incident): "2건정도"라고
     # 했는데도 모델이 성공 관찰 결과를 보고 respond로 안 끝내고 같은 도구를 계속 다시 불러
     # start_applications가 한 턴에 여러 번(=요청보다 훨씬 많이) 실제 실행된 적이 있다.
@@ -82,14 +83,17 @@ async def handle_chat(text: str, c: Container, client: Client) -> None:
                 await c.notifier.notify(NotifyEvent(kind="CHAT", message=step.response))
                 return
             signature = (step.tool, tuple(sorted(step.tool_args.items())))
+            status: ToolCallStatus
             if signature in called_signatures:
                 blocked += 1
+                status = "blocked"
                 observation = (
                     f"{step.tool}({step.tool_args})는 이번 턴에 이미 같은 인자로 호출했습니다"
                     " — 다시 부르지 말고 위 결과로 답하세요."
                 )
             elif step.tool in SINGLE_SHOT_TOOLS and step.tool in called_tool_names:
                 blocked += 1
+                status = "blocked"
                 observation = (
                     f"{step.tool}는 이번 턴에 이미 실행했습니다 — 추가로 부르지 말고 위 결과를"
                     " 바탕으로 사용자에게 바로 답하세요."
@@ -99,9 +103,10 @@ async def handle_chat(text: str, c: Container, client: Client) -> None:
                 ok, observation = await _run_tool(step.tool, step.tool_args, c, client)
                 called_signatures.add(signature)
                 called_tool_names.add(step.tool)
+                status = "done" if ok else "failed"
                 if ok:
                     executed.append((step.tool, observation))
-            transcript.append((step, observation))
+            transcript.append((step, observation, status))
         await c.notifier.notify(NotifyEvent(kind="CHAT", message=build_fallback_message(executed)))
     except Exception as e:  # 이 함수는 예외를 던지지 않는다 — 모듈 docstring 참고
         log.warning("telegram.chat_agent.turn_failed", error=str(e))

@@ -37,7 +37,9 @@ def test_build_prompt_appends_tool_calls_in_order():
         action="call_tool", tool="get_application", tool_args={"application_id": "a1"}
     )
 
-    prompt = build_prompt("a1 어떻게 됐어?", [(step1, "3건"), (step2, "AWAITING_APPROVAL")])
+    prompt = build_prompt(
+        "a1 어떻게 됐어?", [(step1, "3건", "done"), (step2, "AWAITING_APPROVAL", "done")]
+    )
 
     lines = prompt.splitlines()
     first_idx = next(i for i, line in enumerate(lines) if "list_applications" in line)
@@ -61,10 +63,41 @@ def test_build_prompt_marks_finished_calls_and_restates_the_exit_condition():
     assert "respond" not in empty
     assert "아직 아무 도구도 실행하지 않았습니다" in empty
 
-    after = build_prompt("스케줄 상태", [(step, "공고 수집: 켜짐")])
-    assert "이미 완료한 도구 호출" in after
+    after = build_prompt("스케줄 상태", [(step, "공고 수집: 켜짐", "done")])
     assert "다시 부르면 무시됩니다" in after
     assert "respond" in after
+
+
+def test_build_prompt_marks_failed_calls_differently_from_done():
+    """/code-review finding #3 회귀: 실패/차단을 ✅ 로 뭉뚱그리면 모델이 실패도 성공으로 읽는다.
+
+    실제 사고 시나리오: start_applications 가 예외로 실패했는데 이전 코드는 ✅ 로 표시해서
+    모델이 "지원을 시작했습니다"로 답했다.
+    """
+    ok_step = AgentStep(action="call_tool", tool="start_applications", tool_args={"count": "2"})
+    failed_step = AgentStep(action="call_tool", tool="apply_by_url", tool_args={"url": "u"})
+    blocked_step = AgentStep(
+        action="call_tool", tool="start_applications", tool_args={"count": "2"}
+    )
+
+    prompt = build_prompt(
+        "지원 2건 시작해줘",
+        [
+            (ok_step, "2건 시작함", "done"),
+            (failed_step, "apply_by_url 실행 중 오류가 발생했습니다: boom", "failed"),
+            (blocked_step, "이미 같은 인자로 호출했습니다", "blocked"),
+        ],
+    )
+
+    lines = dict(enumerate(prompt.splitlines()))
+    done_idx = next(i for i, line in lines.items() if "start_applications" in line and i < 10)
+    failed_idx = next(i for i, line in lines.items() if "apply_by_url" in line)
+    blocked_idx = next(
+        i for i, line in lines.items() if "start_applications" in line and i > failed_idx
+    )
+    assert "✅" in lines[done_idx]
+    assert "⚠️" in lines[failed_idx] and "✅" not in lines[failed_idx]
+    assert "🔁" in lines[blocked_idx] and "✅" not in lines[blocked_idx]
 
 
 def test_fallback_message_apologizes_when_nothing_ran():
