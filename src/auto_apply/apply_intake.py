@@ -16,16 +16,19 @@ workflow 파일이 아니다) — 새 port를 만들지 않는다. `uow.jobs.act
 쓰는 게 중복지원 방어선이다(그 모듈 docstring 참고). 이 id로 `uow.applications.latest_states`를
 찔러 이미 이력이 있는 공고를 후보 선정 단계에서 미리 갈라낸다(`_partition_by_state`,
 2026-08-21 세션 사용자 요청 — "거절된 건 후순위로, 이미 지원한 건 미리 걸러야" 하지 않냐는
-지적으로 추가) — REJECTED/NEEDS_HUMAN(`_RETRYABLE_STATES`) 은 완전히 빼지는 않는다. 하지만
-둘의 취급은 다르다: REJECTED 는 사람이 그 공고 자체를 다시 안 보고 싶다는 뜻은 아닐 수 있어서
-신규 후보 뒤로 순위만 미루고, NEEDS_HUMAN 은 신규 후보와 완전히 동등하게 fit_score 순서에
-섞인다(2026-08-22, 사용자 요청 — "후순위로 하지마") — 실제 워크플로우 종료 경로
-(`workflows/application.py`, `workflows/_execution.py`)를 보면 NEEDS_HUMAN 으로 끝나는 모든
-경로가 submitted_at 을 None 으로만 남겨서(실행 activity 실패든 verify 미확인이든, 실제
-제출이 안 됐다고 확인됐을 때만 이 상태로 떨어진다 — §5 "부분 제출 위험 방어") 사람의 의사
-표현이 아니라 운영상 결함(예: recipe selector 변경, claude CLI 한도초과로 자동 수선 실패)일
-뿐이라서다(wanted 363152 공고 실측). 두 상태를 제외한 나머지(진행 중이든 COMPLETED 등 실제
-종결 상태든)는 여전히 "이미 지원 프로세스를 밟은 공고"로 보고 후보에서 아예 뺀다.
+지적으로 추가) — REJECTED/NEEDS_HUMAN/EXPIRED(`_RETRYABLE_STATES`) 은 완전히 빼지는 않는다.
+하지만 취급은 두 갈래다: REJECTED 는 사람이 그 공고 자체를 다시 안 보고 싶다는 뜻은 아닐 수
+있어서 신규 후보 뒤로 순위만 미루고, NEEDS_HUMAN/EXPIRED 는 신규 후보와 완전히 동등하게
+fit_score 순서에 섞인다(NEEDS_HUMAN 은 2026-08-22 사용자 요청 — "후순위로 하지마"; EXPIRED
+는 같은 논리가 그대로 적용되는데도 최초 구현 땐 이 집합에서 빠져 있었고, "지원워크플로우가
+expired 되도 재지원되냐"는 질문(2026-08-23)으로 갭이 드러나 같이 넣었다) — 실제 워크플로우
+종료 경로(`workflows/application.py`, `workflows/_execution.py`)를 보면 NEEDS_HUMAN 으로
+끝나는 모든 경로와 승인 대기 72시간 무응답으로 끝나는 EXPIRED 모두 submitted_at 을 None
+으로만 남겨서(실행 activity 실패든 verify 미확인이든, 실제 제출이 안 됐다고 확인됐을 때만
+이 상태로 떨어진다 — §5 "부분 제출 위험 방어") 사람의 의사 표현이 아니라 운영상 결함(예:
+recipe selector 변경, claude CLI 한도초과로 자동 수선 실패, 또는 단순 승인 지연)일 뿐이라서다
+(wanted 363152 공고 실측). 이 세 상태를 제외한 나머지(진행 중이든 COMPLETED 등 실제 종결
+상태든)는 여전히 "이미 지원 프로세스를 밟은 공고"로 보고 후보에서 아예 뺀다.
 
 실제 시작 호출은 `WorkflowIDReusePolicy.ALLOW_DUPLICATE`(Temporal 기본값)를 명시적으로 준다
 — 위 사전 필터와 시작 호출 사이의 경합(같은 공고에 거의 동시에 두 요청이 들어오는 경우)을
@@ -79,12 +82,17 @@ JOB_CACHE_TTL = timedelta(hours=24)
 # saramin 도 등록돼 있어(bootstrap._build_registry) for_url 만으로는 못 막는다.
 _APPLY_BY_URL_PLATFORMS = frozenset({"wanted"})
 
-# 재시도를 막지 않는(=완전히 배제하지 않는) 기존 이력 상태. NEEDS_HUMAN 은 submitted_at 이
-# 항상 None 인 채로만 끝나는 상태(위 docstring)라 "제출까지 가지 않은 이력"일 뿐 — 사람의
-# 의사 표현이 아니므로 신규 후보와 완전히 동등하게 취급한다(2026-08-22, 사용자 요청 —
-# "후순위로 하지마"). REJECTED 는 사람의 명시적 거절이라 신규 후보 뒤로 순위만 미루는
-# 기존 설계(2026-08-21) 그대로 둔다 — 둘의 취급이 갈리므로 하나의 집합으로 묶지 않는다.
-_RETRYABLE_STATES = frozenset({ApplicationState.REJECTED, ApplicationState.NEEDS_HUMAN})
+# 재시도를 막지 않는(=완전히 배제하지 않는) 기존 이력 상태. NEEDS_HUMAN/EXPIRED 는 submitted_at
+# 이 항상 None 인 채로만 끝나는 상태(위 docstring, workflows/application.py 의 _finish 가 둘을
+# 같은 알림 경로로 묶는 이유와 동일)라 "제출까지 가지 않은 이력"일 뿐 — 사람의 의사 표현이
+# 아니므로 신규 후보와 완전히 동등하게 취급한다(NEEDS_HUMAN 은 2026-08-22 사용자 요청 —
+# "후순위로 하지마"; EXPIRED 는 승인 대기 72시간 무응답으로만 발생해 같은 논리가 그대로
+# 적용되는데도 최초 구현 때 이 집합에서 빠져 있던 걸 2026-08-23 확인해 추가). REJECTED 는
+# 사람의 명시적 거절이라 신규 후보 뒤로 순위만 미루는 기존 설계(2026-08-21) 그대로 둔다 —
+# 셋의 취급이 두 갈래로 갈리므로 하나의 집합으로 묶지 않는다.
+_RETRYABLE_STATES = frozenset(
+    {ApplicationState.REJECTED, ApplicationState.NEEDS_HUMAN, ApplicationState.EXPIRED}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,18 +126,19 @@ def _partition_by_state(
     states: dict[str, ApplicationState],
     skipped: list[str],
 ) -> list[tuple[str, JobRecord]]:
-    """이력이 없거나 `_RETRYABLE_STATES`(REJECTED/NEEDS_HUMAN)인 것만 후보로 남긴다 —
+    """이력이 없거나 `_RETRYABLE_STATES`(REJECTED/NEEDS_HUMAN/EXPIRED)인 것만 후보로 남긴다 —
 
-    그 외 기존 이력은 아예 뺀다(`skipped`에 라벨을 적립). NEEDS_HUMAN 은 신규 후보와 완전히
-    동등하게 fit_score 순서(`primary`)에 섞이고, REJECTED 만 그 뒤로 순위가 밀린다 — 사람의
-    명시적 거절인 REJECTED 와 달리 NEEDS_HUMAN 은 사람의 의사 표현이 아니라서다(위 docstring).
-    fit_score 순서(호출부가 `keyed`를 이미 정렬해 넘긴다)는 각 그룹 안에서 그대로 유지된다.
+    그 외 기존 이력은 아예 뺀다(`skipped`에 라벨을 적립). NEEDS_HUMAN/EXPIRED 는 신규 후보와
+    완전히 동등하게 fit_score 순서(`primary`)에 섞이고, REJECTED 만 그 뒤로 순위가 밀린다 —
+    사람의 명시적 거절인 REJECTED 와 달리 NEEDS_HUMAN/EXPIRED 는 사람의 의사 표현이 아니라서다
+    (위 docstring). fit_score 순서(호출부가 `keyed`를 이미 정렬해 넘긴다)는 각 그룹 안에서
+    그대로 유지된다.
     """
     primary: list[tuple[str, JobRecord]] = []
     rejected: list[tuple[str, JobRecord]] = []
     for application_id, record in keyed:
         state = states.get(application_id)
-        if state is None or state is ApplicationState.NEEDS_HUMAN:
+        if state is None or state in (ApplicationState.NEEDS_HUMAN, ApplicationState.EXPIRED):
             primary.append((application_id, record))
         elif state is ApplicationState.REJECTED:
             rejected.append((application_id, record))
