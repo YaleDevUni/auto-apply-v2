@@ -211,6 +211,21 @@ class RenderedPdf(_Frozen):
     bytes_written: int
 
 
+class CachedResume(_Frozen):
+    """이력서 재사용 캐시 1건 — application_id 당 최신 것만 남는다 (§2.3).
+
+    REJECTED/EXPIRED 뒤 재지원(apply_intake.py)이 이미 만들어 둔 이력서를 다시 쓸 때 LLM을
+    또 부르지 않으려고 둔다(2026-08-24 사용자 요청). REVISE 로 갱신된 결과도 여기 덮어써
+    "최신 승인 대상 이력서"로 유지한다 — `workflows/_revision.generate_and_render`가
+    round_no==1(REVISE 없는 최초 생성)일 때만 조회하고, REVISE 라운드는 사람이 명시적으로
+    재생성을 요청한 것이라 캐시를 건너뛴다.
+    """
+
+    application_id: str
+    draft: ResumeDraft
+    pdf: RenderedPdf
+
+
 class ResumeAttachment(_Frozen):
     """플랫폼 계정에 이미 업로드돼 있는 이력서/포트폴리오 파일 1개.
 

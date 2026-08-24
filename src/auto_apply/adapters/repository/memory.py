@@ -4,6 +4,7 @@ from typing import Self
 from auto_apply.contracts.dto import (
     ApplicationAttempt,
     ApplicationSummary,
+    CachedResume,
     PersistState,
     ScheduleConfig,
 )
@@ -14,6 +15,7 @@ Rows = dict[str, list[PersistState]]
 JobRows = dict[tuple[str, str], JobRecord]
 AttemptRows = dict[str, list[ApplicationAttempt]]
 ScheduleConfigRows = dict[str, ScheduleConfig]
+ResumeRows = dict[str, CachedResume]
 
 
 def _summary(application_id: str, latest: PersistState) -> ApplicationSummary:
@@ -95,6 +97,17 @@ class InMemoryScheduleConfigRepository:
         self._rows[config.target] = config
 
 
+class InMemoryResumeRepository:
+    def __init__(self, rows: ResumeRows) -> None:
+        self._rows = rows
+
+    async def get(self, application_id: str) -> CachedResume | None:
+        return self._rows.get(application_id)
+
+    async def save(self, resume: CachedResume) -> None:
+        self._rows[resume.application_id] = resume
+
+
 class InMemoryUnitOfWork:
     def __init__(
         self,
@@ -102,6 +115,7 @@ class InMemoryUnitOfWork:
         job_rows: JobRows | None = None,
         attempt_rows: AttemptRows | None = None,
         schedule_config_rows: ScheduleConfigRows | None = None,
+        resume_rows: ResumeRows | None = None,
     ) -> None:
         self.applications = InMemoryApplicationRepository(rows)
         self.jobs = InMemoryJobRepository(job_rows if job_rows is not None else {})
@@ -109,6 +123,7 @@ class InMemoryUnitOfWork:
         self.schedule_config = InMemoryScheduleConfigRepository(
             schedule_config_rows if schedule_config_rows is not None else {}
         )
+        self.resumes = InMemoryResumeRepository(resume_rows if resume_rows is not None else {})
 
     async def __aenter__(self) -> Self:
         return self

@@ -16,12 +16,19 @@ from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
 from auto_apply.adapters.repository.models import Base
 from auto_apply.adapters.repository.postgres import SqlAlchemyUnitOfWork, build_engine
 from auto_apply.config import Settings
-from auto_apply.contracts.dto import ApplicationAttempt, PersistState, ScheduleConfig
+from auto_apply.contracts.dto import (
+    ApplicationAttempt,
+    CachedResume,
+    PersistState,
+    RenderedPdf,
+    ResumeDraft,
+    ScheduleConfig,
+)
 from auto_apply.contracts.job import ApplicabilityVerdict, JobPosting, JobRecord, ScreeningVerdict
 from auto_apply.domain.enums import ApplicationState, AttemptOutcome, ExecutionMode
 from auto_apply.ports.repository import UnitOfWork
 
-_PG_TABLES = "application_state_history, jobs, application_attempts, schedule_configs"
+_PG_TABLES = "application_state_history, jobs, application_attempts, schedule_configs, resume_cache"
 
 
 @pytest.fixture(params=["memory", "file", pytest.param("postgres", marks=pytest.mark.docker)])
@@ -31,7 +38,10 @@ async def uow_factory(request: pytest.FixtureRequest, tmp_path):
         job_rows: dict = {}
         attempt_rows: dict = {}
         schedule_config_rows: dict = {}
-        yield lambda: InMemoryUnitOfWork(rows, job_rows, attempt_rows, schedule_config_rows)
+        resume_rows: dict = {}
+        yield lambda: InMemoryUnitOfWork(
+            rows, job_rows, attempt_rows, schedule_config_rows, resume_rows
+        )
         return
     if request.param == "file":
         yield lambda: FileUnitOfWork(tmp_path)
@@ -401,3 +411,60 @@ async def test_schedule_config_targets_are_independent(uow_factory):
         apply = await uow.schedule_config.get("apply")
     assert collection is not None and collection.hour == 9
     assert apply is not None and apply.hour == 10 and apply.count == 3
+
+
+# ─────────────────────────── ResumeRepository ───────────────────────────
+# application_id 당 최신값 1건만 (§2.3) — REJECTED/EXPIRED 재지원 때 LLM을 다시 안 부르려는
+# 캐시. ScheduleConfigRepository 와 같은 upsert 모양이다.
+
+
+def _cached_resume(application_id: str = "app_1", *, blob_key: str = "resumes/u1/r1.pdf"):
+    return CachedResume(
+        application_id=application_id,
+        draft=ResumeDraft(resume_id="r1", content={"summary": "..."}, used_fact_ids=["f1"]),
+        pdf=RenderedPdf(blob_key=blob_key, bytes_written=1234),
+    )
+
+
+async def test_resume_cache_unknown_application_returns_none(uow_factory):
+    async with uow_factory() as uow:
+        assert await uow.resumes.get("nope") is None
+
+
+async def test_resume_cache_save_then_get_roundtrips(uow_factory):
+    resume = _cached_resume()
+    async with uow_factory() as uow:
+        await uow.resumes.save(resume)
+        await uow.commit()
+    async with uow_factory() as uow:
+        got = await uow.resumes.get("app_1")
+    assert got == resume
+
+
+async def test_resume_cache_save_overwrites_previous_value_for_same_application(uow_factory):
+    """멱등 upsert — application_id 당 최신값 1건만 남는다(이력 아님) — REVISE 로 갱신된 결과가
+
+    이전 캐시를 덮어쓰는 경로가 이걸 요구한다(§2.3 CachedResume).
+    """
+    async with uow_factory() as uow:
+        await uow.resumes.save(_cached_resume(blob_key="resumes/u1/r1.pdf"))
+        await uow.commit()
+    async with uow_factory() as uow:
+        await uow.resumes.save(_cached_resume(blob_key="resumes/u1/r2.pdf"))
+        await uow.commit()
+    async with uow_factory() as uow:
+        got = await uow.resumes.get("app_1")
+    assert got is not None
+    assert got.pdf.blob_key == "resumes/u1/r2.pdf"
+
+
+async def test_resume_cache_applications_are_independent(uow_factory):
+    async with uow_factory() as uow:
+        await uow.resumes.save(_cached_resume("app_1", blob_key="resumes/u1/a.pdf"))
+        await uow.resumes.save(_cached_resume("app_2", blob_key="resumes/u1/b.pdf"))
+        await uow.commit()
+    async with uow_factory() as uow:
+        app_1 = await uow.resumes.get("app_1")
+        app_2 = await uow.resumes.get("app_2")
+    assert app_1 is not None and app_1.pdf.blob_key == "resumes/u1/a.pdf"
+    assert app_2 is not None and app_2.pdf.blob_key == "resumes/u1/b.pdf"

@@ -14,6 +14,7 @@ from typing import Self
 from auto_apply.contracts.dto import (
     ApplicationAttempt,
     ApplicationSummary,
+    CachedResume,
     PersistState,
     ScheduleConfig,
 )
@@ -206,12 +207,43 @@ class FileScheduleConfigRepository:
             await asyncio.to_thread(_write)
 
 
+class FileResumeRepository:
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self._lock = asyncio.Lock()
+
+    def _path(self, application_id: str) -> Path:
+        safe = application_id.replace("/", "_")
+        return self._root / "resumes" / f"{safe}.json"
+
+    async def get(self, application_id: str) -> CachedResume | None:
+        return await asyncio.to_thread(self._read, self._path(application_id))
+
+    def _read(self, path: Path) -> CachedResume | None:
+        if not path.is_file():
+            return None
+        return CachedResume.model_validate(json.loads(path.read_text()))
+
+    async def save(self, resume: CachedResume) -> None:
+        path = self._path(resume.application_id)
+
+        def _write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(resume.model_dump(mode="json"), indent=2))
+            tmp.replace(path)  # 원자적 교체
+
+        async with self._lock:
+            await asyncio.to_thread(_write)
+
+
 class FileUnitOfWork:
     def __init__(self, root: Path) -> None:
         self.applications = FileApplicationRepository(root)
         self.jobs = FileJobRepository(root)
         self.attempts = FileAttemptRepository(root)
         self.schedule_config = FileScheduleConfigRepository(root)
+        self.resumes = FileResumeRepository(root)
 
     async def __aenter__(self) -> Self:
         return self

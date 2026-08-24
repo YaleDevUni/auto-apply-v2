@@ -13,8 +13,15 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ChildWorkflowError
 
-from auto_apply.contracts.activity_defs import apply_guide_patch, propose_guide_patch, render_pdf
+from auto_apply.contracts.activity_defs import (
+    apply_guide_patch,
+    get_cached_resume,
+    propose_guide_patch,
+    render_pdf,
+    save_cached_resume,
+)
 from auto_apply.contracts.dto import (
+    CachedResume,
     GenerateResumeRequest,
     GuidePatchProposal,
     JobRef,
@@ -65,7 +72,25 @@ async def generate_and_render(
     round_no: int,
     persist: Callable[[ApplicationState], Awaitable[None]],
 ) -> GeneratedResume:
-    """child ResumeWorkflow 실행 → PDF 렌더. 최초 생성과 REVISE 재생성이 이 함수 하나를 쓴다."""
+    """child ResumeWorkflow 실행 → PDF 렌더. 최초 생성과 REVISE 재생성이 이 함수 하나를 쓴다.
+
+    round_no==1(REVISE 없는 최초 호출)이면 먼저 캐시(§2.3 `CachedResume`)를 본다 — 같은
+    application_id 로 REJECTED/EXPIRED 뒤 재지원할 때(apply_intake.py) 이미 만들어 둔
+    이력서를 또 LLM 으로 새로 만들지 않기 위해서다(2026-08-24 사용자 요청). REVISE 라운드는
+    사람이 명시적으로 다시 만들어 달라는 요청이라 캐시를 건너뛴다. 새로 생성했을 때는(캐시
+    적중이 아닐 때) 그 결과를 캐시에 남겨 다음 재지원이 쓸 수 있게 한다 — REVISE 로 나온
+    더 다듬어진 버전도 여기 덮어써 "최신" 캐시로 유지된다.
+    """
+    if round_no == 1:
+        cached = await workflow.execute_activity(
+            get_cached_resume,
+            cmd.application_id,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_QUICK,
+        )
+        if cached is not None:
+            return GeneratedResume(cached.draft, cached.pdf)
+
     try:
         draft = await workflow.execute_child_workflow(
             ResumeWorkflow.run,
@@ -88,6 +113,12 @@ async def generate_and_render(
         draft,
         start_to_close_timeout=timedelta(minutes=5),
         task_queue=QUEUE_AI,
+        retry_policy=_QUICK,
+    )
+    await workflow.execute_activity(
+        save_cached_resume,
+        CachedResume(application_id=cmd.application_id, draft=draft, pdf=pdf),
+        start_to_close_timeout=timedelta(seconds=30),
         retry_policy=_QUICK,
     )
     return GeneratedResume(draft, pdf)

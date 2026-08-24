@@ -69,3 +69,16 @@ class ScheduleConfigRow(Base):
 
     target: Mapped[str] = mapped_column(String, primary_key=True)
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+
+
+class ResumeCacheRow(Base):
+    """`CachedResume` 최신값 1건 (§2.3) — application_id 가 유일키. `ScheduleConfigRow`와 같은
+
+    이유로 이력이 아니라 최신값만 남긴다: REJECTED/EXPIRED 뒤 재지원 때 LLM을 다시 안 부르려는
+    목적이라 "가장 최근에 만든 이력서" 하나만 있으면 된다(2026-08-24 사용자 요청).
+    """
+
+    __tablename__ = "resume_cache"
+
+    application_id: Mapped[str] = mapped_column(String, primary_key=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)

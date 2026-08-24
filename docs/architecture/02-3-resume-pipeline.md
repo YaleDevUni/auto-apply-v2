@@ -97,3 +97,18 @@ flowchart LR
   — URL은 서술이 아니라 리터럴이라 `ground_check`(fact_id 근거 검증) 대상이 아니다. 렌더러는
   `http(s)://`로 시작하는 값만 링크로 그리고 그 외(예: `javascript:` 스킴, 빈 값)는 조용히
   생략한다.
+
+- **이력서 재사용 캐시 (2026-08-24 추가)** — `apply_intake.py`가 REJECTED/EXPIRED 이력을
+  신규 후보와 섞어 재지원을 허용하는데(§ apply_intake.py 모듈 docstring), 재지원은 매번
+  새 `ApplicationWorkflow` 실행이라 `_generate_resume`이 항상 round_no=1, feedback="" 으로
+  다시 불린다 — child `ResumeWorkflow` id(`resume-{application_id}-{round_no}`)가 이전 실행과
+  같아 보여도 Temporal 기본 id 재사용 정책은 "RUNNING 중일 때만 막고, 끝난 뒤엔 새 실행을
+  또 시작"이라 캐시 없이는 LLM을 매번 다시 부른다(사용자 지적, 2026-08-24). `DB(PersistState`
+  처럼 §4.1 원칙을 따르는 `CachedResume`(application_id 당 최신 1건, `ResumeRepository` port)를
+  추가해, `workflows/_revision.generate_and_render`가 round_no==1일 때만 먼저 캐시를 조회하고
+  적중하면 child ResumeWorkflow/render_pdf 를 아예 건너뛴다. REVISE 라운드(round_no>1)는
+  사람이 명시적으로 재생성을 요청한 것이라 캐시를 건너뛰고 항상 새로 만들되, 그 결과로 캐시를
+  덮어써 "최신 승인 대상 이력서"를 유지한다 — 다음 재지원은 REVISE로 다듬어진 버전을 재사용한다.
+  Temporal 실행 히스토리를 직접 조회하는 대신 DB에 결과(초안 content + PDF blob_key)를 그대로
+  복제해 둔 것 — Temporal = 실행 상태, DB = 비즈니스 데이터 원칙(CLAUDE.md 절대 규칙 1)을 그대로
+  따른다.

@@ -4,6 +4,7 @@ from typing import Protocol, Self
 from auto_apply.contracts.dto import (
     ApplicationAttempt,
     ApplicationSummary,
+    CachedResume,
     PersistState,
     ScheduleConfig,
 )
@@ -86,6 +87,20 @@ class ScheduleConfigRepository(Protocol):
         ...
 
 
+class ResumeRepository(Protocol):
+    """생성된 이력서(초안 + PDF) 캐시. application_id 당 최신 1건만 (§2.3) — 이력이 아니라
+
+    "최신값"만 필요해 `ScheduleConfigRepository`와 같은 upsert 모양이다. REJECTED/EXPIRED 뒤
+    재지원할 때 LLM을 다시 안 부르려는 게 목적(2026-08-24 사용자 요청).
+    """
+
+    async def get(self, application_id: str) -> CachedResume | None: ...
+
+    async def save(self, resume: CachedResume) -> None:
+        """application_id 기준 upsert — 멱등."""
+        ...
+
+
 class UnitOfWork(Protocol):
     # @property 로 선언한다. Protocol 의 일반 속성은 invariant 로 취급되어
     # 구현체가 더 구체적인 타입을 노출하면 타입 체크에 실패한다.
@@ -100,6 +115,9 @@ class UnitOfWork(Protocol):
 
     @property
     def schedule_config(self) -> ScheduleConfigRepository: ...
+
+    @property
+    def resumes(self) -> ResumeRepository: ...
 
     async def __aenter__(self) -> Self: ...
 

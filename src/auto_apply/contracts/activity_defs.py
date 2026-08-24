@@ -12,6 +12,7 @@ from auto_apply.contracts.dto import (
     ApplicationAttempt,
     ApplyIntakeInput,
     ApplyIntakeResult,
+    CachedResume,
     DecisionRequest,
     DecisionTicket,
     Eligibility,
@@ -110,6 +111,18 @@ async def persist_state(state: PersistState) -> None:
 @activity.defn(name="record_attempt")
 async def record_attempt(attempt: ApplicationAttempt) -> None:
     """`application_attempts` 감사 로그를 쓰는 유일한 통로 (§4, §5). 멱등해야 한다."""
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="get_cached_resume")
+async def get_cached_resume(application_id: str) -> CachedResume | None:
+    """이력서 재사용 캐시 조회 (§2.3). 없으면 None — 정상 미스다."""
+    raise NotImplementedError(_ONLY)
+
+
+@activity.defn(name="save_cached_resume")
+async def save_cached_resume(resume: CachedResume) -> None:
+    """이력서 재사용 캐시를 쓰는 유일한 통로 (§2.3). application_id 기준 멱등 upsert."""
     raise NotImplementedError(_ONLY)
 
 

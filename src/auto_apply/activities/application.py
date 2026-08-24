@@ -8,6 +8,7 @@ from temporalio import activity
 
 from auto_apply.contracts.dto import (
     ApplicationAttempt,
+    CachedResume,
     DecisionRequest,
     DecisionTicket,
     Eligibility,
@@ -91,6 +92,23 @@ class ApplicationActivities:
             workflow_id=activity.info().workflow_id,
         )
 
+    @activity.defn(name="get_cached_resume")
+    async def get_cached_resume(self, application_id: str) -> CachedResume | None:
+        async with self._uow() as uow:
+            return await uow.resumes.get(application_id)
+
+    @activity.defn(name="save_cached_resume")
+    async def save_cached_resume(self, resume: CachedResume) -> None:
+        """이력서 재사용 캐시를 쓰는 유일한 통로 (§2.3). 멱등해야 한다."""
+        async with self._uow() as uow:
+            await uow.resumes.save(resume)
+            await uow.commit()
+        log.info(
+            "resume.cached",
+            application_id=resume.application_id,
+            workflow_id=activity.info().workflow_id,
+        )
+
     def all(self) -> list[Callable[..., Any]]:
         return [
             self.collect_job,
@@ -101,4 +119,6 @@ class ApplicationActivities:
             self.verify_submission,
             self.persist_state,
             self.record_attempt,
+            self.get_cached_resume,
+            self.save_cached_resume,
         ]

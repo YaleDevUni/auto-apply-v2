@@ -38,6 +38,7 @@ from auto_apply.bootstrap import Container
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import (
     ApplicationAttempt,
+    CachedResume,
     DecisionRequest,
     DecisionTicket,
     NotifyEvent,
@@ -212,6 +213,7 @@ class Harness:
     attempt_rows: dict[str, list[ApplicationAttempt]] = field(default_factory=dict)
     job_rows: dict[tuple[str, str], JobRecord] = field(default_factory=dict)
     schedule_config_rows: dict[str, ScheduleConfig] = field(default_factory=dict)
+    resume_rows: dict[str, CachedResume] = field(default_factory=dict)
     eligible: bool = True
     reject_reason: str = ""
     verified: bool = True
@@ -295,12 +297,16 @@ class Harness:
         rows = self.rows
         attempt_rows = self.attempt_rows
         schedule_config_rows = self.schedule_config_rows
+        resume_rows = self.resume_rows
         app = ApplicationActivities(
             registry=StaticPlatformRegistry([adapter]),
             notifier=self._shared_notifier(),
             recipes=recipes,
             uow=lambda: InMemoryUnitOfWork(
-                rows, attempt_rows=attempt_rows, schedule_config_rows=schedule_config_rows
+                rows,
+                attempt_rows=attempt_rows,
+                schedule_config_rows=schedule_config_rows,
+                resume_rows=resume_rows,
             ),
         )
         facts = StaticFactSource(_sample_facts())
@@ -345,6 +351,7 @@ class Harness:
         attempt_rows = self.attempt_rows
         job_rows = self.job_rows
         schedule_config_rows = self.schedule_config_rows
+        resume_rows = self.resume_rows
         resolved_settings = settings or Settings(
             notifier="console", storage="memory", llm_provider="stub"
         )
@@ -357,7 +364,11 @@ class Harness:
             chat_llm=llm,
             notifier=self._shared_notifier(telegram=resolved_settings.notifier == "telegram"),
             uow=lambda: InMemoryUnitOfWork(
-                rows, job_rows, attempt_rows=attempt_rows, schedule_config_rows=schedule_config_rows
+                rows,
+                job_rows,
+                attempt_rows=attempt_rows,
+                schedule_config_rows=schedule_config_rows,
+                resume_rows=resume_rows,
             ),
             registry=self.registry
             or StaticPlatformRegistry([FixturePlatformAdapter(eligible=self.eligible)]),
@@ -397,3 +408,7 @@ class Harness:
             if a.attempt == attempt_no:
                 return a
         return None
+
+    def cached_resume(self, application_id: str) -> CachedResume | None:
+        """§2.3 이력서 재사용 캐시 — 워크플로우가 실제로 캐시를 남겼는지 테스트가 확인한다."""
+        return self.resume_rows.get(application_id)

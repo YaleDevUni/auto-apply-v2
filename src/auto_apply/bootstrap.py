@@ -56,7 +56,7 @@ from auto_apply.adapters.storage.s3 import S3BlobStore
 from auto_apply.adapters.web_agent.aside_cli import AsideCliExecutor
 from auto_apply.adapters.web_agent.replay import ReplayWebAgentExecutor
 from auto_apply.config import Settings
-from auto_apply.contracts.dto import ApplicationAttempt, PersistState, ScheduleConfig
+from auto_apply.contracts.dto import ApplicationAttempt, CachedResume, PersistState, ScheduleConfig
 from auto_apply.contracts.job import JobRecord
 from auto_apply.ports.attachments import AttachmentRegistry
 from auto_apply.ports.checkpoint_store import CheckpointStore
@@ -173,7 +173,10 @@ def _build_uow(cfg: Settings) -> Callable[[], UnitOfWork]:
             job_rows: dict[tuple[str, str], JobRecord] = {}
             attempt_rows: dict[str, list[ApplicationAttempt]] = {}
             schedule_config_rows: dict[str, ScheduleConfig] = {}
-            return lambda: InMemoryUnitOfWork(rows, job_rows, attempt_rows, schedule_config_rows)
+            resume_rows: dict[str, CachedResume] = {}
+            return lambda: InMemoryUnitOfWork(
+                rows, job_rows, attempt_rows, schedule_config_rows, resume_rows
+            )
         case "file":
             root = cfg.data_dir
             return lambda: FileUnitOfWork(root)

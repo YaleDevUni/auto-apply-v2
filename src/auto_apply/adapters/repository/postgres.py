@@ -22,11 +22,13 @@ from auto_apply.adapters.repository.models import (
     ApplicationAttemptRow,
     ApplicationStateRow,
     JobRow,
+    ResumeCacheRow,
     ScheduleConfigRow,
 )
 from auto_apply.contracts.dto import (
     ApplicationAttempt,
     ApplicationSummary,
+    CachedResume,
     PersistState,
     ScheduleConfig,
 )
@@ -178,6 +180,26 @@ class SqlAlchemyScheduleConfigRepository:
         await self._session.execute(stmt)
 
 
+class SqlAlchemyResumeRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, application_id: str) -> CachedResume | None:
+        row = await self._session.scalar(
+            select(ResumeCacheRow).where(ResumeCacheRow.application_id == application_id)
+        )
+        return CachedResume.model_validate(row.payload) if row else None
+
+    async def save(self, resume: CachedResume) -> None:
+        stmt = pg_insert(ResumeCacheRow).values(
+            application_id=resume.application_id, payload=resume.model_dump(mode="json")
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[ResumeCacheRow.application_id], set_={"payload": stmt.excluded.payload}
+        )
+        await self._session.execute(stmt)
+
+
 class SqlAlchemyUnitOfWork:
     """세션 하나 = 트랜잭션 하나. `commit()`을 부르지 않으면 `__aexit__`에서 롤백된다.
 
@@ -192,6 +214,7 @@ class SqlAlchemyUnitOfWork:
         self.jobs = SqlAlchemyJobRepository(self._session)
         self.attempts = SqlAlchemyAttemptRepository(self._session)
         self.schedule_config = SqlAlchemyScheduleConfigRepository(self._session)
+        self.resumes = SqlAlchemyResumeRepository(self._session)
 
     async def __aenter__(self) -> Self:
         return self

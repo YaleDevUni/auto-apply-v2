@@ -196,6 +196,76 @@ async def test_reject_signal_ends_as_rejected(env: WorkflowEnvironment):
     assert "executing" not in h.states(APP_ID), "거절했는데 실행 단계로 갔다"
 
 
+async def test_retry_after_rejected_reuses_cached_resume_instead_of_regenerating(
+    env: WorkflowEnvironment,
+):
+    """REJECTED 뒤 같은 application_id 로 재지원(§ apply_intake.py)하면 이력서를 다시 LLM 으로
+
+    만들지 않고 캐시(§2.3 CachedResume)를 그대로 쓴다(2026-08-24 사용자 요청). blob_key 는
+    StubPdfRenderer 가 매 렌더마다 새 resume_id(uuid)로 새로 만들므로, 두 실행의 blob_key 가
+    같다는 것 자체가 "재생성하지 않았다"는 증거다.
+    """
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle1 = await _start(env.client, _cmd())
+        await _wait_state(handle1, ApplicationState.AWAITING_APPROVAL)
+        await handle1.signal(ApplicationWorkflow.reject, RejectSignal())
+        await handle1.result()
+
+    first = h.cached_resume(APP_ID)
+    assert first is not None, "최초 생성이 캐시에 남아야 한다"
+
+    async with _Workers(env.client, h):
+        # 같은 application_id 로 재시작 — apply_intake.py 가 실제로 이렇게 재지원을 허용한다
+        # (ALLOW_DUPLICATE, 이전 실행이 닫힌 뒤에만).
+        handle2 = await _start(env.client, _cmd())
+        await _wait_state(handle2, ApplicationState.AWAITING_APPROVAL)
+        await handle2.signal(ApplicationWorkflow.reject, RejectSignal())
+        await handle2.result()
+
+    second = h.cached_resume(APP_ID)
+    assert second is not None
+    assert second.pdf.blob_key == first.pdf.blob_key
+    assert second.draft.resume_id == first.draft.resume_id
+
+
+async def test_revise_ignores_cache_and_regenerates_even_with_prior_cached_resume(
+    env: WorkflowEnvironment,
+):
+    """REVISE(round_no>1)는 캐시가 있어도 건너뛰지 않는다 — 사람이 명시적으로 다시 만들어
+
+    달라고 요청한 것이라서다(§2.3 CachedResume). 재지원(round_no==1)만 캐시를 본다.
+    """
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle1 = await _start(env.client, _cmd())
+        await _wait_state(handle1, ApplicationState.AWAITING_APPROVAL)
+        await handle1.signal(ApplicationWorkflow.reject, RejectSignal())
+        await handle1.result()
+
+    before_revise = h.cached_resume(APP_ID)
+    assert before_revise is not None
+
+    async with _Workers(env.client, h):
+        handle2 = await _start(env.client, _cmd())
+        await _wait_state(handle2, ApplicationState.AWAITING_APPROVAL)
+        assert h.notifier is not None
+        first_nonce = await _wait_new_nonce(h, set())
+        await handle2.signal(
+            ApplicationWorkflow.revise,
+            ReviseSignal(feedback="자기소개를 더 짧게", scope=RevisionScope.SPECIFIC),
+        )
+        second_nonce = await _wait_new_nonce(h, {first_nonce})
+        await handle2.signal(ApplicationWorkflow.approve, ApproveSignal(nonce=second_nonce))
+        await handle2.result()
+
+    after_revise = h.cached_resume(APP_ID)
+    assert after_revise is not None
+    # REVISE 로 다시 만든 이력서라 이전 caches 와 resume_id 가 달라야 한다 — 캐시를 그냥
+    # 재사용했다면 같았을 것.
+    assert after_revise.draft.resume_id != before_revise.draft.resume_id
+
+
 async def test_pending_decision_query_exposes_nonce_while_awaiting_then_clears(
     env: WorkflowEnvironment,
 ):
