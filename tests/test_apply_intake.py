@@ -2,7 +2,7 @@
 
 `start_actionable_applications`: TTL 필터링, 적합도 정렬, count 상한, canonical_key 기반
 중복지원 방어(WorkflowAlreadyStartedError → skip), application_state_history 기반 사전
-상태 필터(REJECTED 는 후순위, NEEDS_HUMAN/EXPIRED 는 신규 후보와 동등, 그 외 기존 이력은 제외).
+상태 필터(REJECTED/EXPIRED 는 후순위, NEEDS_HUMAN 은 신규 후보와 동등, 그 외 기존 이력은 제외).
 `apply_by_url`: 사용자가 직접 지정한 URL 1건 → 플랫폼 확인(wanted 한정) → fetch_job →
 canonical_key dedupe → 워크플로우 시작.
 실제 Temporal 없이 `_FakeClient.start_workflow` 로 어떤 id/정책으로 불렸는지만 본다.
@@ -218,11 +218,12 @@ async def test_needs_human_jobs_are_treated_as_full_candidates_not_deprioritized
     assert result.started == ["A사 - 백엔드"]
 
 
-async def test_expired_jobs_are_treated_as_full_candidates_not_deprioritized():
-    """EXPIRED(승인 대기 72시간 무응답)도 NEEDS_HUMAN 과 같은 취급 — submitted_at 이 항상
+async def test_expired_jobs_are_deprioritized_not_excluded():
+    """EXPIRED(승인 대기 72시간 무응답)는 REJECTED 와 같은 취급 — 신규 후보 뒤로 순위만
 
-    None 인 채로만 끝나는 상태라 사람의 의사 표현이 아니기 때문(2026-08-23, "지원워크플로우가
-    expired 되도 재지원되냐"는 질문으로 이 집합에서 빠져 있던 갭이 드러나 추가).
+    밀린다(2026-08-24 사용자 요청). 처음엔 NEEDS_HUMAN 과 같이 신규 후보와 동등하게 뒀지만
+    (2026-08-23, "지원워크플로우가 expired 되도 재지원되냐"는 질문으로 갭이 드러나 추가했을 때의
+    결정), 사용자가 "거절한거나 expired된거 후순위로"로 이 취급을 바꿨다.
     """
     stuck = _record(platform_job_id="1", company="A사", title="백엔드", fit_score=99)
     fresh = _record(platform_job_id="2", company="B사", title="프론트", fit_score=10)
@@ -231,9 +232,14 @@ async def test_expired_jobs_are_treated_as_full_candidates_not_deprioritized():
     c = _container(job_rows, state_rows=state_rows)
     client = _FakeClient()
 
-    # fit_score 가 더 높은 A사(EXPIRED)가 신규 후보 B사보다 먼저 뽑힌다.
+    # count=1 이면 fit_score 가 훨씬 낮아도 신규 후보(B사)가 EXPIRED(A사)보다 먼저 뽑힌다.
     result = await start_actionable_applications(1, c, client, now=_NOW)
-    assert result.started == ["A사 - 백엔드"]
+    assert result.started == ["B사 - 프론트"]
+
+    # count 를 늘리면 EXPIRED 도 순서상 다음 자리에 채워진다 — 완전히 배제되진 않는다.
+    client2 = _FakeClient()
+    result2 = await start_actionable_applications(2, c, client2, now=_NOW)
+    assert result2.started == ["B사 - 프론트", "A사 - 백엔드"]
 
 
 async def test_rejected_jobs_are_deprioritized_not_excluded():
