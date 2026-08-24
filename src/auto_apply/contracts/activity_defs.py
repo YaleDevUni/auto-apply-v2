@@ -126,6 +126,12 @@ async def save_cached_resume(resume: CachedResume) -> None:
     raise NotImplementedError(_ONLY)
 
 
+@activity.defn(name="delete_cached_resume")
+async def delete_cached_resume(application_id: str) -> None:
+    """COMPLETED/CANCELLED 로 끝나 다시는 재지원 후보가 안 되는 캐시를 지운다 (§2.3, 멱등)."""
+    raise NotImplementedError(_ONLY)
+
+
 @activity.defn(name="ping")
 async def ping(message: str) -> str:
     """M0 smoke test 용."""

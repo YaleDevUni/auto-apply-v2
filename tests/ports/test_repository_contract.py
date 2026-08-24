@@ -468,3 +468,35 @@ async def test_resume_cache_applications_are_independent(uow_factory):
         app_2 = await uow.resumes.get("app_2")
     assert app_1 is not None and app_1.pdf.blob_key == "resumes/u1/a.pdf"
     assert app_2 is not None and app_2.pdf.blob_key == "resumes/u1/b.pdf"
+
+
+async def test_resume_cache_delete_removes_it(uow_factory):
+    """COMPLETED/CANCELLED 종결 뒤 다시는 안 쓰일 캐시를 지운다(§2.3, 2026-08-24)."""
+    async with uow_factory() as uow:
+        await uow.resumes.save(_cached_resume())
+        await uow.commit()
+    async with uow_factory() as uow:
+        await uow.resumes.delete("app_1")
+        await uow.commit()
+    async with uow_factory() as uow:
+        assert await uow.resumes.get("app_1") is None
+
+
+async def test_resume_cache_delete_unknown_application_is_idempotent(uow_factory):
+    async with uow_factory() as uow:
+        await uow.resumes.delete("nope")  # 에러 없이 조용히 지나가야 한다
+        await uow.commit()
+
+
+async def test_resume_cache_delete_does_not_affect_other_applications(uow_factory):
+    async with uow_factory() as uow:
+        await uow.resumes.save(_cached_resume("app_1", blob_key="resumes/u1/a.pdf"))
+        await uow.resumes.save(_cached_resume("app_2", blob_key="resumes/u1/b.pdf"))
+        await uow.commit()
+    async with uow_factory() as uow:
+        await uow.resumes.delete("app_1")
+        await uow.commit()
+    async with uow_factory() as uow:
+        assert await uow.resumes.get("app_1") is None
+        app_2 = await uow.resumes.get("app_2")
+    assert app_2 is not None and app_2.pdf.blob_key == "resumes/u1/b.pdf"

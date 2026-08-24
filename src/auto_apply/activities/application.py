@@ -109,6 +109,18 @@ class ApplicationActivities:
             workflow_id=activity.info().workflow_id,
         )
 
+    @activity.defn(name="delete_cached_resume")
+    async def delete_cached_resume(self, application_id: str) -> None:
+        """COMPLETED/CANCELLED 종결 뒤 다시는 안 쓰일 캐시를 지운다 (§2.3). 멱등해야 한다."""
+        async with self._uow() as uow:
+            await uow.resumes.delete(application_id)
+            await uow.commit()
+        log.info(
+            "resume.cache_deleted",
+            application_id=application_id,
+            workflow_id=activity.info().workflow_id,
+        )
+
     def all(self) -> list[Callable[..., Any]]:
         return [
             self.collect_job,
@@ -121,4 +133,5 @@ class ApplicationActivities:
             self.record_attempt,
             self.get_cached_resume,
             self.save_cached_resume,
+            self.delete_cached_resume,
         ]

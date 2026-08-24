@@ -9,7 +9,7 @@ from collections.abc import Callable
 from types import TracebackType
 from typing import Self
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -198,6 +198,11 @@ class SqlAlchemyResumeRepository:
             index_elements=[ResumeCacheRow.application_id], set_={"payload": stmt.excluded.payload}
         )
         await self._session.execute(stmt)
+
+    async def delete(self, application_id: str) -> None:
+        await self._session.execute(
+            delete(ResumeCacheRow).where(ResumeCacheRow.application_id == application_id)
+        )
 
 
 class SqlAlchemyUnitOfWork:

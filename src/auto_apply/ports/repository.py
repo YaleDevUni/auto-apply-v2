@@ -100,6 +100,14 @@ class ResumeRepository(Protocol):
         """application_id 기준 upsert — 멱등."""
         ...
 
+    async def delete(self, application_id: str) -> None:
+        """COMPLETED/CANCELLED 로 끝나 다시는 재지원 후보가 안 될 application_id 의 캐시를
+
+        지운다(2026-08-24, `apply_intake._RETRYABLE_STATES` 밖 종결 상태 정리) — 멱등
+        (없는 id 를 지워도 에러 없음).
+        """
+        ...
+
 
 class UnitOfWork(Protocol):
     # @property 로 선언한다. Protocol 의 일반 속성은 invariant 로 취급되어

@@ -287,6 +287,81 @@ async def test_revise_ignores_cache_and_regenerates_even_with_prior_cached_resum
     assert after_revise.draft.resume_id != before_revise.draft.resume_id
 
 
+async def test_completed_deletes_cached_resume(env: WorkflowEnvironment):
+    """COMPLETED 로 끝나면 다시는 이 application_id 로 재지원 후보가 안 된다
+
+    (apply_intake._RETRYABLE_STATES 밖) — 그 캐시(§2.3)는 영원히 안 쓰일 데이터라
+    삭제한다(2026-08-24 사용자 요청).
+    """
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd(dry_run_only=True))
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        assert h.cached_resume(APP_ID) is not None, "승인 대기 전엔 캐시가 남아있어야 한다"
+        await handle.signal(ApplicationWorkflow.approve, ApproveSignal())
+        result = await handle.result()
+
+    assert result.state is ApplicationState.COMPLETED
+    assert h.cached_resume(APP_ID) is None
+
+
+async def test_cancelled_deletes_cached_resume(env: WorkflowEnvironment):
+    """CANCELLED 도 COMPLETED 와 같은 종결 상태다 — 재지원 후보에서 영구히 빠지므로 캐시도
+
+    같이 지운다(§2.3, 2026-08-24 사용자 요청).
+    """
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        now = await env.get_current_time()
+        await handle.signal(
+            ApplicationWorkflow.approve, ApproveSignal(scheduled_at=now + timedelta(days=30))
+        )
+        await _wait_state(handle, ApplicationState.SCHEDULED)
+        await handle.signal(ApplicationWorkflow.cancel)
+        result = await handle.result()
+
+    assert result.state is ApplicationState.CANCELLED
+    assert h.cached_resume(APP_ID) is None
+
+
+async def test_rejected_needs_human_expired_keep_cached_resume(env: WorkflowEnvironment):
+    """재지원 후보로 남는 상태(REJECTED/NEEDS_HUMAN/EXPIRED)는 캐시를 지우면 안 된다 —
+
+    지우면 재지원 시 재사용 캐시(§2.3)의 존재 의미 자체가 없어진다. REJECTED 는 이미
+    test_retry_after_rejected_reuses_cached_resume_instead_of_regenerating 가 덮으므로
+    NEEDS_HUMAN/EXPIRED 두 경로만 여기서 확인한다.
+    """
+    h = Harness()
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd(max_revisions=1))
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        assert h.notifier is not None
+        first_nonce = await _wait_new_nonce(h, set())
+        await handle.signal(
+            ApplicationWorkflow.revise,
+            ReviseSignal(feedback="다시", scope=RevisionScope.SPECIFIC),
+        )
+        await _wait_new_nonce(h, {first_nonce})
+        await handle.signal(
+            ApplicationWorkflow.revise,
+            ReviseSignal(feedback="또 다시", scope=RevisionScope.SPECIFIC),
+        )
+        result = await handle.result()
+
+    assert result.state is ApplicationState.NEEDS_HUMAN
+    assert h.cached_resume(APP_ID) is not None
+
+    h2 = Harness()
+    async with _Workers(env.client, h2):
+        handle2 = await _start(env.client, _cmd())
+        result2 = await handle2.result()  # time-skipping 이 72시간(기본값)을 즉시 통과시킨다
+
+    assert result2.state is ApplicationState.EXPIRED
+    assert h2.cached_resume(APP_ID) is not None
+
+
 async def test_pending_decision_query_exposes_nonce_while_awaiting_then_clears(
     env: WorkflowEnvironment,
 ):

@@ -107,6 +107,9 @@ class InMemoryResumeRepository:
     async def save(self, resume: CachedResume) -> None:
         self._rows[resume.application_id] = resume
 
+    async def delete(self, application_id: str) -> None:
+        self._rows.pop(application_id, None)
+
 
 class InMemoryUnitOfWork:
     def __init__(

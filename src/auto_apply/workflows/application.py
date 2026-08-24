@@ -16,6 +16,7 @@ from temporalio.exceptions import ActivityError
 
 from auto_apply.contracts.activity_defs import (
     collect_job,
+    delete_cached_resume,
     evaluate_eligibility,
     load_active_recipe,
     notify,
@@ -56,6 +57,13 @@ _QUICK = RetryPolicy(
     non_retryable_error_types=NON_RETRYABLE,
 )
 _PERSIST = RetryPolicy(maximum_attempts=10, initial_interval=timedelta(seconds=1))
+
+# 이 application_id 로는 다시는 재지원 후보가 안 되는 종결 상태 — apply_intake.py 의
+# _RETRYABLE_STATES(REJECTED/NEEDS_HUMAN/EXPIRED) 의 여집합(TERMINAL_STATES 안에서).
+# apply_intake.py 는 운영 진입점이라 workflow 가 import 할 수 없어(§11.3) 여기 따로 든다 —
+# 둘 중 하나가 바뀌면 같이 맞춰야 한다. 여기 해당하면 이력서 재사용 캐시(§2.3)도 지운다
+# (2026-08-24 사용자 요청) — 안 지우면 영원히 안 쓰일 캐시가 DB 에 남는다.
+_CACHE_DEAD_END_STATES = frozenset({ApplicationState.COMPLETED, ApplicationState.CANCELLED})
 
 
 def _guide_patch_summary(proposal: GuidePatchProposal) -> str:
@@ -437,6 +445,19 @@ class ApplicationWorkflow:
         if state in (ApplicationState.NEEDS_HUMAN, ApplicationState.EXPIRED):
             await self._notify(cmd, str(state).upper(), reason)
         await self._persist(cmd, state, reason=reason, submitted_at=submitted_at)
+        if state in _CACHE_DEAD_END_STATES:
+            # 순수 정리(cleanup)라 실패해도 이미 확정된 결과(state/submitted_at)를 막으면
+            # 안 된다 — get_cached_resume 조회 실패를 못 잡아 워크플로우 전체가 죽었던
+            # 사고(2026-08-24, GC메디아이 건)와 같은 실수를 여기서 반복하지 않는다.
+            try:
+                await workflow.execute_activity(
+                    delete_cached_resume,
+                    cmd.application_id,
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=_QUICK,
+                )
+            except ActivityError as e:
+                workflow.logger.warning(f"resume_cache.delete_failed: {e}")
         return ApplicationResult(state=state, reason=reason, submitted_at=submitted_at)
 
     # ─────────────────────────── signals ───────────────────────────

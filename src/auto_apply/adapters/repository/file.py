@@ -236,6 +236,15 @@ class FileResumeRepository:
         async with self._lock:
             await asyncio.to_thread(_write)
 
+    async def delete(self, application_id: str) -> None:
+        path = self._path(application_id)
+
+        def _unlink() -> None:
+            path.unlink(missing_ok=True)
+
+        async with self._lock:
+            await asyncio.to_thread(_unlink)
+
 
 class FileUnitOfWork:
     def __init__(self, root: Path) -> None:

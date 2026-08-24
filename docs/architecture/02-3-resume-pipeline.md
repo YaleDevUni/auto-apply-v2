@@ -124,3 +124,14 @@ flowchart LR
   조회만 `try/except ActivityError`로 감싼다(정상 생성 경로의 실패는 여전히 `ResumeGenerationFailed`
   → `NEEDS_HUMAN`으로 기존처럼 처리된다). 이 사고로 스턱된 기존 행 1건은 `persist_state`가
   쓰는 것과 동일한 통로(raw UPDATE 아님)로 `NEEDS_HUMAN`으로 일회성 정리했다.
+
+  **종결 상태에서 캐시 삭제 (2026-08-24 추가, 사용자 요청)** — `COMPLETED`/`CANCELLED`로 끝난
+  application_id는 `apply_intake._RETRYABLE_STATES`(REJECTED/NEEDS_HUMAN/EXPIRED) 밖이라
+  다시는 재지원 후보가 되지 않는다 — 그 캐시는 영원히 안 쓰일 죽은 데이터다. `ResumeRepository`
+  port에 `delete(application_id)`를 추가하고(멱등), `workflows/application.py`의 `_finish`
+  (모든 종결 경로가 지나는 유일한 지점)에서 `state`가 `_CACHE_DEAD_END_STATES`(COMPLETED ∪
+  CANCELLED — `_RETRYABLE_STATES`의 여집합, `apply_intake.py`가 운영 진입점이라 workflow가
+  import할 수 없어 여기 따로 든다)에 속하면 `delete_cached_resume` activity를 호출한다.
+  이 삭제도 순수 정리(cleanup)이므로 `get_cached_resume` 조회 실패와 같은 논리로
+  `ActivityError`를 잡아 무시한다 — 실패해도 이미 확정된 `state`/`submitted_at` 결과를
+  막지 않는다. REJECTED/NEEDS_HUMAN/EXPIRED는 캐시를 그대로 남겨 재지원이 재사용한다.
