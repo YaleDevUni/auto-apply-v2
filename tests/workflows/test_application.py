@@ -229,6 +229,27 @@ async def test_retry_after_rejected_reuses_cached_resume_instead_of_regenerating
     assert second.draft.resume_id == first.draft.resume_id
 
 
+async def test_cache_lookup_failure_falls_back_to_normal_generation_instead_of_crashing(
+    env: WorkflowEnvironment,
+):
+    """get_cached_resume activity 자체가 실패해도(재시도 소진) 워크플로우가 처리되지 않은
+
+    예외로 죽으면 안 된다 — 죽으면 _finish 를 못 타 DB projection 이 GENERATING_RESUME 에
+    영구히 갇혀서 apply_intake._RETRYABLE_STATES 밖이라 재지원도 막힌다(2026-08-24 GC메디아이
+    사고 실측: worker 가 재시작 전이라 get_cached_resume 이 미등록이던 상태에서 발생). 캐시
+    조회 실패는 정상 생성 경로로 폴백해야 한다.
+    """
+    h = Harness(cache_lookup_broken=True)
+    async with _Workers(env.client, h):
+        handle = await _start(env.client, _cmd())
+        await _wait_state(handle, ApplicationState.AWAITING_APPROVAL)
+        await handle.signal(ApplicationWorkflow.reject, RejectSignal())
+        await handle.result()
+
+    # 폴백 생성이 실제로 캐시에 저장까지 남긴다(다음 재지원이 쓸 수 있게).
+    assert h.cached_resume(APP_ID) is not None
+
+
 async def test_revise_ignores_cache_and_regenerates_even_with_prior_cached_resume(
     env: WorkflowEnvironment,
 ):

@@ -112,3 +112,15 @@ flowchart LR
   Temporal 실행 히스토리를 직접 조회하는 대신 DB에 결과(초안 content + PDF blob_key)를 그대로
   복제해 둔 것 — Temporal = 실행 상태, DB = 비즈니스 데이터 원칙(CLAUDE.md 절대 규칙 1)을 그대로
   따른다.
+
+  **캐시 조회 실패는 폴백해야지 워크플로우를 죽이면 안 된다 (2026-08-24 사고 수정)** —
+  배포 직후 worker 가 재시작 전이라 `get_cached_resume` activity 가 미등록이던 상태(GC메디아이
+  건 실측: `NotFoundError`, 재시도 소진 후 `ActivityError`)에서, `generate_and_render`가 이
+  예외를 못 잡아 워크플로우 전체가 처리되지 않은 예외로 죽었다. `_finish`를 못 타서 DB
+  projection 이 `GENERATING_RESUME`에 영구히 갇히고, 이 상태는 `apply_intake._RETRYABLE_STATES`
+  (REJECTED/NEEDS_HUMAN/EXPIRED) 밖이라 재지원도 텔레그램에서 "이미 지원 이력이 있다"며 막혔다
+  — 실제로는 제출이 전혀 일어나지 않았는데도. 캐시 조회는 순수 최적화이므로 `ActivityError`를
+  캐시 미스로 간주하고 정상 생성 경로(LLM 재호출)로 폴백하도록 수정했다 — round_no==1 캐시
+  조회만 `try/except ActivityError`로 감싼다(정상 생성 경로의 실패는 여전히 `ResumeGenerationFailed`
+  → `NEEDS_HUMAN`으로 기존처럼 처리된다). 이 사고로 스턱된 기존 행 1건은 `persist_state`가
+  쓰는 것과 동일한 통로(raw UPDATE 아님)로 `NEEDS_HUMAN`으로 일회성 정리했다.

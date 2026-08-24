@@ -80,14 +80,25 @@ async def generate_and_render(
     사람이 명시적으로 다시 만들어 달라는 요청이라 캐시를 건너뛴다. 새로 생성했을 때는(캐시
     적중이 아닐 때) 그 결과를 캐시에 남겨 다음 재지원이 쓸 수 있게 한다 — REVISE 로 나온
     더 다듬어진 버전도 여기 덮어써 "최신" 캐시로 유지된다.
+
+    캐시 조회는 순수 최적화라 실패해도 전체 지원을 막으면 안 된다 — 재시도까지 다 소진된
+    `ActivityError`(예: 배포 직후 worker 가 아직 재시작 전이라 activity 미등록)를 캐시 미스로
+    간주하고 정상 생성 경로로 흘려보낸다. 예전엔 이걸 안 잡아서 워크플로우 전체가 처리되지
+    않은 예외로 죽었고, `_finish`를 못 타 DB projection 이 `generating_resume`에 영구히
+    갇혀 `apply_intake._RETRYABLE_STATES` 밖이라 재지원도 막혔다(2026-08-24 실측, GC메디아이
+    건).
     """
     if round_no == 1:
-        cached = await workflow.execute_activity(
-            get_cached_resume,
-            cmd.application_id,
-            start_to_close_timeout=timedelta(seconds=30),
-            retry_policy=_QUICK,
-        )
+        try:
+            cached = await workflow.execute_activity(
+                get_cached_resume,
+                cmd.application_id,
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_QUICK,
+            )
+        except ActivityError as e:
+            workflow.logger.warning(f"resume_cache.lookup_failed: {e}")
+            cached = None
         if cached is not None:
             return GeneratedResume(cached.draft, cached.pdf)
 

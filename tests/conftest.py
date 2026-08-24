@@ -30,7 +30,7 @@ from auto_apply.adapters.platform.registry import StaticPlatformRegistry
 from auto_apply.adapters.portfolio.static import StaticPortfolioSource
 from auto_apply.adapters.profile.static import StaticProfileSource
 from auto_apply.adapters.recipe.memory import InMemoryRecipeSource
-from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
+from auto_apply.adapters.repository.memory import InMemoryUnitOfWork, ResumeRows
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.adapters.web_agent.replay import ReplayWebAgentExecutor
@@ -205,6 +205,23 @@ def sample_recipe(
     )
 
 
+class _BrokenResumeCacheRepository:
+    """get_cached_resume activity 자체가 죽는 상황(§2.3, 2026-08-24 GC메디아이 사고)을
+    흉내낸다 — 배포 직후 worker 가 재시작 전이라 activity 가 미등록인 경우가 실측 사례다.
+    조회만 깨졌을 뿐이라 save 는 정상 동작해야 한다(폴백 생성 결과를 다음 재지원용으로
+    캐시에 남기는 정상 흐름).
+    """
+
+    def __init__(self, rows: ResumeRows) -> None:
+        self._rows = rows
+
+    async def get(self, application_id: str) -> CachedResume | None:
+        raise RuntimeError("resume cache lookup broken (simulated)")
+
+    async def save(self, resume: CachedResume) -> None:
+        self._rows[resume.application_id] = resume
+
+
 @dataclass
 class Harness:
     """워크플로우 테스트용 조립체. rows 로 DB projection 을 검사한다."""
@@ -231,6 +248,10 @@ class Harness:
     # StubLLM 이 GuidePatchSchema 요청에도 순서대로 payload 를 내주므로, guide patch 를 쓰는
     # 테스트는 여기 채워서 다음 propose_guide_patch 호출이 이 값을 쓰게 한다.
     guide_patch_payloads: list[dict[str, object]] = field(default_factory=list)
+    # get_cached_resume 활동 자체가 죽는 경우(예: 배포 직후 worker 미재시작으로 activity
+    # 미등록)를 흉내낸다 — 2026-08-24 GC메디아이 사고 회귀 테스트용
+    # (test_cache_lookup_failure_falls_back_to_normal_generation_instead_of_crashing).
+    cache_lookup_broken: bool = False
     # RecipeDiffSchema 용 — repair(§2.4)를 쓰는 테스트가 채운다. 비어 있으면(기본값)
     # propose_recipe_diff 가 빈 payload({}) 를 받아 필수 필드 누락으로 LLMSchemaViolation을
     # 내고, repair 는 그대로 실패해서(포기) 기존 "M4 까지는 사람에게 넘긴다" 테스트가
@@ -298,16 +319,24 @@ class Harness:
         attempt_rows = self.attempt_rows
         schedule_config_rows = self.schedule_config_rows
         resume_rows = self.resume_rows
-        app = ApplicationActivities(
-            registry=StaticPlatformRegistry([adapter]),
-            notifier=self._shared_notifier(),
-            recipes=recipes,
-            uow=lambda: InMemoryUnitOfWork(
+        cache_lookup_broken = self.cache_lookup_broken
+
+        def _make_uow() -> InMemoryUnitOfWork:
+            uow = InMemoryUnitOfWork(
                 rows,
                 attempt_rows=attempt_rows,
                 schedule_config_rows=schedule_config_rows,
                 resume_rows=resume_rows,
-            ),
+            )
+            if cache_lookup_broken:
+                uow.resumes = _BrokenResumeCacheRepository(resume_rows)  # type: ignore[assignment]
+            return uow
+
+        app = ApplicationActivities(
+            registry=StaticPlatformRegistry([adapter]),
+            notifier=self._shared_notifier(),
+            recipes=recipes,
+            uow=_make_uow,
         )
         facts = StaticFactSource(_sample_facts())
         guide = self._shared_guide()
