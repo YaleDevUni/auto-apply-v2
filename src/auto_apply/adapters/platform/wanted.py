@@ -4,9 +4,10 @@
 필요 없고, 두 트랙(공고 수집 vs 지원 실행)이 같은 데이터를 다른 DTO(`JobPosting` vs `JobRef`)로
 쓸 뿐이라 파싱 로직을 또 만들 이유가 없다.
 
-`verify_submission`만 예외적으로 인증이 필요하다 — "내 지원 현황"(`/api/v1/applications`)은
-본인 데이터라 로그인 쿠키 없인 조회가 안 된다(`AttachmentManager`와 같은 storage_state 재사용
-패턴, `adapters/_wanted_auth.py`). agent-browser 라이브 탐색(2026-08-20)으로 확인한 것들:
+`verify_submission`과 `evaluate`의 "이미 지원했는가" 재확인만 예외적으로 인증이 필요하다 —
+"내 지원 현황"(`/api/v1/applications`)은 본인 데이터라 로그인 쿠키 없인 조회가 안 된다
+(`AttachmentManager`와 같은 storage_state 재사용 패턴, `adapters/_wanted_auth.py`).
+agent-browser 라이브 탐색(2026-08-20)으로 확인한 것들:
 `/api/v1/applications`는 `job_id` 쿼리 파라미터로 특정 공고만 필터링해주고, `create_time`은
 `WantedAttachmentManager`의 `update_time`과 같은 타임존 표기 없는 KST 벽시계 값이다. 또한
 `user_id`(numeric)가 없으면 401 이 나는데 storage_state 엔 쿠키만 있어 이 값을 안 갖고 있어서
@@ -26,7 +27,7 @@ from auto_apply.adapters._wanted_auth import wanted_cookie_client
 from auto_apply.adapters.job_source._http import ThrottledClient
 from auto_apply.adapters.job_source.wanted import DETAIL_URL
 from auto_apply.contracts.dto import Eligibility, JobRef, VerifyInput, VerifyResult
-from auto_apply.domain.errors import PolicyViolation
+from auto_apply.domain.errors import AuthRequired, PolicyViolation
 
 _JOB_ID = re.compile(r"/wd/(\d+)")
 _ME_URL = "https://www.wanted.co.kr/api/v1/me"
@@ -131,7 +132,45 @@ class WantedPlatformAdapter:
         detail = (jd or {}).get("detail") or {}
         if detail.get("status") == "close":
             return Eligibility(eligible=False, reason="원티드 공고가 지원마감 상태다")
+
+        if await self._already_applied(job_id):
+            return Eligibility(eligible=False, reason="원티드 지원 현황에 이미 지원 이력이 있다")
         return Eligibility(eligible=True)
+
+    async def _already_applied(self, job_id: str) -> bool:
+        """`verify_submission`의 시간창 대조로는 못 잡는 지원 이력을 잡는다 — recipe-builder
+
+        라이브 탐색처럼 `ApplicationWorkflow` 밖에서 이뤄진 제출은 우리 감사 로그
+        (`application_attempts`)에 안 남고, `verify_submission`은 "이번 시도가 성공했나"만 보게
+        의도적으로 시간창을 씌워둬서(§5, `test_verify_submission_ignores_stale_application`)
+        그 이전 지원은 원래도 안 잡는다. 리보틱스(379571) 실측(2026-08-24): 원티드
+        지원현황엔 2026-08-22 제출로 남아 있는데, 이튿날 `ApplicationWorkflow`가 몰라서 다시
+        시도 → "첨부파일 선택" 패널이 안 뜨는 타임아웃 → `NEEDS_HUMAN`(재시도 후보로 남음) →
+        다음날 후보로 재부상. `evaluate`는 원래 인증이 필요 없던 자리라, 인증 실패는 이 재확인
+        자체를 막을 이유가 아니다(조용히 False 로 fail-open — 놓쳐도 실행 단계의
+        `verify_submission`이 다음 방어선이다).
+        """
+        try:
+            async with wanted_cookie_client(
+                self._auth_dir, transport=self._auth_transport
+            ) as client:
+                me = await client.get(_ME_URL)
+                me.raise_for_status()
+                user_id = me.json()["id"]
+                resp = await client.get(
+                    _APPLICATIONS_URL,
+                    params={
+                        "user_id": user_id,
+                        "limit": 1,
+                        "status": "complete,pass,hire,reject",
+                        "job_id": job_id,
+                    },
+                )
+                resp.raise_for_status()
+                body = resp.json()
+        except (AuthRequired, httpx.HTTPError):
+            return False
+        return bool(body.get("applications"))
 
     async def verify_submission(self, inp: VerifyInput) -> VerifyResult:
         # job_id/since 가 없으면 애초에 뭘 대조할지 모른다 — 거짓 확인(verified=True 오판)이

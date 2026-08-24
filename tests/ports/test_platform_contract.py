@@ -179,6 +179,54 @@ class TestWantedPlatformAdapter:
         assert verdict.eligible is False
         assert "마감" in verdict.reason
 
+    async def test_evaluate_rejects_when_already_applied(self, tmp_path: Path):
+        """리보틱스(379571) 실측 사고(2026-08-24): recipe-builder 라이브 탐색처럼
+
+        `ApplicationWorkflow` 밖에서 이미 지원된 공고를 그 사실을 모른 채 다시 실행하면
+        "첨부파일 선택" 패널이 안 떠 타임아웃 → `NEEDS_HUMAN` → 다음날 재후보로 뜨는 사고가
+        났다(`verify_submission`은 시간창 대조라 이 이전 지원을 원래도 못 잡는다, 아래 stale
+        테스트와 같은 설계). `evaluate`에서 미리 걸러야 이력서 생성/텔레그램 승인까지
+        낭비하지 않는다.
+        """
+
+        def applications_handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/me"):
+                return httpx.Response(200, json={"id": 2763813})
+            assert request.url.params["job_id"] == "373300"
+            return httpx.Response(
+                200,
+                json={
+                    "applications": [
+                        {
+                            "job_id": 373300,
+                            "status": "complete",
+                            "create_time": "2026-08-22T17:04:17",
+                        }
+                    ]
+                },
+            )
+
+        adapter = WantedPlatformAdapter(
+            _mock_client(lambda r: httpx.Response(200, json=WANTED_DETAIL)),
+            auth_dir=_auth_dir(tmp_path),
+            auth_transport=httpx.MockTransport(applications_handler),
+        )
+        job = await adapter.fetch_job("https://www.wanted.co.kr/wd/373300")
+        verdict = await adapter.evaluate(job)
+        assert verdict.eligible is False
+        assert "이미 지원" in verdict.reason
+
+    async def test_evaluate_eligible_when_already_applied_check_cannot_authenticate(self):
+        """이 재확인이 인증 실패(쿠키 없음)로 못 돌아도 evaluate 자체를 막지 않는다 — 원래
+
+        인증이 필요 없던 자리라, 놓치는 쪽이 legitimate 후보를 막는 쪽보다 안전하다
+        (실행 단계의 `verify_submission`이 다음 방어선).
+        """
+        adapter = _wanted_adapter()  # _DUMMY_AUTH_DIR: wanted.json 없음 → AuthRequired
+        job = await adapter.fetch_job("https://www.wanted.co.kr/wd/373300")
+        verdict = await adapter.evaluate(job)
+        assert verdict.eligible is True
+
     async def test_verify_submission_without_job_id_or_since_is_unverified(self):
         """job_id/since 가 없으면 뭘 대조할지 모른다 — 네트워크도 안 타고 안전하게 떨어진다
 

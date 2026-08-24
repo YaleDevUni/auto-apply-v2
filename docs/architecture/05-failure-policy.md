@@ -42,3 +42,21 @@ storage_state 엔 쿠키만 있어서(`AttachmentManager`와 동일 패턴, `ada
 activity 호출 자체가 실패해도(예: `AuthRequired` — storage_state 만료) `_execution.py`가
 잡아서 "확인 안 됨"으로 안전하게 떨어뜨린다 — 안 잡으면 워크플로우가 조용히 FAILED 로 죽는다
 (workflow-failure-visibility-backlog 와 같은 이유).
+
+**`ApplicationWorkflow` 밖에서 이뤄진 제출은 이 방어선을 그냥 통과한다.** `verify_submission`은
+의도적으로 `since` 시간창을 씌운다(바로 위 문단) — "이번 시도가 성공했나"만 보고, 그 이전에
+같은 공고에 지원한 이력은 원래도 대조 대상이 아니다. 그런데 recipe-builder 라이브 탐색
+(§ recipe-debugging-workflow 메모리)처럼 워크플로우 밖에서 실수로 제출이 나가면
+`application_attempts`에 아무 기록도 안 남고, `verify_submission`의 시간창도 그 제출을 감쌀
+방법이 없다 — 다음날 같은 공고를 다시 시도하면(사람 눈엔 "이미 지원한 공고") 지원 패널이
+평소와 다른 상태(예: 업로드 모달이 안 뜸)라 `RecipeExecutionError` timeout → `NEEDS_HUMAN` →
+`_RETRYABLE_STATES`라 다음 "제출해줘"에 신규 후보와 동등하게 재부상한다(리보틱스 379571 실측,
+2026-08-24 — 실제 지원현황 `create_time`이 워크플로우 최초 실행 하루 전이었다. 흔적으로 남은
+recipe 파일 mtime 이 정확히 그 사고 시각을 감싸고 있어 recipe-builder 라이브 탐색 중 오제출로
+추정된다, saramin-explore-accidental-submit-incident 메모리와 같은 유형). 그래서
+`WantedPlatformAdapter.evaluate`가 "지원마감" 체크에 이어 `job_id`만으로(시간창 없이) 지원
+현황을 한 번 더 확인한다 — 있으면 `Eligibility(eligible=False)`로 이력서 생성/텔레그램 승인
+전에 조기 종료시킨다. `evaluate`는 원래 인증이 필요 없던 자리라, 이 재확인이 인증 실패(쿠키
+만료)로 못 돌아도 evaluate 전체를 막지 않고 조용히 fail-open 한다(놓치는 쪽이 legitimate
+후보를 막는 쪽보다 안전하다는 §5 원칙의 연장) — 놓치면 실행 단계의 `verify_submission`이
+다음 방어선이다.
