@@ -47,13 +47,34 @@ ANTHROPIC_API_KEY or apiKeyHelper... (OAuth and keychain are never read)"라고 
 `terminal_reason:"budget_exhausted"`/`subtype:"error_max_budget_usd"`). 그 문자열/필드를
 `_classify_error()`가 CLI 바이너리 안에 실제로 박혀 있는 auth-실패 감지 정규식과 같은 패턴으로
 분류해서 `LLMAuthRequired`/`LLMQuotaExceeded`(둘 다 `LLMExecutionError`의 서브클래스,
-`domain/errors.py`)를 던진다 — 이 둘은 NON_RETRYABLE 이라 Temporal 이 재시도 없이 1회만
+`domain/errors.py`)를 던진다 — 이 둘은 NON_RETRYABLE 이라 activity 자체는 재시도 없이 1회만
 시도한다. `ResumeWorkflow`가 `generate_resume`/`review_resume` 호출을 감싸고 `ActivityError.cause.type`
 으로 이 둘을 알아보면(§ CLAUDE.md "Temporal 관련 주의" — `.type` 문자열 비교), 재던지기 전에
 `notify` activity(`ports/notifier.py`, 이미 승인 흐름이 쓰는 것과 같은 채널)를 큐를 건너
 (`task_queue=QUEUE_DEFAULT`, `render_pdf`가 반대 방향으로 `QUEUE_AI`를 넘기는 것과 대칭) 호출해
-사람에게 알린다. NON_RETRYABLE 이라 시도가 정확히 1번이라 알림도 자연히 1번만 나가고, 별도
-debounce 는 안 뒀다.
+사람에게 알린다.
+
+**한도초과는 알림 뒤 바로 실패시키지 않고 사람의 재개 신호를 기다린다(pause-and-resume,
+2026-08-24, 사용자 요청).** `LLMAuthRequired`는 지금까지처럼 알림 후 즉시 재던져 그대로
+`ApplicationWorkflow`가 `NEEDS_HUMAN`으로 끝난다(로그인은 재개 신호만으로 안 풀리고
+`claude login`을 다시 해야 해서 — 그 갈래까지 pause 하면 오히려 "재개해줘"가 로그인
+문제를 실제로 고치지 않은 채 같은 실패를 반복시킬 위험이 있다는 판단, 그래서 범위를
+`LLMQuotaExceeded`만으로 좁혔다). `LLMQuotaExceeded`만 `ResumeWorkflow._wait_for_retry`가
+`workflow.wait_condition`으로 durable 하게 멈춘다(승인/예약 대기와 같은 패턴, CLAUDE.md
+"승인/예약 대기는 wait_condition") — `paused` query 가 이 구간을 True 로 보여준다. 사람이
+텔레그램에서 "한도 풀렸으니 재개해줘"라고 말하면 `resume_llm_generation` 도구
+(`telegram/_agent_tools_resume_llm.py`)가 `ApplicationWorkflow.pending_llm_resume` query 로
+멈춰 있는 child ResumeWorkflow 의 workflow_id 를 알아내 그 id 로 직접
+`ResumeWorkflow.retry_now` signal 을 보낸다(부모 `ApplicationWorkflow`는 child 를 그냥 await
+하며 같이 멈춰 있을 뿐이라 relay 하지 않는다 — signal 은 client 가 workflow_id 만 알면 어느
+실행에나 직접 보낼 수 있다). 재개하면 실패했던 activity 호출을 처음부터 다시 시도한다 —
+이미 지난 단계(공고 수집·평가·이전 라운드의 승인)는 다시 안 돈다는 점이 `retry_application`
+(§11.2g 인접, 완전히 새 워크플로우를 시작)과 다르다. `req.approval_timeout_hours`
+(`StartApplication.approval_timeout_hours`와 같은 값, 기본 72시간) 안에 재개 신호가 없으면
+포기하고 그대로 재던진다 — 이 경우 지금까지와 동일하게 `NEEDS_HUMAN`으로 끝난다. 재개 뒤
+다시 한도초과가 나면 알림도 다시 나간다(더는 "NON_RETRYABLE이라 정확히 1번"이 아니라 사람이
+재개를 시도한 횟수만큼) — 그때마다 사람이 직접 재개를 요청한 결과라 폭주로 보지 않고, 별도
+debounce 도 안 뒀다.
 
 **캐시 (사용자 요청 "cache 적극 활용", 재설계 기록: [[claude-cli-prompt-cache-redesign]]):**
 처음엔 세션(`--resume <session-id>`)을 이어야만 캐시가 붙는다고 실측했지만, 그건 "프롬프트

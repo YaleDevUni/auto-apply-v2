@@ -188,6 +188,10 @@ class GenerateResumeRequest(_Frozen):
     job: JobRef
     # REVISE(SPECIFIC) 로 재생성할 때만 채워진다. 영속 저장 안 함 — 이 호출 한 번에만 반영된다.
     feedback: str = ""
+    # claude CLI 한도초과(LLMQuotaExceeded)로 일시정지됐을 때 텔레그램 재개 신호를 얼마나
+    # 기다릴지 — StartApplication.approval_timeout_hours 와 같은 값을 그대로 물려받는다
+    # (워크플로우는 설정을 직접 안 읽는다, 위 주석과 같은 이유). §11.2c 참고.
+    approval_timeout_hours: int = Field(default=72, ge=1)
 
 
 class ResumeDraft(_Frozen):

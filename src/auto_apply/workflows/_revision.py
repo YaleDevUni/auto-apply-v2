@@ -34,6 +34,15 @@ class ResumeGenerationFailed(Exception):
     """child ResumeWorkflow 가 실패했다 — 호출자가 NEEDS_HUMAN 으로 마무리한다."""
 
 
+def resume_workflow_id(application_id: str, round_no: int) -> str:
+    """child ResumeWorkflow 의 결정론적 id. `application.py`도 같은 공식으로 계산해 텔레그램
+
+    `resume_llm_generation` 도구가 signal 을 보낼 대상을 알아낸다(§11.2c 한도초과
+    pause-and-resume) — 문자열 포맷을 두 파일에서 각자 만들면 갈라질 위험이 있어 여기 하나로 뺐다.
+    """
+    return f"resume-{application_id}-{round_no}"
+
+
 @dataclass(frozen=True)
 class GeneratedResume:
     draft: ResumeDraft
@@ -65,8 +74,9 @@ async def generate_and_render(
                 user_id=cmd.user_id,
                 job=job,
                 feedback=feedback,
+                approval_timeout_hours=cmd.approval_timeout_hours,
             ),
-            id=f"resume-{cmd.application_id}-{round_no}",
+            id=resume_workflow_id(cmd.application_id, round_no),
             task_queue=QUEUE_AI,
         )
     except ChildWorkflowError as e:

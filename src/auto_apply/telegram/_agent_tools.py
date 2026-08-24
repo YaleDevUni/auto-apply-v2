@@ -23,6 +23,10 @@
 `retry_application`(`_agent_tools_retry.py`)도 `apply_by_url`과 같은 시작 경로를 타지만
 URL 대신 application_id 만 있으면 된다 — job 캐시에서 URL을 역으로 찾는다(그 파일 docstring
 참고, 2026-08-23).
+
+`resume_llm_generation`(`_agent_tools_resume_llm.py`)은 워크플로우를 새로 시작하지 않는다 —
+claude CLI 한도초과로 멈춰 있는 *같은* 실행에 재개 signal 만 보낸다(§11.2c pause-and-resume,
+그 파일 docstring 참고).
 """
 
 from collections.abc import Awaitable, Callable
@@ -36,6 +40,7 @@ from auto_apply.domain.job_identity import canonical_key
 from auto_apply.telegram._agent_tools_collect import COLLECT_TOOLS
 from auto_apply.telegram._agent_tools_recipe import RECIPE_TOOLS
 from auto_apply.telegram._agent_tools_resend import RESEND_TOOLS
+from auto_apply.telegram._agent_tools_resume_llm import RESUME_LLM_TOOLS
 from auto_apply.telegram._agent_tools_retry import RETRY_TOOLS
 from auto_apply.telegram._agent_tools_schedule import SCHEDULE_TOOLS
 
@@ -209,6 +214,9 @@ TOOLS: dict[str, tuple[str, tuple[str, ...], ToolHandler]] = {
     # application_id 만으로 재시도(retry_application)는 _agent_tools_retry.py 에서 구현
     # (§ 그 파일 docstring).
     **RETRY_TOOLS,
+    # 한도초과로 멈춘 이력서 생성 재개(resume_llm_generation)는 _agent_tools_resume_llm.py
+    # 에서 구현 (§ 그 파일 docstring, §11.2c).
+    **RESUME_LLM_TOOLS,
     # recipe 격리 해제(unquarantine_recipe)는 _agent_tools_recipe.py 에서 구현
     # (§ 그 파일 docstring, §2.4a).
     **RECIPE_TOOLS,

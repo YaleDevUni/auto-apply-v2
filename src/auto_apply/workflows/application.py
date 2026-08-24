@@ -87,6 +87,10 @@ class ApplicationWorkflow:
         # (§ contracts/dto.py PendingDecisionView 참고) — request_approval activity 에 보낸
         # DecisionRequest 를 그대로 보관해 뒀다가 재전송 때 다시 쓴다.
         self._last_request: DecisionRequest | None = None
+        # child ResumeWorkflow 가 claude CLI 한도초과로 멈춰 있는 동안에만 채워진다 — 텔레그램
+        # `resume_llm_generation` 도구가 `pending_llm_resume` query 로 읽어 그 workflow_id 에
+        # 직접 `ResumeWorkflow.retry_now` signal 을 보낸다(§11.2c).
+        self._resume_workflow_id: str | None = None
 
     # ─────────────────────────── run ───────────────────────────
     @workflow.run
@@ -136,6 +140,10 @@ class ApplicationWorkflow:
         self, cmd: StartApplication, job: JobRef, *, feedback: str, round_no: int
     ) -> _revision.GeneratedResume | None:
         await self._persist(cmd, ApplicationState.GENERATING_RESUME)
+        # 실제로 멈추는지는 child 안(§11.2c ResumeWorkflow.paused)에서만 아는데, 여기 id 를
+        # 미리 채워두면 텔레그램 도구가 "일단 signal 을 보내본다"가 가능해진다 — 아직 안 멈춘
+        # 상태로 와도 무해하다(ResumeWorkflow.retry_now 는 다음 대기 진입 때 리셋되는 멱등 신호).
+        self._resume_workflow_id = _revision.resume_workflow_id(cmd.application_id, round_no)
         try:
             return await _revision.generate_and_render(
                 cmd,
@@ -146,6 +154,8 @@ class ApplicationWorkflow:
             )
         except _revision.ResumeGenerationFailed:
             return None
+        finally:
+            self._resume_workflow_id = None
 
     async def _approval_loop(
         self, cmd: StartApplication, job: JobRef, generated: _revision.GeneratedResume
@@ -502,3 +512,12 @@ class ApplicationWorkflow:
         nonce = self._decision_nonce if pending and self._decision_nonce else ""
         request = self._last_request if pending else None
         return PendingDecisionView(has_pending=pending, nonce=nonce, request=request)
+
+    @workflow.query
+    def pending_llm_resume(self) -> str:
+        """claude CLI 한도초과로 멈춰 있는 child ResumeWorkflow 의 workflow_id.
+
+        진행 중인 이력서 생성이 없으면 빈 문자열이다. 텔레그램 `resume_llm_generation` 도구가
+        이 id 로 `ResumeWorkflow.retry_now` signal 을 직접 보낸다(§11.2c).
+        """
+        return self._resume_workflow_id or ""
