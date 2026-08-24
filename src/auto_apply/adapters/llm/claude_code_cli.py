@@ -41,12 +41,31 @@ cache_control 4개 초과 폴백: 위 캐싱을 라이브 배치로 돌리다(20
 매번 다시 걸려 재시도 예산을 태울 뿐이라(`_AI_RETRY`, `workflows/resume.py`), `_run`이 이
 시그니처(`_CACHE_OVERFLOW_PATTERN`)를 만나면 그 자리에서 `cache_control` 없이 한 번 더
 호출한다 — 캐싱은 최적화일 뿐 정확성엔 필요 없다.
+
+turn()(§ 텔레그램 챗 에이전트 오버헤드 절감, 2026-08-24): 위 설계는 매 호출마다 새 프로세스를
+띄운다 — 격리는 완벽하지만(콘텐츠 오염 불가능) 프로세스 기동 자체의 고정비용(실측 ~3.5초,
+auto-memory·백그라운드 프리페치·keychain 읽기 등 `duration_ms`에 안 잡히는 부분 — `--bare`를
+쓰면 없어지지만 그러면 OAuth 구독 대신 API 키 과금으로 강제 전환되니 못 쓴다)을 호출마다
+다시 낸다. 텔레그램 챗 에이전트의 ReAct 루프(`telegram/agent.py handle_chat`)처럼 한 번의
+사용자 메시지 안에서 여러 번 구조화 호출을 반복하는 곳은 이 비용을 여러 번 내는 게 낭비다.
+실측(2026-08-24): 프로세스를 살려둔 채 stdin 으로 메시지를 또 보내면 재기동 비용 없이
+순수 모델 응답 시간만 든다 — 근데 대화 맥락이 자동으로 이어진다(직전 턴 내용을 정확히
+기억함). `/clear` 를 보내면 새 session_id 로 전환되고 실제로 이전 내용을 잊는다(LLM 호출
+없이 30ms, 사실상 공짜) — 프로세스 재사용 + `/clear` 조합이면 세션 오염 없이 기동 비용만
+아낄 수 있다. 문제는 `/clear`가 슬래시커맨드라 `--disable-slash-commands`가 있으면 막힌다
+("/clear isn't available in this environment.") — 그렇다고 이 플래그를 빼면 `system init`
+이벤트에 스킬/슬래시커맨드 44개 전체가 노출된다(`--tools ""`/`--strict-mcp-config`가
+여전히 막아줘서 실제로 실행은 안 되지만 표면은 넓어진다). 외부 공고 텍스트가 프롬프트에
+들어가는 이력서 생성 쪽엔 이 표면을 열 이유가 없어서, `allow_slash_commands=True`로 명시
+설정한 인스턴스에서만 `turn()`을 허용한다 — `bootstrap.py`에서 `chat_llm`(텔레그램 전용
+인스턴스)에만 켠다. 실제 프로세스 스트리밍 구현은 `_claude_cli_turn.py`(companion 모듈,
+파일 크기 분리)에 있다.
 """
 
 import asyncio
 import json
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from pydantic import BaseModel, ValidationError
@@ -57,6 +76,12 @@ from auto_apply.domain.errors import (
     LLMQuotaExceeded,
     LLMSchemaViolation,
 )
+
+if TYPE_CHECKING:
+    # 런타임 import 는 turn() 안에서 지연으로 한다 — _claude_cli_turn.py 가 이 파일의
+    # _build_stdin_payload/_classify_error/logger 를 최상단에서 가져다 쓰기 때문에, 이
+    # 파일이 최상단에서 그쪽을 다시 가져오면 순환 import 가 된다. 타입 체크용으로만 쓴다.
+    from auto_apply.adapters.llm._claude_cli_turn import ClaudeCliTurn
 
 logger = structlog.get_logger()
 
@@ -163,11 +188,16 @@ class ClaudeCodeCliLLM:
         model: str = "claude-sonnet-5",
         max_budget_usd: float | None = 0.5,
         timeout_seconds: float = 120.0,
+        allow_slash_commands: bool = False,
     ) -> None:
         self._binary = binary
         self._model = model
         self._max_budget_usd = max_budget_usd
         self._timeout_seconds = timeout_seconds
+        # turn()(모듈 docstring 참고) 전용 스위치 — 기본은 잠금. 켜면 매 호출(1회성 호출
+        # 포함)에서 --disable-slash-commands 가 빠져 슬래시커맨드 44개가 모델에 노출된다.
+        # 외부 텍스트가 프롬프트에 들어가는 인스턴스에선 절대 켜면 안 된다.
+        self._allow_slash_commands = allow_slash_commands
 
     async def complete(self, prompt: str, *, max_tokens: int = 2048, cache_prefix: str = "") -> str:
         envelope = await self._run(prompt, cache_prefix=cache_prefix)
@@ -282,7 +312,10 @@ class ClaudeCodeCliLLM:
             "--tools",
             "",
             "--strict-mcp-config",
-            "--disable-slash-commands",
+        ]
+        if not self._allow_slash_commands:
+            args.append("--disable-slash-commands")
+        args += [
             "--setting-sources",
             "",
             "--permission-mode",
@@ -294,3 +327,27 @@ class ClaudeCodeCliLLM:
         if json_schema is not None:
             args += ["--json-schema", json.dumps(json_schema)]
         return args
+
+    def turn(self) -> "ClaudeCliTurn":
+        """모듈 docstring "turn()" 절 참고. `allow_slash_commands=False`(기본값) 인스턴스는
+        `/clear`가 막혀 있어 프로세스를 재사용하면 턴 사이 대화가 안 지워진 채 섞인다 —
+        그래서 명시적으로 거부한다(조용히 격리를 포기하지 않는다)."""
+        if not self._allow_slash_commands:
+            raise RuntimeError(
+                "turn() 은 allow_slash_commands=True 인스턴스에서만 쓸 수 있다 — 그렇지 않으면"
+                " /clear 가 막혀서 프로세스 재사용 시 턴 사이 대화가 안 지워진 채 섞인다"
+                "(claude_code_cli.py 모듈 docstring 'turn()' 절 참고)."
+            )
+        from auto_apply.adapters.llm._claude_cli_turn import ClaudeCliTurn
+
+        return ClaudeCliTurn(self)
+
+    async def _spawn(self, json_schema: dict[str, Any] | None) -> asyncio.subprocess.Process:
+        """`ClaudeCliTurn` 전용 — 프로세스만 띄우고 반환한다(입출력 스트리밍은 호출자 담당)."""
+        args = self._build_args(json_schema=json_schema)
+        return await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )

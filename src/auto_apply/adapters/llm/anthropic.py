@@ -1,3 +1,5 @@
+from contextlib import AbstractAsyncContextManager, nullcontext
+
 from anthropic import AsyncAnthropic
 from anthropic.types import TextBlockParam
 from pydantic import BaseModel, ValidationError
@@ -68,3 +70,8 @@ class AnthropicLLM:
                 except ValidationError as e:
                     raise LLMSchemaViolation(f"{schema.__name__}: {e}") from e
         raise LLMSchemaViolation(f"{schema.__name__}: tool_use 블록이 없다")
+
+    def turn(self) -> AbstractAsyncContextManager["AnthropicLLM"]:
+        # API 호출 자체엔 프로세스 기동 비용이 없다 — 재사용할 자원이 없어 self 를 그대로
+        # 감싼 no-op (ports/llm.py 계약 참고).
+        return nullcontext(self)

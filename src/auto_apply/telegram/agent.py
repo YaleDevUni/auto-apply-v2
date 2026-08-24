@@ -74,39 +74,42 @@ async def handle_chat(text: str, c: Container, client: Client) -> None:
     steps = 0  # 진전을 낸 스텝만 센다 — 중복으로 차단된 스텝은 blocked 로 따로 센다
     blocked = 0
     try:
-        while steps < MAX_STEPS and blocked < MAX_BLOCKED_STEPS:
-            prompt = build_prompt(text, transcript)
-            # 이력서 생성용 c.llm 이 아니라 c.chat_llm — 도구 선택/응답 판단은 훨씬 가벼운
-            # 분류 작업이라 더 싼 모델(cfg.telegram_agent_model)을 쓴다(bootstrap.py 참고).
-            step = await c.chat_llm.structured(prompt, AgentStep, cache_prefix=prefix)
-            if step.action == "respond":
-                await c.notifier.notify(NotifyEvent(kind="CHAT", message=step.response))
-                return
-            signature = (step.tool, tuple(sorted(step.tool_args.items())))
-            status: ToolCallStatus
-            if signature in called_signatures:
-                blocked += 1
-                status = "blocked"
-                observation = (
-                    f"{step.tool}({step.tool_args})는 이번 턴에 이미 같은 인자로 호출했습니다"
-                    " — 다시 부르지 말고 위 결과로 답하세요."
-                )
-            elif step.tool in SINGLE_SHOT_TOOLS and step.tool in called_tool_names:
-                blocked += 1
-                status = "blocked"
-                observation = (
-                    f"{step.tool}는 이번 턴에 이미 실행했습니다 — 추가로 부르지 말고 위 결과를"
-                    " 바탕으로 사용자에게 바로 답하세요."
-                )
-            else:
-                steps += 1
-                ok, observation = await _run_tool(step.tool, step.tool_args, c, client)
-                called_signatures.add(signature)
-                called_tool_names.add(step.tool)
-                status = "done" if ok else "failed"
-                if ok:
-                    executed.append((step.tool, observation))
-            transcript.append((step, observation, status))
+        # 이력서 생성용 c.llm 이 아니라 c.chat_llm — 도구 선택/응답 판단은 훨씬 가벼운 분류
+        # 작업이라 더 싼 모델(cfg.telegram_agent_model)을 쓴다(bootstrap.py 참고). turn()으로
+        # 이 while 루프의 반복 호출을 프로세스 하나에 묶는다 — 호출마다 새 프로세스를 띄우던
+        # 고정비용(~3.5초)을 최초 1회로 줄인다(claude_code_cli.py 모듈 docstring "turn()" 절).
+        async with c.chat_llm.turn() as turn_llm:
+            while steps < MAX_STEPS and blocked < MAX_BLOCKED_STEPS:
+                prompt = build_prompt(text, transcript)
+                step = await turn_llm.structured(prompt, AgentStep, cache_prefix=prefix)
+                if step.action == "respond":
+                    await c.notifier.notify(NotifyEvent(kind="CHAT", message=step.response))
+                    return
+                signature = (step.tool, tuple(sorted(step.tool_args.items())))
+                status: ToolCallStatus
+                if signature in called_signatures:
+                    blocked += 1
+                    status = "blocked"
+                    observation = (
+                        f"{step.tool}({step.tool_args})는 이번 턴에 이미 같은 인자로 호출했습니다"
+                        " — 다시 부르지 말고 위 결과로 답하세요."
+                    )
+                elif step.tool in SINGLE_SHOT_TOOLS and step.tool in called_tool_names:
+                    blocked += 1
+                    status = "blocked"
+                    observation = (
+                        f"{step.tool}는 이번 턴에 이미 실행했습니다 — 추가로 부르지 말고 위 결과를"
+                        " 바탕으로 사용자에게 바로 답하세요."
+                    )
+                else:
+                    steps += 1
+                    ok, observation = await _run_tool(step.tool, step.tool_args, c, client)
+                    called_signatures.add(signature)
+                    called_tool_names.add(step.tool)
+                    status = "done" if ok else "failed"
+                    if ok:
+                        executed.append((step.tool, observation))
+                transcript.append((step, observation, status))
         await c.notifier.notify(NotifyEvent(kind="CHAT", message=build_fallback_message(executed)))
     except Exception as e:  # 이 함수는 예외를 던지지 않는다 — 모듈 docstring 참고
         log.warning("telegram.chat_agent.turn_failed", error=str(e))

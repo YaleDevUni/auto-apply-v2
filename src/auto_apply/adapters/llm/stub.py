@@ -1,3 +1,5 @@
+from contextlib import AbstractAsyncContextManager, nullcontext
+
 from pydantic import BaseModel, ValidationError
 
 from auto_apply.domain.errors import LLMSchemaViolation
@@ -29,3 +31,7 @@ class StubLLM:
             return schema.model_validate(payload)
         except ValidationError as e:
             raise LLMSchemaViolation(f"{schema.__name__}: {e}") from e
+
+    def turn(self) -> AbstractAsyncContextManager["StubLLM"]:
+        # 재사용할 프로세스가 없다 — self 를 그대로 감싼 no-op (ports/llm.py 계약 참고).
+        return nullcontext(self)

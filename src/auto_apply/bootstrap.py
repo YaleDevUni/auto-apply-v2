@@ -126,11 +126,16 @@ def _build_store(cfg: Settings) -> BlobStore:
             )
 
 
-def _build_llm(cfg: Settings, *, model: str | None = None) -> LLMClient:
+def _build_llm(
+    cfg: Settings, *, model: str | None = None, allow_slash_commands: bool = False
+) -> LLMClient:
     """`model` 을 넘기면 cfg 의 프로바이더별 기본 모델(anthropic_model/claude_cli_model) 대신
 
     그걸 쓴다 — `chat_llm`(cfg.telegram_agent_model) 처럼 같은 프로바이더로 다른 모델의
     LLMClient 를 하나 더 만들 때 쓴다. stub 은 모델 개념이 없어 그대로 무시한다.
+
+    `allow_slash_commands` 는 claude_cli 전용 — `ClaudeCodeCliLLM.turn()`(§ 모듈 docstring)을
+    쓸 인스턴스에서만 True 로 넘긴다. anthropic/stub 은 재사용할 프로세스가 없어 그대로 무시.
     """
     match cfg.llm_provider:
         case "stub":
@@ -143,6 +148,7 @@ def _build_llm(cfg: Settings, *, model: str | None = None) -> LLMClient:
             return ClaudeCodeCliLLM(
                 binary=cfg.claude_cli_binary,
                 model=model or cfg.claude_cli_model,
+                allow_slash_commands=allow_slash_commands,
                 max_budget_usd=cfg.claude_cli_max_budget_usd,
             )
 
@@ -362,7 +368,9 @@ def build_container(cfg: Settings) -> Container:
     clock = SystemClock()
     store = _build_store(cfg)
     llm = _build_llm(cfg)
-    chat_llm = _build_llm(cfg, model=cfg.telegram_agent_model)
+    # allow_slash_commands=True — chat_llm 만 turn()(§ claude_code_cli.py) 을 쓸 수 있게 연다.
+    # llm(이력서 생성)은 외부 공고 텍스트가 프롬프트에 들어가서 계속 잠가둔다.
+    chat_llm = _build_llm(cfg, model=cfg.telegram_agent_model, allow_slash_commands=True)
     facts = _build_facts(cfg)
     profile = _build_profile(cfg)
     portfolio = _build_portfolio(cfg)

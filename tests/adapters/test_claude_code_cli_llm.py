@@ -277,6 +277,136 @@ async def test_cache_control_overflow_persisting_still_raises_execution_error():
         await llm.complete("변하는 접미어", cache_prefix="안정적인 접두어")
 
 
+class _FakeStdin:
+    def __init__(self) -> None:
+        self.written: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.written.append(data)
+
+    async def drain(self) -> None:
+        pass
+
+
+class _FakeStdout:
+    """`readline()`이 미리 채워둔 줄을 하나씩 내준다 — turn() 은 stdin 을 쓸 때마다 그만큼만
+
+    stdout 을 읽으므로, 호출 순서대로 큐에 다 채워두면 된다(§ test_claude_code_cli_llm.py)."""
+
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = list(lines)
+
+    async def readline(self) -> bytes:
+        return self._lines.pop(0) if self._lines else b""
+
+
+class _FakeTurnProc:
+    def __init__(self, stdout_lines: list[bytes]) -> None:
+        self.stdin = _FakeStdin()
+        self.stdout = _FakeStdout(stdout_lines)
+        self.returncode: int | None = None
+        self.killed = False
+        self.waited = False
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self) -> int | None:
+        self.waited = True
+        return self.returncode
+
+
+def _turn_result_line(**overrides: object) -> bytes:
+    return _result_line(**overrides) + b"\n"
+
+
+async def test_turn_rejects_instances_without_allow_slash_commands():
+    llm = ClaudeCodeCliLLM()  # 기본값 False
+    with pytest.raises(RuntimeError, match="allow_slash_commands"):
+        llm.turn()
+
+
+async def test_turn_drops_disable_slash_commands_flag():
+    llm = ClaudeCodeCliLLM(allow_slash_commands=True)
+    captured: list[str] = []
+
+    async def fake_exec(*args: str, **_kwargs: object) -> _FakeTurnProc:
+        captured.extend(args)
+        return _FakeTurnProc([_turn_result_line()])
+
+    with patch.object(module.asyncio, "create_subprocess_exec", fake_exec):
+        async with llm.turn() as turn_llm:
+            await turn_llm.complete("prompt")
+
+    assert "--disable-slash-commands" not in captured
+    assert "--strict-mcp-config" in captured  # 나머지 잠금은 그대로 유지
+
+
+async def test_turn_reuses_one_process_and_sends_clear_between_calls():
+    llm = ClaudeCodeCliLLM(allow_slash_commands=True)
+    spawn_count = 0
+
+    async def fake_exec(*_args: str, **_kwargs: object) -> _FakeTurnProc:
+        nonlocal spawn_count
+        spawn_count += 1
+        # call1 결과 → /clear 결과 → call2 결과, 순서대로 한 프로세스가 다 내준다.
+        return _FakeTurnProc(
+            [
+                _turn_result_line(result="첫번째"),
+                _turn_result_line(result=None),  # /clear 응답
+                _turn_result_line(result="두번째"),
+            ]
+        )
+
+    with patch.object(module.asyncio, "create_subprocess_exec", fake_exec):
+        async with llm.turn() as turn_llm:
+            first = await turn_llm.complete("prompt1")
+            second = await turn_llm.complete("prompt2")
+
+    assert first == "첫번째"
+    assert second == "두번째"
+    assert spawn_count == 1  # 프로세스는 한 번만 떴다
+
+    proc = turn_llm._proc
+    written = [json.loads(b) for b in proc.stdin.written]
+    assert len(written) == 3
+    assert written[0]["message"]["content"][0]["text"] == "prompt1"
+    assert written[1]["message"]["content"][0]["text"] == "/clear"
+    assert written[2]["message"]["content"][0]["text"] == "prompt2"
+
+
+async def test_turn_kills_the_process_on_exit():
+    llm = ClaudeCodeCliLLM(allow_slash_commands=True)
+    proc_holder: list[_FakeTurnProc] = []
+
+    async def fake_exec(*_args: str, **_kwargs: object) -> _FakeTurnProc:
+        proc = _FakeTurnProc([_turn_result_line()])
+        proc_holder.append(proc)
+        return proc
+
+    with patch.object(module.asyncio, "create_subprocess_exec", fake_exec):
+        async with llm.turn() as turn_llm:
+            await turn_llm.complete("prompt")
+
+    assert proc_holder[0].killed
+    assert proc_holder[0].waited
+
+
+async def test_turn_error_envelope_raises_execution_error():
+    llm = ClaudeCodeCliLLM(allow_slash_commands=True)
+
+    async def fake_exec(*_args: str, **_kwargs: object) -> _FakeTurnProc:
+        return _FakeTurnProc([_turn_result_line(is_error=True, result="뭔가 실패")])
+
+    with (
+        patch.object(module.asyncio, "create_subprocess_exec", fake_exec),
+        pytest.raises(LLMExecutionError),
+    ):
+        async with llm.turn() as turn_llm:
+            await turn_llm.complete("prompt")
+
+
 async def test_empty_prompt_with_cache_prefix_omits_the_second_block():
     """재프롬프트 루프 1번째 시도 — addition 이 빈 문자열이면 빈 텍스트 블록을 안 보낸다."""
     llm = ClaudeCodeCliLLM()

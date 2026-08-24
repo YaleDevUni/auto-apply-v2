@@ -116,6 +116,39 @@ propose_guide_patch`처럼 재시도 루프가 없는 단발 호출은 재사용
 설치되고 로그인돼 있어야 한다는 전제가 있어 CI/컨테이너 배포 환경에는 안 맞을 수 있다 — 로컬
 개발/개인 실행 용도다.
 
+**`turn()` — 텔레그램 챗 에이전트 전용 프로세스 재사용 (2026-08-24, 사용자 요청):** 위 설계는
+매 호출이 독립 프로세스라 완벽하게 격리되지만, 프로세스 기동 자체에 고정비용이 든다(실측:
+CLI 가 자체 보고하는 `duration_ms`는 ~1.7초인데 실제 wall time 은 ~5.5초 — 그 차이는
+auto-memory·백그라운드 프리페치·keychain 읽기 등 `--bare`가 걷어내는 것들이다. `--bare`는
+위에서 이미 기각했으므로 못 쓴다). 텔레그램 챗 에이전트(`telegram/agent.py handle_chat`)의
+ReAct 루프처럼 한 번의 사용자 메시지 안에서 `AgentStep` 구조화 호출을 여러 번 반복하는
+곳에서 이 비용이 그대로 반복된다.
+
+실측(2026-08-24): 프로세스를 살려둔 채 stdin 으로 다음 메시지를 보내면 기동 비용 없이 순수
+모델 응답 시간만 든다 — 근데 대화 맥락이 자동으로 이어진다(직전 턴에서 답한 내용을 정확히
+기억함). `/clear`를 보내면 새 `session_id`로 전환되고 실제로 이전 내용을 잊는다(LLM 호출
+없이 ~30ms, 사실상 공짜) — **프로세스 재사용 + `/clear` 조합이면 세션 오염 없이 기동
+비용만 아낄 수 있다.** 문제는 `/clear`가 슬래시커맨드라 `--disable-slash-commands`가 있으면
+막힌다(`"/clear isn't available in this environment."`, 대화도 안 지워짐) — 그렇다고 이
+플래그를 빼면 `system init` 이벤트에 스킬/슬래시커맨드 카탈로그 전체(~44개, `/mcp`·
+`/config`·`/security-review` 등)가 모델에 노출된다. `--tools ""`/`--strict-mcp-config`가
+여전히 막아줘서 실제로 실행은 안 되지만(빌트인 툴도 MCP 서버도 0개), 표면 자체는 넓어진다.
+
+이력서 생성(`c.llm`)은 외부 공고 텍스트가 프롬프트에 그대로 들어가서 이 표면을 열 이유가
+없다 — `ClaudeCodeCliLLM(allow_slash_commands=True)`로 명시 설정한 인스턴스에서만
+`turn()`을 허용하고(`bootstrap.py`가 `chat_llm`에만 켠다, `llm`은 기본값 `False`인 채
+잠가둔다), `allow_slash_commands=False`(기본값) 인스턴스에서 `turn()`을 부르면 조용히
+격리를 포기하는 대신 `RuntimeError`를 던진다. `ports/llm.py`의 `LLMClient.turn()`은
+`AbstractAsyncContextManager[LLMCallable]`을 반환하는 일반 계약이다(`LLMCallable`은
+`complete`/`structured`만 있는 축소 Protocol — `turn()`의 반환값이 다시 `turn()`을 가져야
+하는 재귀적 요구를 피한다) — `StubLLM`/`AnthropicLLM`은 재사용할 자원이 없어 `self`를 감싼
+`nullcontext`를 돌려주고, `ClaudeCodeCliLLM`만 `adapters/llm/_claude_cli_turn.py`의
+`ClaudeCliTurn`(프로세스를 열어둔 채 stdin/stdout 을 줄 단위로 스트리밍하고, 두 번째 호출부터
+`/clear`를 앞세우고, `__aexit__`에서 프로세스를 죽인다)으로 실제 재사용을 구현한다.
+`handle_chat`은 `async with c.chat_llm.turn() as turn_llm:`으로 while 루프 전체를 감싸
+`turn_llm.structured(...)`를 부른다 — 한 번의 telegram 메시지 처리가 끝나면(정상 종료든
+예외든) 프로세스가 죽어서, 서로 다른 메시지끼리는 여전히 완전히 격리된다.
+
 ### 11.2d 워크플로우 능동 감시 — `watchdog.py`
 
 `_execute()`의 `load_active_recipe`가 try/except 없이 흘러 `ApplicationWorkflow`가 조용히
