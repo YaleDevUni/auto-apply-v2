@@ -9,12 +9,26 @@
 
 인프라만 Docker, **api/worker 등은 호스트에서 uv로** 실행한다(디버깅 편의).
 
+**기본은 한 번에 다 띄운다** — 터미널을 나눠 하나씩 켜다 보면 리스너가 조용히 빠지는 사고가
+있었다(2026-08-28). `scripts/dev_up.sh`가 인프라 확인 → 마이그레이션 → 워커×3/api/
+telegram-listener/watchdog 6개를 백그라운드로 기동하고, 하나라도 뜬 직후 죽으면 그것만
+콕 집어 실패로 보고한다(전체를 성공으로 보고하지 않는다):
+
 ```bash
-make up                      # postgres / temporal / temporal-ui / minio → UI: localhost:8080
-make migrate                 # REPOSITORY=postgres 일 때만
+make dev-up                  # 인프라+마이그레이션+워커×3+api+telegram-listen+watchdog
+make dev-status              # 6개 프로세스 + docker compose ps 상태
+make dev-down                # 정지 (ARGS="--infra" 로 docker 인프라까지 같이)
 ```
 
-터미널을 따로 쓴다. 큐마다 자원 특성이 달라 분리했다(§1):
+로그는 `logs/<name>.log`, pid 는 `logs/pids/<name>.pid` — 이미 떠 있는 프로세스는 pidfile로
+감지해 중복 기동하지 않으므로, 실패한 것만 있어도 `dev-up`을 그냥 다시 돌리면 된다.
+
+개별 프로세스를 포그라운드에 붙잡고 디버깅할 때만 터미널을 나눠 쓴다(큐마다 자원 특성이
+달라 원래도 분리돼 있었다, §1):
+
+```bash
+make up && make migrate      # 인프라(postgres/temporal/temporal-ui/minio) + 마이그레이션
+```
 
 ```bash
 QUEUE=default make worker    # 오케스트레이션 + DB
@@ -30,8 +44,8 @@ make api                     # FastAPI (웹훅을 쓸 때만 필수)
 
 **세 상주 프로세스(worker/listener/watchdog)가 크래시하면 텔레그램으로 알림이 온다**
 (`process_alerts.run_guarded`, §11.2d). `Ctrl+C`나 설정 오류로 인한 조기 종료는 사고가
-아니라 알리지 않는다 — 알림이 없다고 살아있다는 뜻은 아니므로, 조용해졌으면 프로세스 목록을
-먼저 본다.
+아니라 알리지 않는다 — 알림이 없다고 살아있다는 뜻은 아니므로, 조용해졌으면 `make dev-status`로
+프로세스 목록을 먼저 본다.
 
 ---
 
@@ -114,7 +128,7 @@ make resume-cleanup ARGS="--yes"     # 실제 삭제
 | 증상 | 먼저 볼 것 |
 |---|---|
 | 지원이 조용히 멈춰 있다 | Temporal UI(localhost:8080) → 해당 워크플로우가 Running 인지. Running 이면 worker 가 죽었을 가능성이 크다(watchdog 은 *닫힌* 워크플로우만 본다, §11.2d) |
-| 승인 버튼을 눌러도 반응이 없다 | listener 프로세스 → `cli resend-pending` 으로 복구 |
+| 승인 버튼을 눌러도 반응이 없다 | `make dev-status`로 listener 프로세스 확인 → 죽어 있으면 `make dev-up`으로 재기동 → `cli resend-pending` 으로 복구 |
 | 공고가 하나도 안 잡힌다 | `JOB_COLLECTION_UNHEALTHY` 알림이 왔는지. 셀렉터가 바뀌면 예외 없이 `found=0` 이 된다(§11.2d 1번) |
 | 이력서 생성이 실패한다 | `LLMAuthRequired`(claude CLI 로그인 풀림) / `LLMQuotaExceeded`(구독 한도) 알림 — 둘 다 재시도로 안 풀린다. 해결 후 `retry_application` (§11.2c) |
 | 실행이 계속 같은 자리에서 실패한다 | 수선 워크플로우가 이미 돌고 있는지(`repair-{platform}-{form_hash}`). recipe DOM 문제가 아니라 timeout 일 수도 있다 — 실패 사유에 `Timeout \d+ms exceeded` 가 있으면 셀렉터 문제가 아니다(§2.4) |

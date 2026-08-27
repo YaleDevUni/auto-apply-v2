@@ -39,6 +39,9 @@ data/
 *.db
 *.sqlite3
 
+# dev 프로세스 로그/pid (scripts/dev_up.sh)
+logs/
+
 # Playwright
 test-results/
 playwright-report/

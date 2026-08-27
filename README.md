@@ -750,28 +750,31 @@ make check   # lint + type + arch + test  ← 커밋 전 필수
 # 1. 의존성 + .env + config 생성
 make setup
 
-# 2. 인프라 기동 → Temporal UI: localhost:8080, MinIO: localhost:9001
-make up
+# 2~7. 인프라 + 마이그레이션 + 워커×3 + api + telegram-listen + watchdog 한 번에
+#      (누락 없이 기동됐는지 검증하고, 실패한 프로세스만 콕 집어 보고한다)
+make dev-up
 
-# 3. (REPOSITORY=postgres 인 경우) 마이그레이션
-make migrate
-
-# 4. 워커 기동 — 큐마다 별도 프로세스
-QUEUE=default make worker
-QUEUE=ai      make worker
-QUEUE=browser make worker
-
-# 5. API 서버
-make api
-
-# 6. Telegram 롱폴링 리스너 (공인 URL 없는 로컬 개발용)
-make telegram-listen
-
-# 7. 워크플로우 실패 감시
-make watchdog
+# 상태 확인 / 정지
+make dev-status
+make dev-down                 # ARGS="--infra" 주면 docker 인프라까지 같이 정지
 ```
 
 > 인프라는 Docker로, **api/worker는 호스트에서 uv로** 실행합니다. 디버깅 편의를 위한 의도적인 분리입니다.
+> `make dev-up`은 이 편의를 유지한 채 6개 프로세스(워커×3·api·telegram-listen·watchdog)를
+> `nohup`으로 백그라운드 기동하고 `logs/<name>.log`에 각각 남긴다. 개별 프로세스를 포그라운드에서
+> 붙잡고 디버깅하고 싶으면 아래처럼 하나씩 띄운다:
+
+```bash
+make up && make migrate       # 인프라 + 마이그레이션만
+
+QUEUE=default make worker     # 큐마다 별도 프로세스
+QUEUE=ai      make worker
+QUEUE=browser make worker
+
+make api                      # API 서버
+make telegram-listen          # Telegram 롱폴링 리스너 (공인 URL 없는 로컬 개발용)
+make watchdog                 # 워크플로우 실패 감시
+```
 
 ### 주요 CLI
 
