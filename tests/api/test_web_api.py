@@ -131,6 +131,14 @@ async def test_pending_decision_has_resume_url_while_awaiting_approval(client):
     body = pending.json()
     assert body["job_url"] == JOB_URL
     assert body["resume_url"]
+    assert body["resume_url"].endswith(f"/applications/{application_id}/resume.pdf")
+
+    # InMemoryBlobStore.presign() 은 브라우저가 못 여는 `memory://` 스킴을 준다 — resume_url 이
+    # API 가 바이트를 직접 응답하는 프록시 엔드포인트를 가리켜야 한다(2026-08-27 실측 버그).
+    pdf = await ac.get(f"/applications/{application_id}/resume.pdf")
+    assert pdf.status_code == 200
+    assert pdf.headers["content-type"] == "application/pdf"
+    assert pdf.content
 
     approved = await ac.post(f"/applications/{application_id}/approve", json={})
     assert approved.status_code == 202
@@ -169,4 +177,10 @@ async def test_apply_by_url_endpoint_starts_workflow():
 async def test_pending_decision_unknown_application_returns_404(client):
     ac, _env, _h = client
     resp = await ac.get("/applications/does-not-exist/pending")
+    assert resp.status_code == 404
+
+
+async def test_resume_pdf_unknown_application_returns_404(client):
+    ac, _env, _h = client
+    resp = await ac.get("/applications/does-not-exist/resume.pdf")
     assert resp.status_code == 404

@@ -4,9 +4,8 @@
 그대로 호출하거나, 워크플로우 query 결과를 HTTP 응답 모양으로 옮기기만 한다.
 """
 
-from datetime import timedelta
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request, Response
+from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
 from auto_apply.api.deps import ContainerDep, TemporalClientDep
@@ -18,12 +17,23 @@ from auto_apply.api.schemas import (
     PendingDecisionResponse,
 )
 from auto_apply.apply_intake import apply_by_url
+from auto_apply.contracts.dto import PendingDecisionView
+from auto_apply.domain.errors import BlobNotFound
 from auto_apply.domain.job_identity import canonical_key
 from auto_apply.workflows.application import ApplicationWorkflow
 
 router = APIRouter(prefix="/applications", tags=["web"])
 
-_RESUME_URL_TTL = timedelta(minutes=15)
+
+async def _pending_view(application_id: str, client: Client) -> PendingDecisionView:
+    try:
+        return await client.get_workflow_handle(f"application-{application_id}").query(
+            ApplicationWorkflow.pending_decision
+        )
+    except RPCError as e:
+        if e.status == RPCStatusCode.NOT_FOUND:
+            raise HTTPException(404, f"application {application_id} not found") from e
+        raise HTTPException(502, f"temporal error: {e.message}") from e
 
 
 @router.get("")
@@ -70,22 +80,16 @@ async def apply_by_url_endpoint(
 
 @router.get("/{application_id}/pending")
 async def get_pending_decision(
-    application_id: str, c: ContainerDep, client: TemporalClientDep
+    application_id: str, request: Request, client: TemporalClientDep
 ) -> PendingDecisionResponse:
     """승인 카드 + 이력서 PDF 뷰어가 쓰는 엔드포인트. 텔레그램 승인 메시지(§6)와 같은 정보다."""
-    try:
-        view = await client.get_workflow_handle(f"application-{application_id}").query(
-            ApplicationWorkflow.pending_decision
-        )
-    except RPCError as e:
-        if e.status == RPCStatusCode.NOT_FOUND:
-            raise HTTPException(404, f"application {application_id} not found") from e
-        raise HTTPException(502, f"temporal error: {e.message}") from e
+    view = await _pending_view(application_id, client)
     if not view.has_pending or view.request is None:
         return PendingDecisionResponse(has_pending=False)
     req = view.request
+    # presigned URL을 안 쓰는 이유는 get_resume_pdf 의 docstring 참고.
     resume_url = (
-        await c.store.presign(req.artifact_url, _RESUME_URL_TTL) if req.artifact_url else None
+        f"{request.base_url}applications/{application_id}/resume.pdf" if req.artifact_url else None
     )
     return PendingDecisionResponse(
         has_pending=True,
@@ -97,3 +101,24 @@ async def get_pending_decision(
         caution_notes=req.caution_notes,
         resume_url=resume_url,
     )
+
+
+@router.get("/{application_id}/resume.pdf")
+async def get_resume_pdf(
+    application_id: str, c: ContainerDep, client: TemporalClientDep
+) -> Response:
+    """PDF 를 API 가 직접 바이트로 읽어 응답한다 — 프론트에 presigned URL 을 주지 않는 이유는
+
+    로컬 개발 스토리지(LocalBlobStore/InMemoryBlobStore)의 `presign()`이 `file://`/`memory://`를
+    반환하는데, 브라우저가 그런 스킴은 iframe 으로 로드를 거부하기 때문("Not allowed to load
+    local resource", 2026-08-27 실측). S3 백엔드까지 이 경로로 통일해 스토리지 구현체와
+    무관하게 동작하게 한다.
+    """
+    view = await _pending_view(application_id, client)
+    if not view.has_pending or view.request is None or view.request.artifact_url is None:
+        raise HTTPException(404, "resume not found")
+    try:
+        data = await c.store.get(view.request.artifact_url)
+    except BlobNotFound as e:
+        raise HTTPException(404, "resume blob not found") from e
+    return Response(content=data, media_type="application/pdf")
