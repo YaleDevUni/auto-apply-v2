@@ -135,3 +135,27 @@ flowchart LR
   이 삭제도 순수 정리(cleanup)이므로 `get_cached_resume` 조회 실패와 같은 논리로
   `ActivityError`를 잡아 무시한다 — 실패해도 이미 확정된 `state`/`submitted_at` 결과를
   막지 않는다. REJECTED/NEEDS_HUMAN/EXPIRED는 캐시를 그대로 남겨 재지원이 재사용한다.
+
+  **`workflow.patched()` 없이 배포해 열려있던 실행 32개가 멈춘 사고 (2026-08-27 수정)** —
+  위 캐시 도입(get_cached_resume 조회 + save_cached_resume 저장)이 `generate_and_render`의
+  round_no==1 경로에 activity 호출 2개를 새로 끼워 넣었는데, 이미 이 지점을 지나 `awaiting_approval`
+  까지 가 있던(캐시 기능 배포 이전에 시작된) 실행들의 히스토리엔 이 activity들이 없다. worker가
+  재시작돼 sticky 캐시가 날아가고(§ CLAUDE.md "워커 재시작 테스트" 경고와 같은 메커니즘 — 이번엔
+  테스트가 아니라 운영에서 실제로 발생) 히스토리를 처음부터 replay하자, 새 코드가 그 자리에서
+  activity를 스케줄하려다 히스토리에 기록된 `StartChildWorkflowExecutionInitiated`/이후
+  이벤트와 어긋나 `[TMPRL1100] Nondeterminism error`로 실행 32개가 전부 멈췄다(2026-08-27 실측,
+  텔레그램 승인 대기 중이던 실제 지원 건들 — approval_timeout_hours=72 타임아웃조차 replay가
+  막혀 못 걸렸다). `generate_and_render` 첫 줄에서 `workflow.patched("resume-cache-lookup-2026-08-24")`
+  를 한 번만 호출해 `cache_enabled`로 고정하고, read(`round_no==1 and cache_enabled`)와
+  write(`cache_enabled`, 라운드 무관) 게이트 모두에 이 값 하나를 재사용한다 — read만 감싸고
+  write를 빠뜨리면 round 1을 통과한 뒤 `save_cached_resume` 시점에서 또 어긋난다(실제로 이
+  실수를 했다가 replay 테스트로 잡았다). `workflow.patched()`는 같은 id를 여러 번 불러도 이
+  실행 안에서 한 번 정해진 값을 그대로 재사용하므로, 캐시 기능 이전에 시작된 실행은 이후 REVISE
+  라운드에서도 영원히 캐시를 안 쓴다 — 캐시는 순수 최적화라 이 정도 손해는 안전한 쪽으로 흡수한다.
+  회귀 테스트(`tests/workflows/test_application.py::test_replay_pre_resume_cache_history_stays_deterministic`)는
+  a1fff28 이전 코드로 실제 `WorkflowEnvironment`에서 캡처한 진짜 히스토리(`tests/workflows/fixtures/
+  pre_resume_cache_patch_history.json`)를 `temporalio.worker.Replayer`로 지금 코드에 재생시켜
+  `replay_failure`가 없는지 확인한다 — **새 코드가 이미 열려있는 실행의 히스토리와 어긋나면 이
+  방식으로 배포 전에 잡아야 한다.** 워크플로우 코드에서 activity/child workflow 호출 순서나
+  존재 여부를 바꿀 때는 이미 실행 중인(closed 아닌) 워크플로우가 있는지부터 확인하고, 있다면
+  `workflow.patched()`로 감싸는 것을 기본으로 삼는다.

@@ -5,11 +5,12 @@
 """
 
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
-from temporalio.client import Client, WorkflowFailureError, WorkflowHandle
+from temporalio.client import Client, WorkflowFailureError, WorkflowHandle, WorkflowHistory
 from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import Worker
+from temporalio.worker import Replayer, Worker
 
 from auto_apply.contracts.dto import (
     ApproveSignal,
@@ -248,6 +249,24 @@ async def test_cache_lookup_failure_falls_back_to_normal_generation_instead_of_c
 
     # 폴백 생성이 실제로 캐시에 저장까지 남긴다(다음 재지원이 쓸 수 있게).
     assert h.cached_resume(APP_ID) is not None
+
+
+async def test_replay_pre_resume_cache_history_stays_deterministic():
+    """a1fff28(이력서 캐시 재사용) 배포 전에 시작돼 이미 awaiting_approval 까지 간 실제 히스토리를
+
+    지금 코드로 replay 해도 [TMPRL1100] Nondeterminism error 가 나면 안 된다(2026-08-27 실측
+    사고: worker 재시작으로 sticky 캐시가 날아가 이 히스토리들이 처음부터 replay 되자, 옛
+    히스토리엔 없는 get_cached_resume/save_cached_resume activity 를 새 코드가 그 자리에서
+    스케줄하려다 32개 워크플로우가 전부 멈췄다). 이 fixture 는 a1fff28 이전 코드로 실제
+    WorkflowEnvironment 에서 캡처한 진짜 히스토리라 회귀가 재발하면 이 테스트가 그대로 잡는다.
+    """
+    fixture = Path(__file__).parent / "fixtures" / "pre_resume_cache_patch_history.json"
+    history = WorkflowHistory.from_json("application-app_1", fixture.read_text())
+
+    replayer = Replayer(workflows=[ApplicationWorkflow])
+    result = await replayer.replay_workflow(history)
+
+    assert result.replay_failure is None, result.replay_failure
 
 
 async def test_revise_ignores_cache_and_regenerates_even_with_prior_cached_resume(

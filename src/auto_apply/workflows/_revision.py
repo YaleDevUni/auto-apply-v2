@@ -88,7 +88,17 @@ async def generate_and_render(
     갇혀 `apply_intake._RETRYABLE_STATES` 밖이라 재지원도 막혔다(2026-08-24 실측, GC메디아이
     건).
     """
-    if round_no == 1:
+    # patched() 는 이 workflow 실행 전체에 대해 한 번 결정되면(첫 호출이 live 냐 replay 냐로)
+    # 이후 같은 id 호출은 라운드와 무관하게 그 결과를 그대로 재사용한다. round_no==1 조건으로
+    # short-circuit 해버리면 REVISE 라운드(round_no>1)에서 patched() 가 아예 호출되지 않아
+    # cache_enabled 가 라운드마다 새로 계산되는 것처럼 보이지만, 실제로는 같은 id 로 어차피
+    # 한 번만 결정돼야 하므로 여기서 라운드와 무관하게 먼저 호출해 캐시 활성 여부를 고정한다.
+    # 이 값을 read(round_no==1)/write(모든 라운드) 게이트에 공용으로 써야, 이 커밋 이전에
+    # 시작된(get_cached_resume/save_cached_resume 둘 다 히스토리에 없는) 워크플로우가
+    # replay 될 때 두 activity 를 전부 건너뛰어 옛 히스토리와 다시 맞아떨어진다.
+    cache_enabled = workflow.patched("resume-cache-lookup-2026-08-24")
+
+    if round_no == 1 and cache_enabled:
         try:
             cached = await workflow.execute_activity(
                 get_cached_resume,
@@ -126,12 +136,13 @@ async def generate_and_render(
         task_queue=QUEUE_AI,
         retry_policy=_QUICK,
     )
-    await workflow.execute_activity(
-        save_cached_resume,
-        CachedResume(application_id=cmd.application_id, draft=draft, pdf=pdf),
-        start_to_close_timeout=timedelta(seconds=30),
-        retry_policy=_QUICK,
-    )
+    if cache_enabled:
+        await workflow.execute_activity(
+            save_cached_resume,
+            CachedResume(application_id=cmd.application_id, draft=draft, pdf=pdf),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_QUICK,
+        )
     return GeneratedResume(draft, pdf)
 
 
