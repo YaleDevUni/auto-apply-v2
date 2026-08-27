@@ -62,4 +62,7 @@ watchdog: ## 워크플로우 능동 감시 (FAILED/TERMINATED/TIMED_OUT → 알�
 resume-cleanup: ## wanted 이력서 첨부파일 정리 (기본 dry-run, ARGS="--yes" 로 실제 삭제)
 	uv run python -m auto_apply.resume_cleanup $(ARGS)
 
-.PHONY: help setup up down reset migrate fmt lint type arch test test-fast test-all check api worker telegram-listen watchdog resume-cleanup
+web: ## 웹 콘솔 dev 서버 (§12, make api 가 먼저 떠 있어야 한다)
+	cd web && npm install && npm run dev
+
+.PHONY: help setup up down reset migrate fmt lint type arch test test-fast test-all check api worker telegram-listen watchdog resume-cleanup web
