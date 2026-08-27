@@ -285,25 +285,34 @@ async def test_revise_ignores_cache_and_regenerates_even_with_prior_cached_resum
 
     before_revise = h.cached_resume(APP_ID)
     assert before_revise is not None
+    assert h.notifier is not None
+    # last_ticket 는 application_id 하나로만 키가 잡혀서 handle1 이 남긴 nonce 가 handle2
+    # 시작 전부터 이미 거기 남아 있다 — seen 없이 기다리면 handle2 자신의 nonce 가 아니라
+    # 이 leftover 를 first_nonce 로 잡는 레이스가 나서(2026-08-27 실측, 이 테스트를 간헐적으로
+    # 깨뜨렸다) 미리 흡수해 둔다.
+    stale_nonce = h.notifier.last_ticket.get(APP_ID)
 
     async with _Workers(env.client, h):
         handle2 = await _start(env.client, _cmd())
         await _wait_state(handle2, ApplicationState.AWAITING_APPROVAL)
-        assert h.notifier is not None
-        first_nonce = await _wait_new_nonce(h, set())
+        seen = {stale_nonce} if stale_nonce is not None else set()
+        first_nonce = await _wait_new_nonce(h, seen)
         await handle2.signal(
             ApplicationWorkflow.revise,
             ReviseSignal(feedback="자기소개를 더 짧게", scope=RevisionScope.SPECIFIC),
         )
         second_nonce = await _wait_new_nonce(h, {first_nonce})
+        # COMPLETED 로 끝나면 캐시가 곧바로 정리되므로(§2.3 dc4c9e8) 그 전, 재생성 직후
+        # 시점에서 확인한다 — approve/result() 뒤로 미루면 이 assert 가 검증하려는 상태가
+        # 이미 지워지고 없다.
+        after_revise = h.cached_resume(APP_ID)
+        assert after_revise is not None
+        # REVISE 로 다시 만든 이력서라 이전 caches 와 resume_id 가 달라야 한다 — 캐시를 그냥
+        # 재사용했다면 같았을 것.
+        assert after_revise.draft.resume_id != before_revise.draft.resume_id
+
         await handle2.signal(ApplicationWorkflow.approve, ApproveSignal(nonce=second_nonce))
         await handle2.result()
-
-    after_revise = h.cached_resume(APP_ID)
-    assert after_revise is not None
-    # REVISE 로 다시 만든 이력서라 이전 caches 와 resume_id 가 달라야 한다 — 캐시를 그냥
-    # 재사용했다면 같았을 것.
-    assert after_revise.draft.resume_id != before_revise.draft.resume_id
 
 
 async def test_completed_deletes_cached_resume(env: WorkflowEnvironment):
