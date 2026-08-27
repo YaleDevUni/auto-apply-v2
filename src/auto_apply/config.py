@@ -136,6 +136,11 @@ class Settings(BaseSettings):
     checkpoint_timeout_minutes: int = Field(default=30, ge=1)
     checkpoint_poll_seconds: int = Field(default=5, ge=1)
 
+    # 웹 콘솔(§12) 프론트엔드(Vite dev 서버)가 cross-origin 으로 API 를 부를 수 있게 허용하는
+    # origin. 이 콘솔은 인증 계층이 없다(사용자 결정 — 로컬/사설망 전용 전제) — 그래서 CORS 도
+    # 와일드카드가 아니라 이 값 하나만 명시적으로 허용한다.
+    web_cors_origin: str = "http://localhost:5173"
+
     @property
     def allowed_chat_ids(self) -> frozenset[int]:
         raw = (c.strip() for c in self.telegram_allowed_chat_ids.split(","))

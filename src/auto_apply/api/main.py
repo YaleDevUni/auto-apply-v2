@@ -6,11 +6,12 @@ from typing import Any, cast
 
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from temporalio.client import Client
 
 from auto_apply.api.deps import ContainerDep
-from auto_apply.api.routers import applications, recipes, telegram
+from auto_apply.api.routers import applications, recipes, telegram, web
 from auto_apply.bootstrap import Container, build_container
 from auto_apply.config import load_settings
 from auto_apply.contracts.dto import NotifyEvent
@@ -37,6 +38,16 @@ app = FastAPI(title="auto-apply", version="0.1.0", lifespan=lifespan)
 app.include_router(applications.router)
 app.include_router(recipes.router)
 app.include_router(telegram.router)
+app.include_router(web.router)
+
+# §12 웹 콘솔(Vite dev 서버)에서의 cross-origin 호출 허용. 이 콘솔은 인증 계층이 없어(사용자
+# 결정 — 로컬/사설망 전용 전제) 와일드카드 대신 설정된 origin 하나만 명시적으로 연다.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[load_settings().web_cors_origin],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(Exception)

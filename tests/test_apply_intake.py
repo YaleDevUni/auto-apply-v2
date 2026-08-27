@@ -287,6 +287,8 @@ async def test_apply_by_url_starts_workflow_for_wanted_link():
 
     assert result.outcome == "started"
     assert result.label == f"{_WANTED_COMPANY} - {_WANTED_TITLE}"
+    # 웹 콘솔(§12)이 지원 시작 직후 상세 화면으로 이동하는 데 쓴다.
+    assert result.application_id == canonical_key(_WANTED_COMPANY, _WANTED_TITLE)
     assert len(client.started) == 1
     started = client.started[0]
     assert started["id"] == f"application-{canonical_key(_WANTED_COMPANY, _WANTED_TITLE)}"

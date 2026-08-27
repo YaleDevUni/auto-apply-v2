@@ -107,6 +107,8 @@ class ApplyByUrlResult:
     outcome: Literal["started", "duplicate", "unsupported_platform", "not_found"]
     label: str | None = None  # "회사 - 직무" — started/duplicate 일 때만 채워짐
     detail: str | None = None  # unsupported_platform/not_found 사유(사람이 읽을 문구)
+    application_id: str | None = None  # started/duplicate 일 때만 채워짐 — 웹 콘솔이 지원
+    # 시작 직후 상세 화면으로 바로 이동하려면 canonical_key(해시)가 필요해서 추가했다(§12).
 
 
 def _fresh_actionable(records: list[JobRecord], *, now: datetime) -> list[JobRecord]:
@@ -208,11 +210,11 @@ async def apply_by_url(url: str, c: Container, client: Client) -> ApplyByUrlResu
         states = await uow.applications.latest_states([application_id])
     state = states.get(application_id)
     if state is not None and state not in _RETRYABLE_STATES:
-        return ApplyByUrlResult(outcome="duplicate", label=label)
+        return ApplyByUrlResult(outcome="duplicate", label=label, application_id=application_id)
 
     if await _start_workflow(application_id, url, c, client):
-        return ApplyByUrlResult(outcome="started", label=label)
-    return ApplyByUrlResult(outcome="duplicate", label=label)
+        return ApplyByUrlResult(outcome="started", label=label, application_id=application_id)
+    return ApplyByUrlResult(outcome="duplicate", label=label, application_id=application_id)
 
 
 async def find_job_by_application_id(application_id: str, c: Container) -> JobRecord | None:
@@ -260,6 +262,7 @@ async def retry_application(application_id: str, c: Container, client: Client) -
         return ApplyByUrlResult(
             outcome="duplicate",
             label=f"{record.job.company} - {record.job.title}" if record else application_id,
+            application_id=application_id,
         )
     if record is None:
         return ApplyByUrlResult(
@@ -271,8 +274,8 @@ async def retry_application(application_id: str, c: Container, client: Client) -
         )
     label = f"{record.job.company} - {record.job.title}"
     if await _start_workflow(application_id, record.job.url, c, client):
-        return ApplyByUrlResult(outcome="started", label=label)
-    return ApplyByUrlResult(outcome="duplicate", label=label)
+        return ApplyByUrlResult(outcome="started", label=label, application_id=application_id)
+    return ApplyByUrlResult(outcome="duplicate", label=label, application_id=application_id)
 
 
 async def start_actionable_applications(

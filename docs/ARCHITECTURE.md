@@ -50,6 +50,7 @@
 | §11.2f | 자동 지원 시작 Schedule — `ApplyIntakeWorkflow` + 텔레그램 관리 | [`11-2-operational-entrypoints.md`](architecture/11-2-operational-entrypoints.md) |
 | §11.2g | 승인 대기 일괄 재전송 — `pending_decisions.py` | [`11-2-operational-entrypoints.md`](architecture/11-2-operational-entrypoints.md) |
 | §11.3–11.7 | activity = seam · composition root · contract test · 추상화 금지 목록 · PR 체크리스트 | [`11-ports-and-adapters.md`](architecture/11-ports-and-adapters.md) |
+| §12 | Web Console — React/shadcn 웹 콘솔, 채팅 에이전트를 안 쓰는 이유, 새 엔드포인트 3개 | [`12-web-console.md`](architecture/12-web-console.md) |
 
 ---
 
