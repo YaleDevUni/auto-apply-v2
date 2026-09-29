@@ -4,7 +4,7 @@
 
 ## 현재
 - 마일스톤: **M0 · 정리와 뼈대** (진행 중)
-- 다음 태스크: **T0.3 계층 규칙 · 앱 진입점 재구성**
+- 다음 태스크: **T0.4 문서 정리**
 - 차단 요소: 없음
 
 ## 완료
@@ -13,11 +13,12 @@
 - T0.1 폐기 코드 삭제 — 검증 PASS_WITH_NOTES. 카드 밖 삭제(ApplicationWorkflow·API 라우터·cli·포트폴리오 매핑)는 정당,
   잔재는 T0.2·M1·M6 카드로 이관. 웹 콘솔은 M1 전까지 동작 안 함(엔드포인트 삭제됨). D16(TanStack Router) 추가.
 - T0.2 Temporal·Postgres·S3 제거, SQLite+Alembic — 검증 PASS_WITH_NOTES. 상태 이력 A→B→A 버그를 append-only 로 고쳐 amend.
-  잔재는 T0.3·M3·M4·M5·M7 카드로 이관. 로컬 v2 데이터(`var/`·config v2 파일) 삭제 완료(`var/resumes` 만 사용자 확인 대기).
+  잔재는 T0.3·M3·M4·M5·M7 카드로 이관. 로컬 v2 데이터(`var/` 전체·config v2 파일) 삭제, `.env` 는 `.env.v2.bak` 백업 후 v3 로 재생성.
+- T0.3 `auto-apply` 진입점·JobRunner 뼈대·§A2 arch — 검증 PASS_WITH_NOTES. cwd `.env` 가 dry_run 을 덮는 통로(개발 모드만 허용)와
+  마이그레이션 부분 적용(pysqlite 트랜잭션 레시피)을 고쳐 amend. 잔재는 M1·M4·M7 로 이관.
 
 ## 열린 질문 (다음 마일스톤 시작 전에 사용자에게)
-- 로컬 `var/resumes/`(과거 생성 이력서 PDF 67개) 삭제 여부
-- 로컬 `.env` 가 v2(`REPOSITORY=postgres`, `DRY_RUN_ONLY=false`) — 백업 후 `.env.example` 기준 재생성 제안, 사용자 답 대기
+- 로컬 `.env.v2.bak` 에 사람인 비밀번호 평문 — 삭제 여부 사용자 답 대기
 - M1: 인적사항 필드 목록(병역·보훈·장애 등 한국 특화 항목을 기본 노출할지 접을지)
 - M5: 직군 템플릿 디자인 톤(1안 여러 개 vs 직군당 1안)
 

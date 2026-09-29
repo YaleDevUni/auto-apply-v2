@@ -1,6 +1,7 @@
 """Composition root — 구현체 선택이 존재하는 유일한 파일 (§A2).
 
 여기 말고 어디서도 어댑터를 생성하지 않는다. import-linter 가 이를 강제한다.
+데이터 디렉터리 준비(마이그레이션 포함)도 어댑터를 아는 이 파일이 맡는다 — api 는 부르기만 한다.
 """
 
 from collections.abc import Callable
@@ -18,6 +19,7 @@ from auto_apply.adapters.pdf.stub import StubPdfRenderer
 from auto_apply.adapters.profile.static import StaticProfileSource
 from auto_apply.adapters.profile.yaml_source import YamlProfileSource
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
+from auto_apply.adapters.repository.migrate import MigrationError, upgrade_to_head
 from auto_apply.adapters.repository.sqlite import sqlite_uow_factory
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
 from auto_apply.adapters.storage.local import LocalBlobStore
@@ -33,6 +35,7 @@ from auto_apply.ports.profile import ProfileSource
 from auto_apply.ports.repository import UnitOfWork
 from auto_apply.ports.resume import ResumeGenerator, ResumeReviewer
 from auto_apply.ports.storage import BlobStore
+from auto_apply.runner.job_runner import JobRunner
 from auto_apply.services.document import DocumentService
 
 
@@ -51,6 +54,28 @@ class Container:
     profile: ProfileSource
     guide: GuideSource
     documents: DocumentService
+    runner: JobRunner
+
+
+class StartupError(RuntimeError):
+    """기동 준비 실패. 메시지는 사람이 읽을 한 줄(무엇이·어디서·왜) — 진입점이 그대로 보여준다."""
+
+
+def prepare_data_dir(cfg: Settings) -> None:
+    """첫 기동에도 그대로 뜨게: 데이터 디렉터리를 만들고 스키마를 head 로 올린다 (§A1).
+
+    이미 head 면 Alembic 이 아무것도 하지 않으니 매 기동 호출해도 된다. 업그레이드는 원자적이라
+    실패해도 스키마는 실패 전 그대로다(migrations/env.py).
+    """
+    try:
+        cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise StartupError(f"데이터 디렉터리를 만들 수 없다 — {cfg.data_dir}: {e}") from e
+    if cfg.repository == "sqlite":
+        try:
+            upgrade_to_head(cfg.database_url)
+        except MigrationError as e:
+            raise StartupError(str(e)) from e
 
 
 def _build_store(cfg: Settings) -> BlobStore:
@@ -145,4 +170,5 @@ def build_container(cfg: Settings) -> Container:
         profile=profile,
         guide=guide,
         documents=DocumentService(generator, reviewer, pdf),
+        runner=JobRunner(),
     )

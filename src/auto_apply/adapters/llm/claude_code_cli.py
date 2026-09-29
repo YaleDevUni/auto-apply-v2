@@ -1,4 +1,4 @@
-"""Claude Code CLI(`claude`)를 subprocess 로 구동하는 LLMClient 구현 (ARCHITECTURE.md §11.2).
+"""Claude Code CLI(`claude`)를 subprocess 로 구동하는 LLMClient 구현 (D5).
 
 `ANTHROPIC_API_KEY` 종량제 대신, 이 머신에 로그인된 Claude Code 구독(OAuth)에 올라탄다.
 `--bare` 모드는 일부러 안 쓴다 — `--bare`는 OAuth/keychain 을 아예 읽지 않고

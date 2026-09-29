@@ -5,12 +5,18 @@ from pathlib import Path
 import pytest
 from alembic import command
 
+from auto_apply.adapters.repository.migrate import alembic_config
 from auto_apply.config import Settings
-from tests._db import alembic_config
 
 # 게이트(make check)가 개발자 로컬 `.env` 에 좌우되지 않게 한다 — 안 그러면 테스트가 "코드"가
 # 아니라 "이 머신의 설정"을 검사한다. 필요한 값은 각 테스트가 인자·monkeypatch 로 준다.
 Settings.model_config["env_file"] = None
+
+
+@pytest.fixture(autouse=True)
+def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """기본 data_dir 은 사용자의 실제 platformdirs 경로다 — 테스트가 거기에 DB 를 만들지 않게."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
 
 
 @pytest.fixture

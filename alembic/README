@@ -1,1 +1,0 @@
-SQLite 단일 DB (D3). 리비전은 models.py 와 같아야 한다 — tests/adapters/test_sqlite_migrations.py 가 대조한다.

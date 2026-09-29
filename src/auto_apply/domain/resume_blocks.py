@@ -1,4 +1,4 @@
-"""이력서 경력/프로젝트 블록 조립. 전부 순수 함수, LLM 미사용 (ARCHITECTURE.md §2.3).
+"""이력서 경력/프로젝트 블록 조립. 전부 순수 함수, LLM 미사용 (§A7).
 
 `resume_matching.py`(fact 선별 + hallucination 탐지)와 철학은 같은 연장선이다 — 경력·프로젝트
 블록의 회사명·기간·기술스택은 fact 의 구조화 필드(`entity`/`block` 계열, contracts/fact.py)에서

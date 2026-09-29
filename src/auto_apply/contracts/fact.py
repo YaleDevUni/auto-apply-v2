@@ -1,4 +1,4 @@
-"""Fact — 이력서 생성의 유일한 사실 원천 (ARCHITECTURE.md §4).
+"""Fact — 이력서 생성의 유일한 사실 원천 (§A7).
 
 코드가 아니라 데이터다: `config/facts.yaml`이 원본이고 이 파일은 그 스키마만 정의한다.
 `keywords`를 따로 두는 이유 — 자유 텍스트(content)를 job 설명과 직접 매칭하면 실패하기

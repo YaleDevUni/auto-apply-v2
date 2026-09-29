@@ -27,13 +27,19 @@
 
 - 프로세스는 **하나**: API, 작업 큐 러너, 브라우저 호스트, MCP 엔드포인트가 한 프로세스에 산다.
   브라우저를 소유한 프로세스가 하네스(§A4)도 소유해야 우회 경로가 생기지 않는다.
-- 데이터 디렉터리: `platformdirs.user_data_dir("auto-apply")` — `db.sqlite3`, `files/`, `chrome-profile/`, `runs/`.
+- 데이터 디렉터리: `platformdirs.user_data_dir("auto-apply", appauthor=False)` — `db.sqlite3`, `files/`, `chrome-profile/`, `runs/`.
+  `DATA_DIR` 로 덮어쓸 수 있다(테스트·개발).
+- 진입점: `auto-apply [--port N]`(콘솔 스크립트, `__main__.py`). 기동 순서는 FastAPI lifespan 하나에 모여 있어
+  `uvicorn auto_apply.api.main:app` 으로 띄워도 같다 — ① 데이터 디렉터리 생성 ② Alembic head 자동 적용
+  ③ 컨테이너 조립 ④ JobRunner 기동. 종료 시 JobRunner 를 먼저 세운다. 바인드는 `127.0.0.1` 고정(옵션 없음),
+  `--port 0` 이면 빈 포트를 골라 `auto-apply ready: http://127.0.0.1:<port>` 한 줄을 찍는다. 상태 확인은 `GET /health`.
 
 ## §A2 계층 (make arch 가 강제)
 
 ```
 domain      순수 로직: 상태기계, ground_check, 필드 대조, 제출 버튼 분류 규칙, 가이드 병합
 contracts   pydantic DTO (extra=forbid, frozen). 벤더 SDK 금지
+ai          LLM 프롬프트 빌더 + 구조화 출력 스키마(순수 Pydantic). 벤더 SDK·port·어댑터 금지 — adapters·services 가 가져다 쓴다
 ports       Protocol. 벤더 타입 노출 금지
 adapters    port 구현 (llm/, agent/, browser/, pdf/, storage/, repository/)
 services    유스케이스 (ApplicationService, ProfileService, GuideService, DocumentService) — port 만 안다
@@ -41,6 +47,10 @@ runner      JobRunner + run 핸들러 (fill/revise/submit/generate)
 api         라우터 (컨테이너에서 서비스 꺼내 씀)
 bootstrap   ★ 어댑터를 생성하는 유일한 파일
 ```
+
+`make arch` = import-linter(`pyproject.toml` `[tool.importlinter]`). 의존 방향은
+`domain·contracts < ai·ports < services < runner < bootstrap < api < __main__`, adapters 는 bootstrap 만 안다.
+규칙이 실제로 위반을 잡는지는 `tests/test_arch.py` 가 위반을 심은 복사본으로 확인한다.
 
 새 외부 의존성 추가 절차(Protocol → 예외 계약 → **구현 2개(실제+테스트 대역)** → contract test → bootstrap)는 v2 규칙을 그대로 유지한다.
 
@@ -64,7 +74,9 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
 - 초기 스키마(T0.2, Alembic `0001`): `applications`(지원 건 1행 = 최신 상태 스냅샷) · `application_state_history`
   (전이 이력 = 감사 로그, **append-only** — 전이마다 새 행, 자동 증가 `id` 가 순번, 최신 = 가장 큰 순번. 같은 run 안의
   FILLING↔NEEDS_INPUT 왕복도 그대로 쌓인다) · `runs`(최소 컬럼). 스키마는 Alembic 이 유일한 원천이고
-  `models.py` 와의 일치는 테스트가 대조한다.
+  `models.py` 와의 일치는 테스트가 대조한다. 리비전 스크립트는 설치본에도 실리도록 패키지 안
+  (`adapters/repository/migrations/`)에 있고 `adapters/repository/migrate.py` 가 ini 없이 Config 를 조립한다
+  (루트 `alembic.ini` 는 `alembic revision` 개발용).
 - 크래시 복구: 기동 시 `RUNNING` run 을 `INTERRUPTED` 로 닫고 지원 건을 직전 재개 가능 상태로 되돌린다.
 
 ## §A4 제출 차단 하네스 (SubmitGuard) — 제품의 핵심 안전장치
@@ -148,4 +160,11 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
 
 - 서버는 `127.0.0.1` 만. 모든 변경 API 는 `Origin` 검사 + 설치별 랜덤 토큰 헤더. MCP 엔드포인트는 run 별 일회성 토큰.
 - 설정(`settings` 테이블 + 최초 `.env` 없이도 동작): `llm_backend=cli|api`, API 키(파일 권한 0600), `submit_mode`, 대기 타임아웃, 언어.
+  `settings` 테이블 전까지의 우선순위: 환경변수 > (개발 모드일 때만) `./.env` > 사용자 설정 디렉터리 `.env`
+  (`platformdirs.user_config_dir("auto-apply")`, `AUTO_APPLY_CONFIG_DIR` 로 이동 가능). 개발 모드 = `AUTO_APPLY_DEV=1`
+  이거나 cwd 에 `name = "auto-apply"` 인 `pyproject.toml` 이 있을 때. 설치본을 아무 폴더에서 실행해도 그 폴더의 `.env` 가
+  `DRY_RUN_ONLY`·`DATA_DIR`·API 키를 바꾸지 못하게 하려는 것이다(절대 규칙 2).
+- CORS 는 `WEB_CORS_ORIGIN` 하나만 연다. `http(s)://127.0.0.1` / `http(s)://localhost` 출처만 허용하고 `*` 등은 설정 로드에서 거부한다.
+- 기동 마이그레이션은 한 트랜잭션(pysqlite 트랜잭션 레시피 + `transactional_ddl`)이라 실패해도 스키마가 반쯤 남지 않는다.
+  실패하면 `auto-apply` 는 DB 경로·원인 한 줄을 로그로 남기고 종료 코드 1 로 끝난다.
 - 로그: structlog, **모든 로그에 `application_id`·`run_id` 구조화 필드.**

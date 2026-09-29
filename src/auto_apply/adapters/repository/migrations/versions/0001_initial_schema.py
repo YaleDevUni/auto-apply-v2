@@ -1,6 +1,6 @@
 """initial schema — applications · application_state_history · runs (T0.2)
 
-v2(Postgres) 리비전을 버리고 SQLite(D3) 기준으로 새로 시작한다.
+SQLite(D3) 초기 스키마. §A3·§A7·§A8·§A9 테이블은 해당 마일스톤에서 리비전을 더한다.
 
 Revision ID: 0001
 Revises:
@@ -10,7 +10,6 @@ Create Date: 2026-09-30
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-
 from alembic import op
 
 revision: str = "0001"

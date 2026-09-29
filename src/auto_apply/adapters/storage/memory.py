@@ -4,7 +4,7 @@ from auto_apply.domain.errors import BlobNotFound
 
 
 class InMemoryBlobStore:
-    """테스트 대역. BlobStore contract test 의 두 번째 구현 (§11.1 원칙 3)."""
+    """테스트 대역. BlobStore contract test 의 두 번째 구현 (§A2 구현 2개)."""
 
     def __init__(self) -> None:
         self._blobs: dict[str, bytes] = {}

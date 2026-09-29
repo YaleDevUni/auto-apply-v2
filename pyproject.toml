@@ -16,7 +16,11 @@ dependencies = [
     "httpx>=0.27",
     "structlog>=24.4",
     "pyyaml>=6.0",
+    "platformdirs>=4.3",
 ]
+
+[project.scripts]
+auto-apply = "auto_apply.__main__:main"
 
 [dependency-groups]
 dev = [
@@ -86,7 +90,10 @@ markers = [
 ]
 
 # ---------------------------------------------------------------- import-linter
-# 01-architecture.md §A2 의 계층 규칙을 강제한다 (T0.3 에서 v3 계층 전체로 갱신).
+# 01-architecture.md §A2 의 계층 규칙을 강제한다 (make arch). 위반을 실제로 잡는지는
+# tests/test_arch.py 가 일부러 위반을 심은 복사본으로 확인한다.
+#   domain·contracts(순수, 서로 참조) < ports < services < runner < bootstrap < api < __main__
+#   adapters 는 ports 를 구현하고 bootstrap 만 adapters 를 안다. ai 는 프롬프트/스키마만.
 [tool.importlinter]
 root_package = "auto_apply"
 include_external_packages = true
@@ -96,18 +103,9 @@ name = "domain 은 순수하다 (프레임워크/어댑터 무의존)"
 type = "forbidden"
 source_modules = ["auto_apply.domain"]
 forbidden_modules = [
-    "auto_apply.adapters", "auto_apply.ports", "auto_apply.services", "auto_apply.api",
-    "auto_apply.bootstrap",
-    "sqlalchemy", "fastapi", "anthropic", "playwright",
-]
-
-[[tool.importlinter.contracts]]
-name = "ports 는 구현을 모른다"
-type = "forbidden"
-source_modules = ["auto_apply.ports"]
-forbidden_modules = [
-    "auto_apply.adapters", "auto_apply.services", "auto_apply.api", "auto_apply.bootstrap",
-    "sqlalchemy", "anthropic", "playwright",
+    "auto_apply.ports", "auto_apply.adapters", "auto_apply.services", "auto_apply.runner", "auto_apply.api", "auto_apply.bootstrap", "auto_apply.config",
+    "auto_apply.__main__",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
 ]
 
 [[tool.importlinter.contracts]]
@@ -115,9 +113,19 @@ name = "contracts 는 벤더 의존 없음"
 type = "forbidden"
 source_modules = ["auto_apply.contracts"]
 forbidden_modules = [
-    "auto_apply.adapters", "auto_apply.ports", "auto_apply.services", "auto_apply.api",
-    "auto_apply.bootstrap",
-    "sqlalchemy", "anthropic", "playwright", "fastapi",
+    "auto_apply.ports", "auto_apply.adapters", "auto_apply.services", "auto_apply.runner",
+    "auto_apply.api", "auto_apply.bootstrap", "auto_apply.__main__",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
+]
+
+[[tool.importlinter.contracts]]
+name = "ports 는 구현을 모른다"
+type = "forbidden"
+source_modules = ["auto_apply.ports"]
+forbidden_modules = [
+    "auto_apply.adapters", "auto_apply.services", "auto_apply.runner", "auto_apply.api",
+    "auto_apply.bootstrap", "auto_apply.__main__",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
 ]
 
 [[tool.importlinter.contracts]]
@@ -125,9 +133,9 @@ name = "ai 는 벤더 SDK 를 모른다 (프롬프트/스키마만)"
 type = "forbidden"
 source_modules = ["auto_apply.ai"]
 forbidden_modules = [
-    "auto_apply.adapters", "auto_apply.ports", "auto_apply.services", "auto_apply.api",
-    "auto_apply.bootstrap",
-    "sqlalchemy", "anthropic", "playwright", "fastapi",
+    "auto_apply.adapters", "auto_apply.ports", "auto_apply.services", "auto_apply.runner",
+    "auto_apply.api", "auto_apply.bootstrap", "auto_apply.__main__",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
 ]
 
 [[tool.importlinter.contracts]]
@@ -135,20 +143,39 @@ name = "services 는 port 만 안다 (§A2)"
 type = "forbidden"
 source_modules = ["auto_apply.services"]
 forbidden_modules = [
-    "auto_apply.adapters", "auto_apply.api", "auto_apply.bootstrap",
-    "sqlalchemy", "anthropic", "playwright", "fastapi",
+    "auto_apply.adapters", "auto_apply.runner", "auto_apply.api", "auto_apply.bootstrap",
+    "auto_apply.__main__",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
+]
+
+[[tool.importlinter.contracts]]
+name = "runner 는 services·port 만 안다 (§A2, §A9)"
+type = "forbidden"
+source_modules = ["auto_apply.runner"]
+forbidden_modules = [
+    "auto_apply.adapters", "auto_apply.api", "auto_apply.bootstrap", "auto_apply.__main__",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
 ]
 
 [[tool.importlinter.contracts]]
 name = "adapters 는 상위 계층을 모른다"
 type = "forbidden"
 source_modules = ["auto_apply.adapters"]
-forbidden_modules = ["auto_apply.services", "auto_apply.api", "auto_apply.bootstrap"]
+forbidden_modules = [
+    "auto_apply.services", "auto_apply.runner", "auto_apply.api", "auto_apply.bootstrap",
+    "auto_apply.__main__",
+]
+
+[[tool.importlinter.contracts]]
+name = "bootstrap 은 api·진입점을 모른다"
+type = "forbidden"
+source_modules = ["auto_apply.bootstrap"]
+forbidden_modules = ["auto_apply.api", "auto_apply.__main__", "fastapi", "uvicorn"]
 
 [[tool.importlinter.contracts]]
 # "어댑터를 만드는 곳은 bootstrap 하나" (§A2). bootstrap 을 거쳐서 닿는 것은 정상이라 직접 import 만 막는다.
 name = "어댑터 생성은 bootstrap 에서만"
 type = "forbidden"
 allow_indirect_imports = true
-source_modules = ["auto_apply.api"]
+source_modules = ["auto_apply.api", "auto_apply.__main__"]
 forbidden_modules = ["auto_apply.adapters"]

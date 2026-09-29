@@ -32,13 +32,13 @@ class LLMClient(LLMCallable, Protocol):
     [[claude-cli-prompt-cache-redesign]]에서 실측: prefix caching이 붙으려면 이 경계가
     "명시적인 콘텐츠 블록 분리"여야 한다 — 하나의 문자열 안에서 앞부분만 같고 뒷부분이
     달라지는 식으로는(순서를 어떻게 배치하든) 캐시가 전혀 안 붙는다. `ClaudeCodeCliLLM`은
-    이 신호로 실제 블록을 나눠 보낸다(§11.2). `SimpleResumeGenerator`의 재프롬프트 루프처럼
+    이 신호로 실제 블록을 나눠 보낸다(D5). `SimpleResumeGenerator`의 재프롬프트 루프처럼
     원본 프롬프트가 여러 시도에 걸쳐 그대로 유지되는 경우가 전형적인 사용처다.
     """
 
     def turn(self) -> AbstractAsyncContextManager[LLMCallable]:
-        """여러 `complete`/`structured` 호출을 하나의 논리적 대화 턴으로 묶는다 (§ 대화형
-        에이전트 오버헤드 절감, 2026-08-24).
+        """여러 `complete`/`structured` 호출을 하나의 논리적 대화 턴으로 묶는다 — 짧은 호출이
+        잦을 때 호출당 기동 비용을 없애려는 것이다.
 
         구현체가 프로세스 등 재사용 가능한 자원을 갖고 있으면 여기서 재사용해 호출마다 드는
         고정비용을 줄일 수 있다(`ClaudeCodeCliLLM.turn()` 실측: 프로세스 재사용 시 ~3.5초의

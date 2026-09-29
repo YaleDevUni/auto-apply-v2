@@ -1,4 +1,4 @@
-"""조립된 이력서 최종 콘텐츠 — `ResumeDraft.content`에 담기는 실제 모양(ARCHITECTURE.md §2.3).
+"""조립된 이력서 최종 콘텐츠 — `ResumeDraft.content`에 담기는 실제 모양(§A7).
 
 `SimpleResumeGenerator`가 결정론적 블록 메타데이터(회사명·기간·기술스택,
 domain/resume_matching.py)와 LLM 이 쓴 불릿(ai/schemas.py), `Profile`(연락처·학력·스킬태그·

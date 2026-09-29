@@ -1,8 +1,7 @@
-"""plain 함수 기반 이력서 생성/검토 (ARCHITECTURE.md §2.3, §9.2).
+"""plain 함수 기반 이력서 생성/검토 (§A7).
 
-파이프라인(retrieve_facts → select_relevant_facts → generate)이 여전히 분기·병렬 없는 선형
-체인이라 오케스트레이션 프레임워크 도입 기준을 못 채운다 — LangGraph 든 PydanticAI 든, 그 결정을
-미루는 자리가 `ports/resume.py`(경계는 고정, 구현만 갈아끼운다)다.
+파이프라인(retrieve_facts → select_relevant_facts → generate)이 분기·병렬 없는 선형 체인이라
+오케스트레이션 프레임워크를 쓰지 않는다. 바꾸더라도 경계는 `ports/resume.py` 에 고정돼 있다.
 """
 
 from auto_apply.adapters.resume._assemble import assemble_resume, used_fact_ids
@@ -96,7 +95,7 @@ class SimpleResumeGenerator:
 
 
 class SimpleResumeReviewer:
-    """review 게이트. 길이 체크 다음으로, fact 근거 없는 서술을 `ground_check`로 잡는다(§2.3)."""
+    """review 게이트. 길이 체크 다음으로, fact 근거 없는 서술을 `ground_check`로 잡는다(§A7)."""
 
     def __init__(self, facts: FactSource, *, min_summary_len: int = 10) -> None:
         self._facts = facts

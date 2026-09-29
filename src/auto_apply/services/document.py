@@ -1,6 +1,6 @@
 """DocumentService — 공고맞춤 이력서 생성 (§A7).
 
-v2 ResumeWorkflow 의 생성 → 검토(ground_check) → 재생성 루프를 Temporal 없이 옮겼다 (D4).
+생성 → 검토(ground_check) → 재생성 루프를 워크플로 엔진 없이 한 함수로 돈다 (D4).
 LLM 호출 재시도는 여기서 하지 않는다 — 인프라성 실패 재시도는 JobRunner 몫이다 (§A9).
 """
 

@@ -72,6 +72,7 @@
 ## M1 · 프로필 · 지식베이스
 목표: 웹에서 인적사항/경험/문서/답변KB 를 CRUD 하고, 기존 이력서 파일로 초안을 추출한다.
 웹 콘솔은 **TanStack Router(D16)** 로 페이지 라우팅을 도입하고, T0.1 에서 끊긴 `web/src/lib/api.ts` 의 `/applications/*` 호출을 걷어낸다.
+T0.3 이관: `config.py` 의 facts/profile/guide `./config/...`(cwd 기준) 경로를 DB·platformdirs 기준으로, `LocalBlobStore` 루트를 §A1 의 `files/` 로.
 수용 기준: 프로필 API contract 테스트, 추출 결과 스키마 검증 회귀 테스트(샘플 PDF 2종: 개발/비개발), 웹 온보딩 화면 수동 확인 체크리스트.
 
 ## M2 · 브라우저 호스트 · 제출 차단 하네스
@@ -87,6 +88,7 @@
 목표: 트리거 API/UI, 승인 큐 UI(스크린샷·필드표·편집), submit run(§A4 L6 대조), revise run, 크래시 복구.
 이관: 상태 쓰기 포트를 `ApplicationService` 만 쓰도록 봉인(절대 규칙 6), `upsert_state`→`append_state` 개명(이미 append-only),
 `PersistState.workflow_run_id`→`run_id`.
+dry_run→live 전환은 settings 테이블 + UI 확인으로만(설정 파일로 조용히 뒤집히지 않게, 절대 규칙 2).
 수용 기준: SUBMIT_MISMATCH 경로 테스트, dry_run 에서 클릭 0회 검증, 중복 지원 경고 테스트.
 
 ## M5 · 공고맞춤 문서 · 직군 템플릿
@@ -102,4 +104,6 @@ v2 잔재인 `ports/guide.py`·`adapters/guide/file.py`·`config.py` 의 `resume
 ## M7 · 배포
 목표: `uv tool install` 한 줄 설치, 웹 빌드 산출물 패키지 포함, 첫 실행 마법사, mac/windows CI 매트릭스, README 설치 가이드.
 이관: Makefile `SHELL := /bin/bash` 등 Windows 비호환 정리(개발 명령을 Python 태스크로).
+T0.3 이관: DB 업그레이드 전 자동 백업, `make api`(uvicorn CLI)가 `UVICORN_HOST`/`--host` 로 0.0.0.0 에 열리는 개발 경로 봉인,
+`api/main.py` 모듈 수준 `app` 제거(import 만으로 Settings 이중 로드).
 수용 기준: CI 가 mac·windows 에서 `make check` 녹색, 깨끗한 환경 설치 스모크.

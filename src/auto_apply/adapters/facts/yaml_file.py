@@ -10,7 +10,7 @@ class YamlFactSource:
     """`config/facts.yaml`을 읽는다. 매번 새로 읽는다 — 캐시하지 않는다.
 
     캐시하면 사용자가 이력을 고쳐도 다음 지원 건까지 반영이 안 된다. 파일 하나 읽는 비용은
-    무시할 만하다 (`YamlMatchingConfigSource`와 같은 판단).
+    무시할 만하다.
     """
 
     def __init__(self, path: Path) -> None:

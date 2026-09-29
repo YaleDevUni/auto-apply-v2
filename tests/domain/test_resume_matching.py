@@ -1,4 +1,4 @@
-"""select_relevant_facts / ground_check — hallucination 회귀 테스트 (ARCHITECTURE.md §2.3)."""
+"""select_relevant_facts / ground_check — hallucination 회귀 테스트 (§A7, 절대 규칙 4)."""
 
 from auto_apply.contracts.dto import ResumeDraft
 from auto_apply.contracts.fact import Fact

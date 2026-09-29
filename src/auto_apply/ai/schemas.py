@@ -1,7 +1,6 @@
-"""LLM 구조화 출력 스키마 (ARCHITECTURE.md §8). `LLMClient.structured()`가 강제하는 계약.
+"""LLM 구조화 출력 스키마 (00-product 절대 규칙 4). `LLMClient.structured()`가 강제하는 계약.
 
-어떤 오케스트레이션 프레임워크에도 묶이지 않는다 — 순수 Pydantic이라 나중에 LangGraph든
-PydanticAI든 같은 스키마를 그대로 재사용할 수 있다 (§9.2).
+순수 Pydantic 이라 LLM 경로(CLI·API, D5)와 무관하게 같은 스키마로 검증한다.
 """
 
 from pydantic import BaseModel, ConfigDict, Field

@@ -38,12 +38,11 @@ _CLEAR_PAYLOAD = (json.dumps(_CLEAR_MESSAGE) + "\n").encode()
 class ClaudeCliTurn:
     """`ports/llm.py` `LLMClient.turn()`이 요구하는 async context manager.
 
-    `complete`/`structured`는 `ClaudeCodeCliLLM`과 같은 시그니처다 — 호출하는 쪽(예:
-    `handle_chat`)은 `c.chat_llm.structured(...)` 대신 `turn_llm.structured(...)`만 바꾸면 된다.
+    `complete`/`structured`는 `ClaudeCodeCliLLM`과 같은 시그니처다 — 호출하는 쪽은
+    `llm.structured(...)` 대신 `turn_llm.structured(...)`만 바꾸면 된다.
     `cache_control` 4개 초과 폴백(`claude_code_cli.py`의 `_CACHE_OVERFLOW_PATTERN`)은 여기선
-    안 한다 — 챗 에이전트 프롬프트(도구 카탈로그 + 짧은 턴 기록)는 그 한도에 걸릴 크기가
-    아니라서 생략했다. 걸리면 일반 `LLMExecutionError`로 분류되고, `handle_chat`이 이미
-    모든 예외를 삼켜 사과 메시지로 마무리하니 워크플로우가 죽진 않는다.
+    안 한다 — 짧은 대화형 프롬프트 용도라 그 한도에 걸릴 크기가 아니다. 걸리면 일반
+    `LLMExecutionError`로 분류된다.
     """
 
     def __init__(self, owner: "ClaudeCodeCliLLM") -> None:
@@ -56,7 +55,7 @@ class ClaudeCliTurn:
         return self
 
     async def __aexit__(self, *_exc_info: object) -> None:
-        # 다음 메시지(다른 handle_chat 호출)로 대화가 새면 안 되니 항상 죽인다 — 정상 종료를
+        # 다음 턴으로 대화가 새면 안 되니 항상 죽인다 — 정상 종료를
         # 기다려주는 프로토콜이 없어(그럴 이유도 없다, 턴이 끝나면 이 프로세스는 볼 일이 없다).
         if self._proc is None:
             return

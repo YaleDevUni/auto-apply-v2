@@ -4,6 +4,7 @@ from alembic import command
 
 from auto_apply.adapters.llm.claude_code_cli import ClaudeCodeCliLLM
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
+from auto_apply.adapters.repository.migrate import alembic_config
 from auto_apply.adapters.repository.sqlite import SqliteUnitOfWork
 from auto_apply.adapters.storage.local import LocalBlobStore
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
@@ -11,7 +12,6 @@ from auto_apply.bootstrap import build_container
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import PersistState
 from auto_apply.domain.enums import ApplicationState
-from tests._db import alembic_config
 
 
 def test_offline_profile_builds():

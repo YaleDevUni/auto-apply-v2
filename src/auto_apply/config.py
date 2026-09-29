@@ -1,14 +1,65 @@
+import os
+import tomllib
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import Field
+from platformdirs import user_config_dir, user_data_dir
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+APP_NAME = "auto-apply"
+# appauthor=False: Windows 에서 `%LOCALAPPDATA%\auto-apply\auto-apply` 처럼 이름이 두 번 붙지 않게.
+DEFAULT_DATA_DIR = Path(user_data_dir(APP_NAME, appauthor=False))
+# 사용자 설정 디렉터리를 옮기는 환경변수 — 테스트 격리용이자, platformdirs 경로를 못 쓰는 환경용.
+CONFIG_DIR_ENV = "AUTO_APPLY_CONFIG_DIR"
+DEV_MODE_ENV = "AUTO_APPLY_DEV"
+_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost"})
+
+
+def user_env_file(environ: Mapping[str, str] | None = None) -> Path:
+    env = os.environ if environ is None else environ
+    base = env.get(CONFIG_DIR_ENV) or user_config_dir(APP_NAME, appauthor=False)
+    return Path(base) / ".env"
+
+
+def is_dev_mode(cwd: Path | None = None, environ: Mapping[str, str] | None = None) -> bool:
+    """저장소 체크아웃에서 개발 중인가. `AUTO_APPLY_DEV=1` 이거나 cwd 가 이 프로젝트 루트일 때만."""
+    env = os.environ if environ is None else environ
+    if env.get(DEV_MODE_ENV, "").strip().lower() in {"1", "true", "yes"}:
+        return True
+    pyproject = (cwd or Path.cwd()) / "pyproject.toml"
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError):
+        return False
+    project = data.get("project")
+    return isinstance(project, dict) and project.get("name") == APP_NAME
+
+
+def env_files(
+    cwd: Path | None = None, environ: Mapping[str, str] | None = None
+) -> tuple[Path, ...]:
+    """읽을 `.env` 목록 (뒤가 우선). 설치본은 사용자 설정 디렉터리 것만 읽는다.
+
+    아무 폴더의 `./.env` 를 읽으면 설치본을 그 폴더에서 실행했다는 이유만으로 DRY_RUN_ONLY·DATA_DIR·
+    API 키가 바뀐다(00-product 절대 규칙 2) — 그래서 `./.env` 는 개발 모드에서만 덧씌운다.
+    """
+    here = cwd or Path.cwd()
+    files = [user_env_file(environ)]
+    if is_dev_mode(here, environ):
+        files.append(here / ".env")
+    return tuple(files)
 
 
 class Settings(BaseSettings):
-    """환경변수 → 어댑터 선택 (bootstrap.py, §A2)."""
+    """환경변수 → 어댑터 선택 (bootstrap.py, §A2). `.env` 없이도 돈다(§A10).
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    읽을 `.env` 는 프로세스 기동(import) 시점의 cwd·환경으로 정한다 — `env_files()` 참고.
+    """
+
+    model_config = SettingsConfigDict(env_file=env_files(), extra="ignore")
 
     app_env: Literal["local", "prod"] = "local"
 
@@ -21,8 +72,8 @@ class Settings(BaseSettings):
     profile_source: Literal["static", "yaml"] = "yaml"
     guide_source: Literal["static", "file"] = "file"
 
-    # 저장소 (D3·D4: SQLite + 로컬 파일. platformdirs 데이터 디렉터리 전환은 T0.3)
-    data_dir: Path = Path("./var")
+    # 저장소 (D3·D4: SQLite + 로컬 파일, §A1 데이터 디렉터리)
+    data_dir: Path = DEFAULT_DATA_DIR
     facts_path: Path = Path("./config/facts.yaml")
     profile_path: Path = Path("./config/profile.yaml")
     resume_guide_dir: Path = Path("./config")  # resume_guide.{platform}.md 를 이 안에서 찾는다
@@ -36,26 +87,38 @@ class Settings(BaseSettings):
     claude_cli_model: str = "claude-sonnet-5"
     claude_cli_max_budget_usd: float = 0.5
 
-    # 안전장치 (§9.5)
+    # 안전장치 (00-product 절대 규칙 2)
     dry_run_only: bool = True
     approval_timeout_hours: int = Field(default=72, ge=1)
     # 이 라운드를 넘으면 사람에게 넘긴다 — 무한 재생성 루프를 만들지 않는다
     max_revisions: int = Field(default=10, ge=1)
 
-    # 이력서 블록 개수 안전 상한 (domain/resume_blocks.select_relevant_blocks). 실제 "몇 개
-    # 보여줄지"는 더 이상 이 값이 아니라 config/resume_guide.{platform}.md + LLM 판단이 정한다
-    # (2026-08-21, 사용자 결정 — 예전엔 이 값 자체가 UX 레버였는데, 가이드 patch로 개수를 못
-    # 바꾼다는 걸 실측하고 여기로 뺐었다[resume-block-count-cap]. 다시 가이드로 옮기면서 이
-    # 값은 "프롬프트 폭주 방지용 안전판"으로만 남긴다 — 한 회사/개인 프로젝트에 fact가 비정상
-    # 적으로 많이 쌓였을 때(config/facts.yaml 오타 등)를 대비한 상한이라 실사용 범위보다
-    # 넉넉하게 잡는다.
+    # 이력서 블록 개수 안전 상한 (domain/resume_blocks.select_relevant_blocks). 몇 개를 보여줄지는
+    # 가이드 + LLM 판단이 정하고, 이 값은 fact 가 비정상적으로 많을 때의 프롬프트 폭주 방지판이다.
     resume_max_project_blocks: int = Field(default=20, ge=1)
     resume_max_career_blocks_per_entity: int = Field(default=20, ge=1)
 
-    # 웹 콘솔 프론트엔드(Vite dev 서버)가 cross-origin 으로 API 를 부를 수 있게 허용하는
-    # origin. 이 콘솔은 인증 계층이 없다(사용자 결정 — 로컬/사설망 전용 전제) — 그래서 CORS 도
-    # 와일드카드가 아니라 이 값 하나만 명시적으로 허용한다.
+    # 웹 콘솔 개발 서버(Vite)의 origin 하나만 CORS 로 연다 — 인증이 없는 로컬 전용 서버라(D1)
+    # 와일드카드를 쓰지 않는다.
     web_cors_origin: str = "http://localhost:5173"
+
+    @field_validator("web_cors_origin")
+    @classmethod
+    def _local_origin_only(cls, v: str) -> str:
+        parts = urlsplit(v)
+        if (
+            parts.scheme not in {"http", "https"}
+            or parts.hostname not in _LOCAL_HOSTS
+            or parts.username is not None
+            or parts.path
+            or parts.query
+            or parts.fragment
+        ):
+            raise ValueError(
+                "WEB_CORS_ORIGIN 은 http(s)://127.0.0.1 · http(s)://localhost 출처만 허용한다"
+            )
+        _ = parts.port  # 포트가 숫자가 아니면 여기서 ValueError
+        return v
 
     @property
     def database_url(self) -> str:
