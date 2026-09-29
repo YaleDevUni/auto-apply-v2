@@ -120,9 +120,11 @@
 
 ### T1.5 웹 — 경험 · 답변KB · 문서 · 온보딩(추출 검토) 화면
 - 의존: T1.3, T1.4
-- 범위: `web/`, `docs/spec/checklists/m1-web.md`
+- 범위: `web/`, `docs/spec/checklists/m1-web.md`, `Makefile`
 - 할 일: 경험 목록/편집(entity 별 그룹), 답변KB 목록/편집/삭제, 문서 업로드·목록. 첫 화면 온보딩: 이력서 파일 업로드 →
   추출 초안 항목별 검토(채택/수정/버림) → 확정. 프로필이 비어 있으면 온보딩으로 유도.
+  T1.4 이관: `make check` 에 웹 게이트(`npm run build`·`lint`·`test`) 포함 — node 없는 환경이면 건너뛰되 경고.
+  `src/routes/placeholders.tsx` 를 실제 화면으로 교체, 끝까지 안 쓴 shadcn ui(card·separator·textarea) 삭제.
 - 수용 기준: `npm run build`·`npm run lint` 통과, 체크리스트에 온보딩 흐름 추가, 오케스트레이터가 로컬 기동 후 체크리스트 수동 확인.
 
 ## M2 · 브라우저 호스트 · 제출 차단 하네스
@@ -157,6 +159,7 @@ v2 잔재인 `ports/guide.py`·`adapters/guide/file.py`·`config.py` 의 `resume
 이관: Makefile `SHELL := /bin/bash` 등 Windows 비호환 정리(개발 명령을 Python 태스크로).
 T0.3 이관: DB 업그레이드 전 자동 백업, `make api`(uvicorn CLI)가 `UVICORN_HOST`/`--host` 로 0.0.0.0 에 열리는 개발 경로 봉인,
 `api/main.py` 모듈 수준 `app` 제거(import 만으로 Settings 이중 로드).
+T1.4 이관: 빌드된 웹을 FastAPI 가 같은 출처로 서빙(SPA history 경로 → index.html 폴백).
 T1.2 이관(로컬 보안 강화): 토큰을 CLI 가 여는 일회성 URL(fragment) → HttpOnly·SameSite=Strict 쿠키로 전달하고 `/api/session` 제거,
 GET 에도 토큰 요구(지금은 같은 PC 의 로컬 프로세스·다른 OS 계정이 토큰·인적사항을 얻을 수 있음), OpenAPI 422 에러 스키마 정정,
 db.sqlite3·업로드 파일 권한 0600(Windows ACL 포함).

@@ -4,8 +4,9 @@
 
 ## 현재
 - 마일스톤: **M1 · 프로필 · 지식베이스** (카드 T1.1~T1.5 작성됨)
-- 다음 태스크: **T1.3 이력서 초안 추출** ∥ **T1.4 웹 콘솔 재구성** (worktree 병렬)
+- 다음 태스크: **T1.3 이력서 초안 추출** (worktree card/t1.3 진행 중) → T1.5
 - 차단 요소: 없음
+- 결정: `.env.v2.bak` 보존(사용자 지시, 손대지 않음). `main` push 는 **M1 완료 후**.
 
 ## 완료
 - 2026-09-29 방향 전환 인터뷰 → `00-product.md`(D1~D15), `01-architecture.md`(§A1~§A10), `02-milestones.md` 작성.
@@ -21,10 +22,9 @@
   model_copy 우회를 NFKC 정규화 + 저장 시점 재검사로 막아 amend. user_id 컬럼은 port 호환상 유지.
 - T1.2 ProfileService·REST API·로컬 보안 — 검증 PASS_WITH_NOTES. 직접 만든 multipart 파서 결함 5개 → python-multipart 교체,
   BlobStore.delete, 개발 전용 CORS·/docs 를 개발 모드로 한정해 amend. 토큰 강화는 M7 이관. 이후 검증은 구현 에이전트 자체 검증으로 전환.
+- T1.4 웹 콘솔 — TanStack Router·레이아웃·인적사항 화면·vitest. 브라우저 실기동 자체 검증. 웹 게이트 make check 편입은 T1.5 이관.
 
 ## 열린 질문 (다음 마일스톤 시작 전에 사용자에게)
-- 로컬 `.env.v2.bak` 에 사람인 비밀번호 평문 — 삭제 여부 사용자 답 대기
-- `main` push 시점(origin 보다 7커밋 앞섬) — 사용자 답 대기
 - M1: 한국 특화 인적사항 노출 방식 — 카드는 추천안 A(추가 정보 섹션 접힘 + 빈 항목은 실행 중 질문)로 작성. 답이 다르면 T1.4 만 수정
 - M5: 직군 템플릿 디자인 톤(1안 여러 개 vs 직군당 1안)
 

@@ -1,32 +1,16 @@
-# React + TypeScript + Vite
+# auto-apply 웹 콘솔
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + Vite SPA. 라우팅 TanStack Router, 서버 상태 TanStack Query (D16). 문구는 `src/i18n/ko.ts` 키로만 쓴다 (D14).
 
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm ci
+npm run dev    # http://localhost:5173 — API 는 127.0.0.1:8000 (`make api`), VITE_API_BASE_URL 로 바꿀 수 있다
+npm run build
+npm run lint
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+- `src/lib/api.ts` — 유일한 fetch 통로. 변경 요청에 `/api/session` 토큰 헤더를 붙인다 (§A10).
+- `src/router.tsx` — 라우트 트리. `src/components/layout/` — 공통 레이아웃.
+- `src/features/<화면>/` — 화면별 컴포넌트와 양식 변환.
+
+수동 확인 항목은 `docs/spec/checklists/m1-web.md`.
