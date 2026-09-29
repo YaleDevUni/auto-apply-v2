@@ -1,4 +1,4 @@
-# config/profile.yaml — 이력서 헤더/학력/스킬태그/언어의 유일한 원천 (ARCHITECTURE.md §4).
+# config/profile.yaml — 이력서 헤더/학력/스킬태그/언어의 유일한 원천 (§A7).
 #
 # facts.yaml과 달리 여기 값은 LLM 을 거치지 않고 이력서 템플릿에 그대로 꽂힌다 — 서술이
 # 필요 없는 정형 정보(이름, 연락처, 학교명, GPA, 스킬 태그, 언어 등급)라서다.

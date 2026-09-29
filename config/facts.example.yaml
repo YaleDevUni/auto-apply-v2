@@ -1,4 +1,4 @@
-# config/facts.yaml — 이력서 생성의 유일한 사실 원천 (ARCHITECTURE.md §4, §2.3).
+# config/facts.yaml — 이력서 생성의 유일한 사실 원천 (§A7).
 #
 # 여기 없는 경력·수치·프로젝트는 LLM 이 지어낼 수 없다 — review 게이트가 모든 서술에 fact_id
 # 근거를 요구하고, 근거 없거나 존재하지 않는 fact_id 를 인용하면 실패시킨다(domain/resume_matching.py

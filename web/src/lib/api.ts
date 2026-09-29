@@ -1,5 +1,5 @@
 // api/schemas.py 와 domain/enums.py 를 그대로 옮긴 타입. 백엔드가 진짜 계약이다 —
-// 필드를 늘릴 땐 여기와 그쪽을 같이 고친다 (docs/architecture/12-web-console.md).
+// 필드를 늘릴 땐 여기와 그쪽을 같이 고친다.
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 

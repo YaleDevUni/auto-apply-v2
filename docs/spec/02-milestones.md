@@ -82,6 +82,7 @@ T0.3 이관: `config.py` 의 facts/profile/guide `./config/...`(cwd 기준) 경�
 ## M3 · 에이전트 런타임 · 채우기(fill) run
 목표: AgentRuntime 3구현, MCP(HTTP) 노출, fill run 이 픽스처 사이트에서 FillLog + `ready_for_review` 까지.
 이관: `domain/errors.py` 의 `NON_RETRYABLE`(Temporal 근거)을 §A9 JobRunner 재시도 정책으로 재정의하거나 삭제.
+`config.llm_provider` 기본값이 `stub` — D5(기본 Claude Code CLI)에 맞추되 테스트·오프라인 게이트는 stub 유지.
 수용 기준: Scripted 런타임으로 상태기계 전 경로 테스트, CLI 런타임은 `native` 마커 e2e 1건(짐 사이트), ask_user 일시정지/재개 테스트.
 
 ## M4 · 승인 큐 · 재진입(submit/revise)

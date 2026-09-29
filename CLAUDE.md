@@ -4,7 +4,7 @@
 직접 조종**해 지원서를 채우고, **하네스가 최종 제출을 막고**, 사람이 웹 승인 큐에서 승인해야 제출된다.
 
 > v2(텔레그램·공고수집·Recipe·wanted 전용·Temporal)는 `legacy/v2-telegram-recipe` 브랜치에 있다.
-> main 은 v3 로 재작성 중이다 — **M0 가 끝나기 전까지 코드에는 v2 잔재가 남아 있다.**
+> main 은 v3 로 재작성 중이다 — 남은 v2 잔재는 [02-milestones.md](docs/spec/02-milestones.md) 각 마일스톤의 "이관:" 줄로 추적한다.
 
 ## 작업 시작 전 (세션 관리)
 
@@ -15,14 +15,19 @@
    컨텍스트를 아끼는 게 목적이다 — 메인 세션이 소스 트리를 넓게 읽지 않는다.
 4. 구현 보고 뒤엔 **검증 에이전트 1회**(수정 금지)로 수용 기준·스펙 위반·과잉/미흡을 판정받는다. 수정은 그 카드 커밋에 amend.
 
-`docs/ARCHITECTURE.md`·`docs/architecture/` 는 **v2 문서**다(T0.4 에서 삭제). v3 설계 판단에 쓰지 않는다.
+v2 설계 문서(`ARCHITECTURE.md`·`architecture/`·`RUNBOOK.md`)는 T0.4 에서 삭제했다 — 필요하면 legacy 브랜치에서 본다.
 
-## 명령어 (T0.4 에서 v3 기준으로 갱신)
+## 명령어 (`Makefile` 이 원천 — `make help`)
 
 ```bash
-make check     # lint + type + arch + test  ← 커밋 전 필수
-make test-fast # 빠른 반복용 (게이트 아님)
-make web       # 웹 콘솔 dev 서버
+make setup     # uv sync + .env 생성
+make check     # lint + type + arch + test(-m "not native")  ← 커밋 전 필수
+make test-fast # 빠른 반복용: -x --ff (게이트 아님)
+make test-all  # native 포함 전체 (Chrome·claude CLI 필요)
+make fmt       # ruff format + fix
+make api       # FastAPI 개발 서버 (--reload, :8000)
+make web       # 웹 콘솔 dev 서버 (make api 먼저) — M1 전까지 동작 안 함
+uv run auto-apply [--port N]   # 앱 진입점 (§A1, 127.0.0.1 고정)
 ```
 
 ## 절대 규칙 (00-product.md "절대 규칙"이 기준)

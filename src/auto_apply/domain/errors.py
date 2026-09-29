@@ -1,4 +1,4 @@
-"""에러 분류 = 재시도 정책 (ARCHITECTURE.md §5).
+"""에러 분류 = 재시도 정책 (§A9).
 
 Temporal RetryPolicy 는 예외 '이름'으로 재시도 여부를 판단한다.
 그래서 재시도 금지 에러는 반드시 NON_RETRYABLE 에 등록해야 한다.
