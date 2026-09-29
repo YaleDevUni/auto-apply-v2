@@ -143,7 +143,19 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
   규칙은 `domain/unique_identifiers.py` 한 곳: NFKC 정규화(전각 숫자) + zero-width 제거 뒤, 생년월일 꼴 6자리 + 구분자(하이픈 계열·`.`·`_`·`/`·공백·없음)
   + 7자리. 에러 메시지·로그에 입력값을 싣지 않는다.
 - **AnswerKB**: (정규화 질문 키, 답, 출처 지원 건, 갱신일). 에이전트가 먼저 조회, 없으면 `ask_user`.
+  정규화(`domain/question_key.py`): NFKC → zero-width 제거 → casefold → 공백 하나로 접기 → 앞뒤 문장부호·기호
+  (`*`·`?`·`:`) 제거. 공백은 지우지 않는다 — 질문 원문 필드가 없어 키가 곧 화면 표시다. 같은 키 생성은 409, 덮어쓰기는 PUT 으로.
 - **Document**: 사용자 업로드 고정 파일 / 생성 파일(PDF) — 버전·생성 근거(fact_ids) 보관.
+  업로드 규칙(`domain/uploads.py`): `pdf·docx·png·jpg(jpeg)` 만, 확장자와 바이트 시그니처가 둘 다 맞아야 하고 content type 은
+  서버가 확장자로 정한다(클라이언트 값 무시). 상한 `DOCUMENT_MAX_BYTES`(기본 10 MiB). 파일명은 제어·서식 문자(Cc·Cf) 제거 →
+  `/`·`\` 앞부분 제거(basename) → 255자 상한(확장자 유지)으로 표시용만 남기고, blob 키는 `documents/{user}/{doc_id}{ext}`.
+  multipart 는 python-multipart(Starlette `MultiPartParser`) 스트리밍 — 본문은 상한 + 64 KiB 까지만 흘리고, 파일 1개·필드 4개
+  상한, 닫는 경계까지 오지 않은(잘린) 본문과 파트 헤더 과대는 422. 파일 파트는 1 MiB 넘으면 임시 파일로 흘러 peak ≈ 파일 1벌.
+  `UploadService`(`services/uploads.py`)가 저장·삭제를 맡는다: 메타 저장이 실패하면 방금 쓴 바이트를 지우고, 삭제는 메타·경험
+  첨부 참조를 한 트랜잭션으로 지운 **뒤** `BlobStore.delete` 로 바이트를 지운다(고아 파일 0).
+- **ProfileService**(`services/profile.py`)가 저장소가 강제하지 않는 규칙을 맡는다: 경험·fact·답변 id 발급(fact `id` 를
+  비워 보내면 발급), fact id 의 사용자 단위 유일성, 경험 `document_ids` 참조 검사, 소유자 검사(남의 것은 404). 로컬 1인
+  설치라 사용자 id 는 `DEFAULT_USER_ID` 상수 하나다.
 - **온보딩 추출**: 이력서 PDF/DOCX → LLM 구조화 추출 → 초안(사용자 검토 후 확정). 추출물도 스키마 검증 통과해야 저장.
 - **공고맞춤 생성** (D11 기본 전략): 공고 본문 → 관련 fact 선택(v2 `select_relevant_blocks`) → 불릿 생성 → `ground_check` → 직군 템플릿 렌더.
 - **직군 템플릿** (D12): `templates/{family}/resume.html.j2`, `portfolio.html.j2`(해당 시). family 별 섹션 구성·포트폴리오 필요도(`required|optional|none`) 는 데이터(`families.yaml`)로.
@@ -167,13 +179,28 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
 
 ## §A10 보안 · 설정
 
-- 서버는 `127.0.0.1` 만. 모든 변경 API 는 `Origin` 검사 + 설치별 랜덤 토큰 헤더. MCP 엔드포인트는 run 별 일회성 토큰.
+- 서버는 `127.0.0.1` 만. MCP 엔드포인트는 run 별 일회성 토큰. HTTP 요청은 `api/security.py` 미들웨어가 세 겹으로 본다:
+  1. `Host` 가 `127.0.0.1`·`localhost` 가 아니면 403 — DNS 리바인딩이면 공격 페이지가 "같은 출처"가 돼 CORS·Origin 이 못 막는다.
+  2. `Origin` 이 **있으면** `WEB_CORS_ORIGIN` 이거나 이 서버와 같은 출처여야 한다(아니면 403, GET 포함). 브라우저는 변경 요청에
+     Origin 을 항상 붙이므로 없는 요청은 브라우저 밖 로컬 프로세스다 — 그쪽은 3 이 막는다.
+  3. 변경 요청(POST·PUT·PATCH·DELETE)은 `X-Auto-Apply-Token` 헤더가 설치별 토큰과 같아야 한다(아니면 403).
+     토큰은 최초 기동에 `DATA_DIR/session_token`(0600, 원자적 생성)으로 만들고 재기동해도 유지한다.
+     웹 콘솔은 `GET /api/session`(no-store) 으로 받는다 — 1·2 와 CORS 가 타 출처를 막는다.
+     **한계**: 같은 PC 의 로컬 프로세스·다른 OS 계정도 `/api/session` 으로 토큰을 얻을 수 있다(파일 0600 으로는 못 막는다).
+     D1 위협 모델(로컬 1인)상 허용하고, 막는 대상은 브라우저가 대신 보내는 타 사이트 요청이다 — 강화는 M7.
+  보안 미들웨어는 CORS 안쪽이라 403 에도 CORS 헤더가 붙는다. CORS 허용 헤더는 `Content-Type`·토큰 헤더만.
+- API 에러는 한 모양: `{"error": {"code", "message", "details": [{"loc", "msg"}]}}`. 검증 실패 상세에 **입력값을 싣지 않는다**
+  (FastAPI 기본 422 의 `input` 은 거부한 주민번호를 되돌려준다, 절대 규칙 5). 코드: `validation_error`·`unique_identifier_rejected`
+  (422) · `not_found`(404) · `conflict`(409) · `too_large`(413) · `unsupported_type`(415) · `host_not_allowed`·`origin_not_allowed`·
+  `invalid_token`(403) · `internal_error`(500, 원인은 로그에만).
 - 설정(`settings` 테이블 + 최초 `.env` 없이도 동작): `llm_backend=cli|api`, API 키(파일 권한 0600), `submit_mode`, 대기 타임아웃, 언어.
   `settings` 테이블 전까지의 우선순위: 환경변수 > (개발 모드일 때만) `./.env` > 사용자 설정 디렉터리 `.env`
   (`platformdirs.user_config_dir("auto-apply")`, `AUTO_APPLY_CONFIG_DIR` 로 이동 가능). 개발 모드 = `AUTO_APPLY_DEV=1`
   이거나 cwd 에 `name = "auto-apply"` 인 `pyproject.toml` 이 있을 때. 설치본을 아무 폴더에서 실행해도 그 폴더의 `.env` 가
   `DRY_RUN_ONLY`·`DATA_DIR`·API 키를 바꾸지 못하게 하려는 것이다(절대 규칙 2).
 - CORS 는 `WEB_CORS_ORIGIN` 하나만 연다. `http(s)://127.0.0.1` / `http(s)://localhost` 출처만 허용하고 `*` 등은 설정 로드에서 거부한다.
+  기본값은 **개발 모드에서만** `http://localhost:5173`(Vite). 설치본은 비어 있어 같은 출처만 허용한다 — 5173 포트에 아무 앱이나
+  뜨면 그 앱이 토큰을 받아 가지 않게. API 문서(`/docs`·`/redoc`·`/openapi.json`)도 개발 모드에서만 연다.
 - 기동 마이그레이션은 한 트랜잭션(pysqlite 트랜잭션 레시피 + `transactional_ddl`)이라 실패해도 스키마가 반쯤 남지 않는다.
   실패하면 `auto-apply` 는 DB 경로·원인 한 줄을 로그로 남기고 종료 코드 1 로 끝난다.
 - 로그: structlog, **모든 로그에 `application_id`·`run_id` 구조화 필드.**

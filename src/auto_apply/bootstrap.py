@@ -4,8 +4,11 @@
 데이터 디렉터리 준비(마이그레이션 포함)도 어댑터를 아는 이 파일이 맡는다 — api 는 부르기만 한다.
 """
 
+import os
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
 from auto_apply.adapters.facts.repository import RepositoryFactSource
@@ -34,6 +37,8 @@ from auto_apply.ports.resume import ResumeGenerator, ResumeReviewer
 from auto_apply.ports.storage import BlobStore
 from auto_apply.runner.job_runner import JobRunner
 from auto_apply.services.document import DocumentService
+from auto_apply.services.profile import ProfileService
+from auto_apply.services.uploads import UploadService
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +56,11 @@ class Container:
     profile: ProfileSource
     guide: GuideSource
     documents: DocumentService
+    profiles: ProfileService
+    uploads: UploadService
     runner: JobRunner
+    # 변경 API 가 요구하는 설치별 토큰 (§A10). 웹은 `GET /api/session` 으로 받는다.
+    session_token: str
 
 
 class StartupError(RuntimeError):
@@ -73,6 +82,36 @@ def prepare_data_dir(cfg: Settings) -> None:
             upgrade_to_head(cfg.database_url)
         except MigrationError as e:
             raise StartupError(str(e)) from e
+
+
+_TOKEN_MIN_LEN = 32
+
+
+def ensure_session_token(path: Path) -> str:
+    """설치별 랜덤 토큰을 읽고, 없거나 망가졌으면 새로 만든다 (§A10).
+
+    파일은 소유자만 읽게(0600) 만든다. 이것만으로 다른 로컬 프로세스·같은 PC 의 다른 OS 계정을
+    막지는 못한다 — 그쪽도 `GET /api/session` 으로 토큰을 얻을 수 있다(D1 위협 모델상 허용,
+    M7 강화). 토큰이 막는 것은 브라우저가 대신 보내는 타 사이트 요청(CSRF)이다.
+    Windows 는 POSIX 권한 비트가 없다.
+    """
+    try:
+        token = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        token = ""
+    if len(token) >= _TOKEN_MIN_LEN:
+        if os.name != "nt":
+            path.chmod(0o600)
+        return token
+    token = secrets.token_urlsafe(32)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 새 파일은 처음부터 0600 으로 연다 — 쓰고 나서 chmod 하면 그 사이에 넓은 권한으로 보인다.
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(token)
+    tmp.replace(path)
+    return token
 
 
 def _build_store(cfg: Settings) -> BlobStore:
@@ -153,5 +192,8 @@ def build_container(cfg: Settings) -> Container:
         profile=profile,
         guide=guide,
         documents=DocumentService(generator, reviewer, pdf),
+        profiles=ProfileService(uow, clock, idgen),
+        uploads=UploadService(uow, store, clock, idgen, max_document_bytes=cfg.document_max_bytes),
         runner=JobRunner(),
+        session_token=ensure_session_token(cfg.session_token_path),
     )

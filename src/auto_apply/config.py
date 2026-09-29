@@ -16,6 +16,8 @@ DEFAULT_DATA_DIR = Path(user_data_dir(APP_NAME, appauthor=False))
 CONFIG_DIR_ENV = "AUTO_APPLY_CONFIG_DIR"
 DEV_MODE_ENV = "AUTO_APPLY_DEV"
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost"})
+# 개발 모드에서만 기본으로 여는 웹 콘솔 개발 서버(Vite) 출처.
+DEV_WEB_ORIGIN = "http://localhost:5173"
 
 
 def user_env_file(environ: Mapping[str, str] | None = None) -> Path:
@@ -95,13 +97,23 @@ class Settings(BaseSettings):
     resume_max_project_blocks: int = Field(default=20, ge=1)
     resume_max_career_blocks_per_entity: int = Field(default=20, ge=1)
 
-    # 웹 콘솔 개발 서버(Vite)의 origin 하나만 CORS 로 연다 — 인증이 없는 로컬 전용 서버라(D1)
-    # 와일드카드를 쓰지 않는다.
-    web_cors_origin: str = "http://localhost:5173"
+    # 웹 콘솔 개발 서버(Vite)의 origin 하나만 CORS 로 연다 — 계정 인증 없는 로컬 전용 서버라(D1)
+    # 와일드카드를 쓰지 않는다. 변경 요청은 이 출처(또는 같은 출처)여야 한다 (§A10).
+    # 기본값은 개발 모드에서만 — 설치본에서 localhost:5173 에 아무 앱이나 뜨면 그 앱이 토큰을
+    # 받아 가게 되므로, 설치본은 같은 출처만 허용한다(명시적으로 지정하면 연다).
+    web_cors_origin: str | None = Field(
+        default_factory=lambda: DEV_WEB_ORIGIN if is_dev_mode() else None
+    )
+
+    # 업로드 문서(이력서·포트폴리오 원본) 한 개의 상한. 요청 본문은 이 값 + multipart 여유분까지만
+    # 읽는다.
+    document_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
 
     @field_validator("web_cors_origin")
     @classmethod
-    def _local_origin_only(cls, v: str) -> str:
+    def _local_origin_only(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
         parts = urlsplit(v)
         if (
             parts.scheme not in {"http", "https"}
@@ -118,6 +130,11 @@ class Settings(BaseSettings):
         return v
 
     @property
+    def dev_mode(self) -> bool:
+        """§A10 개발 모드. API 문서(/docs·/redoc·/openapi.json)는 이때만 연다."""
+        return is_dev_mode()
+
+    @property
     def database_url(self) -> str:
         """DB 는 데이터 디렉터리 안의 파일 하나다 (§A1) — 따로 설정할 값이 아니라 파생값이다."""
         return f"sqlite+aiosqlite:///{(self.data_dir / 'db.sqlite3').resolve().as_posix()}"
@@ -126,6 +143,11 @@ class Settings(BaseSettings):
     def files_dir(self) -> Path:
         """업로드·생성 파일 바이트(BlobStore 루트, §A1 `files/`)."""
         return self.data_dir / "files"
+
+    @property
+    def session_token_path(self) -> Path:
+        """설치별 API 토큰 파일 (§A10). 최초 기동에 만들고 0600 으로 둔다."""
+        return self.data_dir / "session_token"
 
     @property
     def guide_dir(self) -> Path:

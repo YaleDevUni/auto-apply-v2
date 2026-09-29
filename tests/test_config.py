@@ -92,3 +92,7 @@ def test_cors_origin_rejects_non_local(origin):
 @pytest.mark.parametrize("origin", ["http://localhost:5173", "http://127.0.0.1:8765"])
 def test_cors_origin_accepts_local(origin):
     assert Settings(_env_file=None, web_cors_origin=origin).web_cors_origin == origin
+
+
+def test_blank_cors_origin_means_same_origin_only():
+    assert Settings(_env_file=None, web_cors_origin="").web_cors_origin is None

@@ -157,4 +157,7 @@ v2 잔재인 `ports/guide.py`·`adapters/guide/file.py`·`config.py` 의 `resume
 이관: Makefile `SHELL := /bin/bash` 등 Windows 비호환 정리(개발 명령을 Python 태스크로).
 T0.3 이관: DB 업그레이드 전 자동 백업, `make api`(uvicorn CLI)가 `UVICORN_HOST`/`--host` 로 0.0.0.0 에 열리는 개발 경로 봉인,
 `api/main.py` 모듈 수준 `app` 제거(import 만으로 Settings 이중 로드).
+T1.2 이관(로컬 보안 강화): 토큰을 CLI 가 여는 일회성 URL(fragment) → HttpOnly·SameSite=Strict 쿠키로 전달하고 `/api/session` 제거,
+GET 에도 토큰 요구(지금은 같은 PC 의 로컬 프로세스·다른 OS 계정이 토큰·인적사항을 얻을 수 있음), OpenAPI 422 에러 스키마 정정,
+db.sqlite3·업로드 파일 권한 0600(Windows ACL 포함).
 수용 기준: CI 가 mac·windows 에서 `make check` 녹색, 깨끗한 환경 설치 스모크.

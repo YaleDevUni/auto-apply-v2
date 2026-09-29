@@ -58,3 +58,31 @@ async def test_nested_keys_are_supported(store: BlobStore):
     key = "application-artifacts/app_1/1/step-03.png"
     await store.put(key, b"\x89PNG")
     assert await store.get(key) == b"\x89PNG"
+
+
+async def test_delete_removes_and_reports(store: BlobStore):
+    await store.put("documents/u1/d1.pdf", b"%PDF-")
+    assert await store.delete("documents/u1/d1.pdf") is True
+    assert await store.exists("documents/u1/d1.pdf") is False
+    with pytest.raises(BlobNotFound):
+        await store.get("documents/u1/d1.pdf")
+
+
+async def test_delete_missing_is_false_not_error(store: BlobStore):
+    assert await store.delete("nope/nothing.bin") is False
+
+
+async def test_delete_leaves_other_keys(store: BlobStore):
+    await store.put("a/1.bin", b"1")
+    await store.put("a/2.bin", b"2")
+    await store.delete("a/1.bin")
+    assert await store.get("a/2.bin") == b"2"
+
+
+async def test_local_delete_cannot_escape_root(tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"keep")
+    store = LocalBlobStore(tmp_path / "root")
+    with pytest.raises(ValueError):
+        await store.delete("../outside.txt")
+    assert outside.read_bytes() == b"keep"

@@ -45,3 +45,15 @@ class LocalBlobStore:
         if not await self.exists(key):
             raise BlobNotFound(key)
         return self._path(key).as_uri()
+
+    async def delete(self, key: str) -> bool:
+        path = self._path(key)
+
+        def _unlink() -> bool:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                return False
+            return True
+
+        return await asyncio.to_thread(_unlink)

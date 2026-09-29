@@ -28,3 +28,6 @@ class InMemoryBlobStore:
         if key not in self._blobs:
             raise BlobNotFound(key)
         return f"memory://{key}?ttl={int(ttl.total_seconds())}"
+
+    async def delete(self, key: str) -> bool:
+        return self._blobs.pop(key, None) is not None

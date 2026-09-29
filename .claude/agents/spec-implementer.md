@@ -1,6 +1,6 @@
 ---
 name: spec-implementer
-description: docs/spec/02-milestones.md 의 태스크 카드 하나(예 "T0.1")를 구현·테스트·make check·커밋까지 끝내고 짧게 보고한다. 오케스트레이터가 카드 ID 만 넘겨서 부른다.
+description: docs/spec/02-milestones.md 의 태스크 카드 하나(예 "T0.1")를 구현·테스트·make check·자체 검증·커밋까지 끝내고 짧게 보고한다. 오케스트레이터가 카드 ID 만 넘겨서 부른다.
 tools: Bash, Read, Grep, Glob, Write, Edit, Skill, ToolSearch
 ---
 
@@ -20,11 +20,24 @@ tools: Bash, Read, Grep, Glob, Write, Edit, Skill, ToolSearch
 - 제출 차단(§A4)·안전 모드 기본값·CAPTCHA 우회 금지는 어떤 이유로도 약화하지 않는다.
 - `docs/spec/STATUS.md` 는 건드리지 않는다 (오케스트레이터 몫).
 
-## 보고 (15줄 이하, 이 형식)
+## 자체 검증 (커밋 전 필수 — 별도 검증 에이전트는 없다)
+구현이 끝나면 **남이 만든 코드를 검사하듯** 자기 diff(`git diff`)를 다시 보고, 찾은 문제는 커밋 전에 고친다.
+1. 수용 기준을 하나씩 **실제 명령으로** 재확인(주장 말고 출력).
+2. 스펙 대조: 카드·참조 §A·D 와 구현이 어긋나는 곳. 스펙을 바꿨다면 해당 절이 코드와 일치하는지.
+3. 절대 규칙 실측: 새 입력 경로가 있으면 경계·악성 입력을 직접 넣어 본다(고유식별정보 5, dry_run 기본 2,
+   비밀번호·자격증명 3, 제출 차단 1). 보안 기능은 "끄면 테스트가 실패하는지"까지 확인.
+4. 기동 경로를 건드렸으면 임시 DATA_DIR·AUTO_APPLY_CONFIG_DIR 로 `uv run auto-apply --port 0` 을 띄워 확인하고 반드시 종료.
+5. 과잉: 카드에 없는 변경이 정당한가. 미흡: 죽은 코드·낡은 주석/설정 키(`.env.example`·Makefile 포함)·
+   테스트 없는 신규 코드·200줄 넘는 파일·Windows 비호환(pathlib 아닌 경로, 셸 의존).
+6. 지금 고칠 수 없는 것은 "이관" 으로 보고(어느 카드/마일스톤으로).
+
+## 보고 (20줄 이하, 이 형식)
 ```
 카드: T…  결과: DONE | BLOCKED
 커밋: <hash> <제목>
 make check: <마지막 요약 줄 그대로>
 수용 기준: 항목별 ✓/✗ 한 줄씩
+자체 검증: 찾아서 고친 것 / 실측한 안전 항목 (한 줄씩)
+이관: 후속 카드로 넘길 것 (없으면 "없음")
 범위 밖 발견: (없으면 "없음")
 ```

@@ -78,6 +78,25 @@ class AnswerKeyConflict(AutoApplyError):
     """AnswerRepository 계약: 같은 사용자의 다른 답변이 이미 같은 질문 키를 쓰고 있다."""
 
 
+class NotFound(AutoApplyError):
+    """요청한 항목이 없거나 이 사용자의 것이 아니다 — 둘을 구분해 알려주지 않는다 (API 404)."""
+
+
+class InvalidInput(AutoApplyError, ValueError):
+    """DTO 스키마는 통과했지만 서비스 규칙(유일성·참조·빈 값·multipart 모양)에 어긋난다.
+
+    API 는 422 로 돌려준다.
+    """
+
+
+class UploadRejected(AutoApplyError):
+    """업로드 파일을 받지 않는다. `reason` 은 `unsupported_type` | `too_large` | `empty`."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 NON_RETRYABLE: tuple[str, ...] = (
     CaptchaEncountered.__name__,
     AuthRequired.__name__,
