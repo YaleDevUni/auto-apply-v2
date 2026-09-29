@@ -1,7 +1,7 @@
 """이력서 생성의 fact 선별 + hallucination 탐지. 전부 순수 함수, LLM 미사용 (ARCHITECTURE.md §2.3).
 
-Recipe 의 `value_ref`(참조만, 리터럴 금지, §3)와 같은 철학 — 이력서의 모든 서술도 fact_id 로
-근거를 참조해야 한다. `ground_check`가 review 게이트의 첫 체크(hallucinated claim 탐지)다.
+이력서의 모든 서술은 fact_id 로 근거를 참조해야 한다(00-product 절대 규칙 4).
+`ground_check`가 review 게이트의 첫 체크(hallucinated claim 탐지)다.
 
 경력/프로젝트 블록 조립(`FactBlock`/`group_facts_for_resume`/`select_relevant_blocks`)은 같은
 철학의 연장이지만 `domain/resume_blocks.py`로 분리했다 — "블록 조립"과 "fact 선별/grounding

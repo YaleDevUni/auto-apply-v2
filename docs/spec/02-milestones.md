@@ -46,6 +46,9 @@
   Postgres·S3·MinIO 어댑터 제거, SQLite 단일 repository(+ memory 대역) + Alembic 초기 리비전 재작성
   (§A3·§A7·§A8·§A9 테이블은 이후 마일스톤에서 추가 — 여기선 applications/runs 최소 스키마만). `docker-compose.yml` 삭제.
   `make up/migrate/worker/dev-*` 제거, `make check` 는 docker·temporal 없이 돌게.
+  T0.1 검증에서 넘어온 잔재도 여기서: `pyproject` 의 python-telegram-bot·weasyprint·selectolax·boto3(+mypy override,
+  native 마커 설명, description 의 "recipe-driven", 삭제된 모듈명 주석), `config.resume_engine` 의 구현 없는 `langgraph` 값,
+  `adapters/repository/models.py` 의 삭제된 `persist_state` 참조. playwright 는 §A5/§A7 용도로 유지.
 - 수용 기준: `make check` 녹색, `pyproject` 에 temporalio/asyncpg/boto 없음, repository contract test 가 sqlite+memory 둘 다에 돈다.
 
 ### T0.3 계층 규칙 · 앱 진입점 재구성
@@ -66,6 +69,7 @@
 
 ## M1 · 프로필 · 지식베이스
 목표: 웹에서 인적사항/경험/문서/답변KB 를 CRUD 하고, 기존 이력서 파일로 초안을 추출한다.
+웹 콘솔은 **TanStack Router(D16)** 로 페이지 라우팅을 도입하고, T0.1 에서 끊긴 `web/src/lib/api.ts` 의 `/applications/*` 호출을 걷어낸다.
 수용 기준: 프로필 API contract 테스트, 추출 결과 스키마 검증 회귀 테스트(샘플 PDF 2종: 개발/비개발), 웹 온보딩 화면 수동 확인 체크리스트.
 
 ## M2 · 브라우저 호스트 · 제출 차단 하네스
@@ -86,6 +90,7 @@
 
 ## M6 · 가이드 자동 학습
 목표: run 종료 반성 → 가이드 자동 버전 누적, 압축, UI(목록·diff·롤백·편집), 프롬프트 주입.
+v2 잔재인 `ports/guide.py`·`adapters/guide/file.py`·`config.py` 의 `resume_guide.{platform}.md` 키는 D13(도메인별+전역)으로 교체한다.
 수용 기준: 반성 결과 스키마 검증 테스트, 롤백 후 주입 내용 검증, "가이드로 하네스 해제 불가" 회귀 테스트.
 
 ## M7 · 배포

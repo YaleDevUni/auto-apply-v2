@@ -10,4 +10,3 @@ DATA_CONVERTER = pydantic_data_converter
 
 QUEUE_DEFAULT = "default"
 QUEUE_AI = "ai"
-QUEUE_BROWSER = "browser"

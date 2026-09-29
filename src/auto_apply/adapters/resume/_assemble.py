@@ -4,7 +4,6 @@
 """
 
 from auto_apply.ai.schemas import ResumeContentSchema, ResumeHighlight
-from auto_apply.contracts.portfolio import PortfolioMap
 from auto_apply.contracts.profile import Profile
 from auto_apply.contracts.resume_content import (
     AssembledResume,
@@ -23,7 +22,6 @@ def assemble_resume(
     profile: Profile,
     blocks: list[FactBlock],
     content: ResumeContentSchema,
-    portfolio: PortfolioMap,
 ) -> AssembledResume:
     bullets_by_block: dict[str, list[ResumeHighlight]] = {
         b.block_id: b.bullets for b in content.blocks
@@ -86,10 +84,6 @@ def assemble_resume(
         education=profile.education,
         skills=profile.skills,
         languages=profile.languages,
-        # LLM 이 고른 카테고리 라벨을 실제 파일명으로 바꾼다 — 매칭되는 게 없으면(라벨을
-        # 안 골랐거나, 목록에 없는 걸 창작했으면) 그냥 비워둔다. Recipe 쪽 selector 는 이
-        # 값이 비면 그 액션을 건너뛰도록 optional 로 짠다(domain/recipe_selector.py).
-        portfolio_filename=portfolio.categories.get(content.job_category, ""),
         caution_notes=content.caution_notes,
     )
 

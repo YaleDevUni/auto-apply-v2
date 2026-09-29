@@ -9,10 +9,11 @@
 ## 작업 시작 전 (세션 관리)
 
 1. **[docs/spec/STATUS.md](docs/spec/STATUS.md) 부터 읽는다** — 현재 마일스톤·다음 태스크·운영 프로토콜.
-2. 필요한 것만 추가로: [00-product.md](docs/spec/00-product.md)(결정 D1~D15) ·
+2. 필요한 것만 추가로: [00-product.md](docs/spec/00-product.md)(결정 D1~D16) ·
    [01-architecture.md](docs/spec/01-architecture.md)(§A1~§A10) · [02-milestones.md](docs/spec/02-milestones.md)(태스크 카드).
 3. 태스크 구현은 `spec-implementer` 서브에이전트에 **카드 ID 만** 넘겨 위임하고, 메인 세션은 STATUS.md 를 갱신한다.
    컨텍스트를 아끼는 게 목적이다 — 메인 세션이 소스 트리를 넓게 읽지 않는다.
+4. 구현 보고 뒤엔 **검증 에이전트 1회**(수정 금지)로 수용 기준·스펙 위반·과잉/미흡을 판정받는다. 수정은 그 카드 커밋에 amend.
 
 `docs/ARCHITECTURE.md`·`docs/architecture/` 는 **v2 문서**다(T0.4 에서 삭제). v3 설계 판단에 쓰지 않는다.
 

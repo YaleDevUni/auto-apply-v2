@@ -1,21 +1,10 @@
 from types import TracebackType
 from typing import Self
 
-from auto_apply.contracts.dto import (
-    ApplicationAttempt,
-    ApplicationSummary,
-    CachedResume,
-    PersistState,
-    ScheduleConfig,
-)
-from auto_apply.contracts.job import JobRecord
+from auto_apply.contracts.dto import ApplicationSummary, PersistState
 from auto_apply.domain.enums import ApplicationState
 
 Rows = dict[str, list[PersistState]]
-JobRows = dict[tuple[str, str], JobRecord]
-AttemptRows = dict[str, list[ApplicationAttempt]]
-ScheduleConfigRows = dict[str, ScheduleConfig]
-ResumeRows = dict[str, CachedResume]
 
 
 def _summary(application_id: str, latest: PersistState) -> ApplicationSummary:
@@ -56,77 +45,9 @@ class InMemoryApplicationRepository:
         return {aid: self._rows[aid][-1].state for aid in application_ids if self._rows.get(aid)}
 
 
-class InMemoryJobRepository:
-    def __init__(self, rows: JobRows) -> None:
-        self._rows = rows
-
-    async def upsert(self, record: JobRecord) -> None:
-        self._rows[(record.job.platform, record.job.platform_job_id)] = record
-
-    async def get(self, platform: str, platform_job_id: str) -> JobRecord | None:
-        return self._rows.get((platform, platform_job_id))
-
-    async def actionable(self) -> list[JobRecord]:
-        return [r for r in self._rows.values() if r.applicability and r.applicability.actionable]
-
-
-class InMemoryAttemptRepository:
-    def __init__(self, rows: AttemptRows) -> None:
-        self._rows = rows
-
-    async def record(self, attempt: ApplicationAttempt) -> None:
-        history = self._rows.setdefault(attempt.application_id, [])
-        for i, existing in enumerate(history):
-            if existing.attempt == attempt.attempt:
-                history[i] = attempt
-                return
-        history.append(attempt)
-
-    async def history(self, application_id: str) -> list[ApplicationAttempt]:
-        return list(self._rows.get(application_id, []))
-
-
-class InMemoryScheduleConfigRepository:
-    def __init__(self, rows: ScheduleConfigRows) -> None:
-        self._rows = rows
-
-    async def get(self, target: str) -> ScheduleConfig | None:
-        return self._rows.get(target)
-
-    async def set(self, config: ScheduleConfig) -> None:
-        self._rows[config.target] = config
-
-
-class InMemoryResumeRepository:
-    def __init__(self, rows: ResumeRows) -> None:
-        self._rows = rows
-
-    async def get(self, application_id: str) -> CachedResume | None:
-        return self._rows.get(application_id)
-
-    async def save(self, resume: CachedResume) -> None:
-        self._rows[resume.application_id] = resume
-
-    async def delete(self, application_id: str) -> None:
-        self._rows.pop(application_id, None)
-
-
 class InMemoryUnitOfWork:
-    def __init__(
-        self,
-        rows: Rows,
-        job_rows: JobRows | None = None,
-        attempt_rows: AttemptRows | None = None,
-        schedule_config_rows: ScheduleConfigRows | None = None,
-        resume_rows: ResumeRows | None = None,
-    ) -> None:
+    def __init__(self, rows: Rows) -> None:
         self.applications = InMemoryApplicationRepository(rows)
-        self.jobs = InMemoryJobRepository(job_rows if job_rows is not None else {})
-        self.attempts = InMemoryAttemptRepository(attempt_rows if attempt_rows is not None else {})
-        self.schedule_config = InMemoryScheduleConfigRepository(
-            schedule_config_rows if schedule_config_rows is not None else {}
-        )
-        self.resumes = InMemoryResumeRepository(resume_rows if resume_rows is not None else {})
 
     async def __aenter__(self) -> Self:
         return self

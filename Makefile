@@ -33,7 +33,7 @@ lint: ## 린트
 type: ## 타입 체크
 	uv run mypy
 
-arch: ## 계층 규칙 검사 (ARCHITECTURE.md §11.7)
+arch: ## 계층 규칙 검사 (§A2)
 	uv run lint-imports
 
 test: ## 단위/계약/워크플로우 테스트 (docker·브라우저 불필요) — make check 가 쓰는 게이트
@@ -42,7 +42,7 @@ test: ## 단위/계약/워크플로우 테스트 (docker·브라우저 불필요
 test-fast: ## 개발 중 빠른 반복용 — Temporal 을 띄우는 테스트까지 뺀다 (게이트 아님)
 	uv run pytest -m "not docker and not native and not temporal"
 
-test-all: ## 전체 (make up + playwright/weasyprint 설치 필요)
+test-all: ## 전체 (make up 필요)
 	uv run pytest
 
 check: lint type arch test ## 커밋 전 전체 검사
@@ -50,28 +50,10 @@ check: lint type arch test ## 커밋 전 전체 검사
 api: ## FastAPI 개발 서버
 	uv run uvicorn auto_apply.api.main:app --reload --port 8000
 
-worker: ## Temporal worker (QUEUE=default|ai|browser)
+worker: ## Temporal worker (QUEUE=default|ai)
 	uv run python -m auto_apply.worker --queue $${QUEUE:-default}
 
-telegram-listen: ## 텔레그램 롱폴링 리스너 (NOTIFIER=telegram, 공인 URL 없는 로컬 개발용)
-	uv run python -m auto_apply.telegram.listener
-
-watchdog: ## 워크플로우 능동 감시 (FAILED/TERMINATED/TIMED_OUT → 알림, WATCHDOG_* 로 튜닝)
-	uv run python -m auto_apply.watchdog
-
-resume-cleanup: ## wanted 이력서 첨부파일 정리 (기본 dry-run, ARGS="--yes" 로 실제 삭제)
-	uv run python -m auto_apply.resume_cleanup $(ARGS)
-
-web: ## 웹 콘솔 dev 서버 (§12, make api 가 먼저 떠 있어야 한다)
+web: ## 웹 콘솔 dev 서버 (make api 가 먼저 떠 있어야 한다)
 	cd web && npm install && npm run dev
 
-dev-up: ## 인프라+마이그레이션+api/worker×3/telegram-listen/watchdog 한 번에 기동, 누락 시 실패 보고
-	./scripts/dev_up.sh
-
-dev-down: ## dev-up 으로 띄운 프로세스 정지 (ARGS="--infra" 로 docker 인프라도 같이 정지)
-	./scripts/dev_down.sh $(ARGS)
-
-dev-status: ## dev-up 프로세스 + 인프라 컨테이너 상태 확인
-	./scripts/dev_status.sh
-
-.PHONY: help setup up down reset migrate fmt lint type arch test test-fast test-all check api worker telegram-listen watchdog resume-cleanup web dev-up dev-down dev-status
+.PHONY: help setup up down reset migrate fmt lint type arch test test-fast test-all check api worker web

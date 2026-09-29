@@ -1,14 +1,9 @@
 <!--
-config/resume_guide.{platform}.md — 플랫폼별 이력서 작성 가이드 (ARCHITECTURE.md §2.2, §2.3).
+config/resume_guide.{platform}.md — 이력서 작성 가이드. 사람이 직접 줄을 추가/수정한다 —
+SimpleResumeGenerator 가 이력서를 생성할 때마다 다시 읽는다(캐시 없음).
+v3 가이드(§A8: DB·버전·global/domain scope)로 M6 에서 대체된다.
 
-REVISE(수정요청) → scope=GENERAL 을 사람이 승인하면 이 파일에 규칙이 patch(치환 쌍)로 쌓인다
-(domain/guide_patch.py). 사람이 직접 줄을 추가/수정해도 된다 — SimpleResumeGenerator 가
-이력서를 생성할 때마다 다시 읽는다(캐시 없음).
-
-파일명의 {platform} 은 JobRef.platform 값과 정확히 일치해야 한다 (예: wanted, saramin,
-jasoseol). 플랫폼마다 이력서 포맷·관례가 달라 가이드도 갈릴 수 있어서 파일을 나눴다 — 지금은
-원티드(resume_guide.wanted.md)만 실제로 쓰지만, 새 플랫폼은 이 이름 규칙대로 파일을 하나 더
-두는 것만으로 확장된다(코드 변경 불필요).
+파일명의 {platform} 은 JobRef.platform 값과 정확히 일치해야 한다.
 
 이 파일들은 사람이 쓴 커스텀 프롬프트라 .gitignore 로 뺐다 — 이 example 파일만 형식 공유용으로
 git에 남긴다 (config/facts.example.yaml, config/profile.example.yaml 과 같은 패턴).

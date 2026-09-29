@@ -21,7 +21,6 @@ from auto_apply.ports.clock import IdGen
 from auto_apply.ports.facts import FactSource
 from auto_apply.ports.guide import GuideSource
 from auto_apply.ports.llm import LLMClient
-from auto_apply.ports.portfolio import PortfolioSource
 from auto_apply.ports.profile import ProfileSource
 
 
@@ -32,7 +31,6 @@ class SimpleResumeGenerator:
         idgen: IdGen,
         facts: FactSource,
         profile: ProfileSource,
-        portfolio: PortfolioSource,
         guide: GuideSource,
         *,
         max_reprompts: int = 2,
@@ -43,7 +41,6 @@ class SimpleResumeGenerator:
         self._idgen = idgen
         self._facts = facts
         self._profile = profile
-        self._portfolio = portfolio
         self._guide = guide
         self._max_reprompts = max_reprompts
         self._max_project_blocks = max_project_blocks
@@ -52,7 +49,6 @@ class SimpleResumeGenerator:
     async def generate(self, req: GenerateResumeRequest) -> ResumeDraft:
         facts = await self._facts.list_for_user(req.user_id)
         profile = await self._profile.get(req.user_id)
-        portfolio = await self._portfolio.get(req.user_id)
         guide = await self._guide.get(req.job.platform)
         job_text = f"{req.job.title}\n{req.job.description}"
 
@@ -71,10 +67,9 @@ class SimpleResumeGenerator:
                 blocks,
                 guide=guide,
                 feedback=req.feedback,
-                portfolio_categories=list(portfolio.categories),
             )
         )
-        assembled = assemble_resume(profile, blocks, content, portfolio)
+        assembled = assemble_resume(profile, blocks, content)
         return ResumeDraft(
             resume_id=self._idgen.new_id("res"),
             content=assembled.model_dump(),

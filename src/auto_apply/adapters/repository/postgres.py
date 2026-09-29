@@ -9,7 +9,7 @@ from collections.abc import Callable
 from types import TracebackType
 from typing import Self
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -18,21 +18,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from auto_apply.adapters.repository.models import (
-    ApplicationAttemptRow,
-    ApplicationStateRow,
-    JobRow,
-    ResumeCacheRow,
-    ScheduleConfigRow,
-)
-from auto_apply.contracts.dto import (
-    ApplicationAttempt,
-    ApplicationSummary,
-    CachedResume,
-    PersistState,
-    ScheduleConfig,
-)
-from auto_apply.contracts.job import JobRecord
+from auto_apply.adapters.repository.models import ApplicationStateRow
+from auto_apply.contracts.dto import ApplicationSummary, PersistState
 from auto_apply.domain.enums import ApplicationState
 
 SessionFactory = async_sessionmaker[AsyncSession]
@@ -104,107 +91,6 @@ class SqlAlchemyApplicationRepository:
         return {r.application_id: PersistState.model_validate(r.payload).state for r in rows}
 
 
-class SqlAlchemyJobRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def upsert(self, record: JobRecord) -> None:
-        actionable = record.applicability.actionable if record.applicability else None
-        stmt = pg_insert(JobRow).values(
-            platform=record.job.platform,
-            platform_job_id=record.job.platform_job_id,
-            actionable=actionable,
-            payload=record.model_dump(mode="json"),
-        )
-        stmt = stmt.on_conflict_do_update(
-            constraint="uq_job_platform_id",
-            set_={"actionable": stmt.excluded.actionable, "payload": stmt.excluded.payload},
-        )
-        await self._session.execute(stmt)
-
-    async def get(self, platform: str, platform_job_id: str) -> JobRecord | None:
-        row = await self._session.scalar(
-            select(JobRow).where(
-                JobRow.platform == platform, JobRow.platform_job_id == platform_job_id
-            )
-        )
-        return JobRecord.model_validate(row.payload) if row else None
-
-    async def actionable(self) -> list[JobRecord]:
-        rows = await self._session.scalars(select(JobRow).where(JobRow.actionable.is_(True)))
-        return [JobRecord.model_validate(r.payload) for r in rows]
-
-
-class SqlAlchemyAttemptRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def record(self, attempt: ApplicationAttempt) -> None:
-        stmt = pg_insert(ApplicationAttemptRow).values(
-            application_id=attempt.application_id,
-            attempt=attempt.attempt,
-            payload=attempt.model_dump(mode="json"),
-        )
-        stmt = stmt.on_conflict_do_update(
-            constraint="uq_application_attempt",
-            set_={"payload": stmt.excluded.payload},
-        )
-        await self._session.execute(stmt)
-
-    async def history(self, application_id: str) -> list[ApplicationAttempt]:
-        rows = await self._session.scalars(
-            select(ApplicationAttemptRow)
-            .where(ApplicationAttemptRow.application_id == application_id)
-            .order_by(ApplicationAttemptRow.id)
-        )
-        return [ApplicationAttempt.model_validate(r.payload) for r in rows]
-
-
-class SqlAlchemyScheduleConfigRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def get(self, target: str) -> ScheduleConfig | None:
-        row = await self._session.scalar(
-            select(ScheduleConfigRow).where(ScheduleConfigRow.target == target)
-        )
-        return ScheduleConfig.model_validate(row.payload) if row else None
-
-    async def set(self, config: ScheduleConfig) -> None:
-        stmt = pg_insert(ScheduleConfigRow).values(
-            target=config.target, payload=config.model_dump(mode="json")
-        )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[ScheduleConfigRow.target], set_={"payload": stmt.excluded.payload}
-        )
-        await self._session.execute(stmt)
-
-
-class SqlAlchemyResumeRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def get(self, application_id: str) -> CachedResume | None:
-        row = await self._session.scalar(
-            select(ResumeCacheRow).where(ResumeCacheRow.application_id == application_id)
-        )
-        return CachedResume.model_validate(row.payload) if row else None
-
-    async def save(self, resume: CachedResume) -> None:
-        stmt = pg_insert(ResumeCacheRow).values(
-            application_id=resume.application_id, payload=resume.model_dump(mode="json")
-        )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[ResumeCacheRow.application_id], set_={"payload": stmt.excluded.payload}
-        )
-        await self._session.execute(stmt)
-
-    async def delete(self, application_id: str) -> None:
-        await self._session.execute(
-            delete(ResumeCacheRow).where(ResumeCacheRow.application_id == application_id)
-        )
-
-
 class SqlAlchemyUnitOfWork:
     """세션 하나 = 트랜잭션 하나. `commit()`을 부르지 않으면 `__aexit__`에서 롤백된다.
 
@@ -216,10 +102,6 @@ class SqlAlchemyUnitOfWork:
     def __init__(self, session_factory: SessionFactory) -> None:
         self._session: AsyncSession = session_factory()
         self.applications = SqlAlchemyApplicationRepository(self._session)
-        self.jobs = SqlAlchemyJobRepository(self._session)
-        self.attempts = SqlAlchemyAttemptRepository(self._session)
-        self.schedule_config = SqlAlchemyScheduleConfigRepository(self._session)
-        self.resumes = SqlAlchemyResumeRepository(self._session)
 
     async def __aenter__(self) -> Self:
         return self

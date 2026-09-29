@@ -15,39 +15,11 @@ class Settings(BaseSettings):
     # 어댑터 선택
     llm_provider: Literal["stub", "anthropic", "claude_cli"] = "stub"
     storage: Literal["local", "memory", "s3"] = "local"
-    notifier: Literal["console", "telegram"] = "console"
     resume_engine: Literal["simple", "langgraph"] = "simple"
-    executor: Literal["replay", "playwright", "agent_browser"] = "replay"
     repository: Literal["memory", "file", "postgres"] = "file"
-    playwright_headless: bool = True
-    # EXECUTOR=agent_browser 일 때만 — 이 머신에 `npm i -g agent-browser && agent-browser install`
-    # 이 돼 있어야 한다. headless 는 playwright_headless 를 그대로 공유한다(같은 의미의 설정을
-    # executor 별로 중복시키지 않는다).
-    agent_browser_binary: str = "agent-browser"
-    job_source: Literal["fixture", "live"] = "fixture"
-    matching_config: Literal["static", "yaml"] = "yaml"
     facts_source: Literal["static", "yaml"] = "yaml"
     profile_source: Literal["static", "yaml"] = "yaml"
-    portfolio_source: Literal["static", "yaml"] = "yaml"
     guide_source: Literal["static", "file"] = "file"
-    pdf_renderer: Literal["stub", "weasyprint"] = "weasyprint"
-    web_agent: Literal["replay", "aside_cli"] = "replay"
-    credential_source: Literal["static", "json"] = "static"
-    # SUPERVISED 페이지 경계 체크포인트 승인/거절을 어디 남길지 (§ supervised-checkpoint-design).
-    # nonce 발급 프로세스(worker activity)와 승인 프로세스(webhook/리스너)가 갈라져서
-    # in-process 상태로는 공유가 안 된다.
-    checkpoint_store: Literal["file", "memory"] = "file"
-    # 태그(REVISE/가이드 patch 답장) 없는 자유 텍스트를 telegram/agent.py 의 채팅 에이전트로
-    # 넘길지. 끄면 예전 동작(조용히 무시)으로 정확히 되돌아간다 — LLM 비용/예산
-    # (CLAUDE_CLI_MAX_BUDGET_USD)이나 예상 밖 동작이 우려되면 재배포 없이 끌 수 있는 손잡이.
-    telegram_chat_agent_enabled: bool = True
-    # 채팅 에이전트의 "도구를 부를지/답할지" 판단은 이력서 생성보다 훨씬 가벼운 분류 작업이라
-    # 별도로 싼 모델을 쓴다(LLMClient 는 인스턴스당 모델 하나 — bootstrap 이 llm 과 별개로
-    # chat_llm 을 이 모델로 한 번 더 만든다). llm_provider=stub 이면 무시된다.
-    telegram_agent_model: str = "claude-haiku-4-5-20251001"
-    # telegram/agent.py 의 start_applications 도구가 새 지원을 시작할 때 쓰는 user_id.
-    # 이 프로젝트는 단일 사용자 전제라 config/profile.yaml 의 user_id 와 맞춰 고정값으로 둔다.
-    default_user_id: str = "u1"
 
     # 인프라
     database_url: str = "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply"
@@ -59,34 +31,9 @@ class Settings(BaseSettings):
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
     data_dir: Path = Path("./var")
-    matching_config_path: Path = Path("./config/matching.yaml")
     facts_path: Path = Path("./config/facts.yaml")
     profile_path: Path = Path("./config/profile.yaml")
-    portfolio_map_path: Path = Path("./config/portfolio_map.yaml")
     resume_guide_dir: Path = Path("./config")  # resume_guide.{platform}.md 를 이 안에서 찾는다
-    credential_queue_path: Path = Path("./config/credentials.json")
-    # WEB_AGENT=aside_cli 일 때만 — 이 머신에 aside CLI가 설치되고 로그인돼 있어야 한다.
-    aside_cli_binary: str = "aside"
-    aside_cli_account: str = ""
-
-    # 공고 수집 Schedule (§11.2b) — `cli.py collect-schedule`이 이 값으로 등록/갱신한다.
-    job_collection_cron: str = "0 9 * * *"
-    job_collection_platforms: str = "wanted,saramin,jasoseol"
-
-    # 자동 지원 시작 Schedule (§ apply-schedule) — `cli.py apply-schedule`이 이 값으로
-    # 등록/갱신한다. job_collection_cron 과 다른 시각을 기본값으로 둔다 — 수집이 캐시를
-    # 채운 뒤에 돌아야 그날 수집분이 곧바로 후보에 잡힌다(JOB_CACHE_TTL=24시간이라 하루
-    # 늦어도 안전판은 있지만, 순서를 맞추는 쪽이 자연스럽다).
-    apply_schedule_cron: str = "0 10 * * *"
-    apply_schedule_count: int = Field(default=3, ge=1)
-
-    # 워크플로우 감시 watchdog (`make watchdog`, workflow-failure-visibility-backlog §3) —
-    # FAILED/TERMINATED/TIMED_OUT 으로 끝난 워크플로우를 능동으로 텔레그램 알림한다.
-    watchdog_poll_interval_seconds: int = Field(default=60, ge=5)
-    watchdog_lookback_minutes: int = Field(default=60, ge=1)
-    # 폴링이 이만큼 연속 실패하면 "감시가 눈이 먼 상태"를 알린다(watchdog.blind_alert).
-    # 한두 번의 일시적 실패로 알림이 오면 소음이라 기본값을 조금 여유 있게 잡는다.
-    watchdog_blind_alert_after: int = Field(default=3, ge=1)
 
     s3_endpoint_url: str = "http://localhost:9000"
     s3_bucket: str = "auto-apply"
@@ -104,22 +51,12 @@ class Settings(BaseSettings):
     claude_cli_binary: str = "claude"
     claude_cli_model: str = "claude-sonnet-5"
     claude_cli_max_budget_usd: float = 0.5
-    telegram_bot_token: str = ""
-    telegram_allowed_chat_ids: str = ""
-    # scripts/auto_login.py 전용 — 2026-08-21 정책 변경(CLAUDE.md "자동 로그인 정책" 참고).
-    # var/auth/{platform}.json 세션이 만료됐을 때 사람이 매번 수동 로그인하는 대신 이 계정으로
-    # 자동 재로그인한다. CAPTCHA/추가 인증은 여전히 우회하지 않고 사람에게 넘긴다
-    # (domain/login_flow.detect_login_outcome).
-    saramin_username: str = ""
-    saramin_password: str = ""
 
     # 안전장치 (§9.5)
     dry_run_only: bool = True
     approval_timeout_hours: int = Field(default=72, ge=1)
-    # 이 라운드를 넘으면 사람에게 넘긴다 — 무한 재생성 루프를 만들지 않는다 (workflows/_revision.py)
+    # 이 라운드를 넘으면 사람에게 넘긴다 — 무한 재생성 루프를 만들지 않는다
     max_revisions: int = Field(default=10, ge=1)
-    # 가이드 patch 제안 자체에 대한 💬 코멘트 재시도 한도
-    max_guide_revisions: int = Field(default=5, ge=1)
 
     # 이력서 블록 개수 안전 상한 (domain/resume_blocks.select_relevant_blocks). 실제 "몇 개
     # 보여줄지"는 더 이상 이 값이 아니라 config/resume_guide.{platform}.md + LLM 판단이 정한다
@@ -131,20 +68,10 @@ class Settings(BaseSettings):
     resume_max_project_blocks: int = Field(default=20, ge=1)
     resume_max_career_blocks_per_entity: int = Field(default=20, ge=1)
 
-    # SUPERVISED 체크포인트 대기 한도 — "사람이 실시간으로 지켜보고 있다"는 전제라 짧게 잡는다
-    # (§ supervised-checkpoint-design). 넘기거나 거절되면 CheckpointDeclined → needs_human.
-    checkpoint_timeout_minutes: int = Field(default=30, ge=1)
-    checkpoint_poll_seconds: int = Field(default=5, ge=1)
-
     # 웹 콘솔(§12) 프론트엔드(Vite dev 서버)가 cross-origin 으로 API 를 부를 수 있게 허용하는
     # origin. 이 콘솔은 인증 계층이 없다(사용자 결정 — 로컬/사설망 전용 전제) — 그래서 CORS 도
     # 와일드카드가 아니라 이 값 하나만 명시적으로 허용한다.
     web_cors_origin: str = "http://localhost:5173"
-
-    @property
-    def allowed_chat_ids(self) -> frozenset[int]:
-        raw = (c.strip() for c in self.telegram_allowed_chat_ids.split(","))
-        return frozenset(int(c) for c in raw if c)
 
 
 def load_settings() -> Settings:

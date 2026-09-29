@@ -8,7 +8,7 @@ JSONB 에 담는다 (§4 의 `raw`/`spec`/`profile` JSONB 관례와 같은 방�
 지금 단계에서 컬럼마다 마이그레이션을 만드는 비용을 피한다.
 """
 
-from sqlalchemy import Boolean, Integer, String, UniqueConstraint
+from sqlalchemy import Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -29,56 +29,4 @@ class ApplicationStateRow(Base):
     application_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
     workflow_run_id: Mapped[str] = mapped_column(String, nullable=False)
     state: Mapped[str] = mapped_column(String, nullable=False)
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-
-
-class JobRow(Base):
-    """`JobRecord` 1건. `(platform, platform_job_id)` 가 유일키 (§4.1b)."""
-
-    __tablename__ = "jobs"
-    __table_args__ = (UniqueConstraint("platform", "platform_job_id", name="uq_job_platform_id"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    platform: Mapped[str] = mapped_column(String, index=True, nullable=False)
-    platform_job_id: Mapped[str] = mapped_column(String, nullable=False)
-    # actionable() 조회 전용 컬럼. JSONB 안에도 같은 값이 있지만 인덱스를 태우려면 꺼내둬야 한다.
-    actionable: Mapped[bool | None] = mapped_column(Boolean, nullable=True, index=True)
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-
-
-class ApplicationAttemptRow(Base):
-    """`ApplicationAttempt` 감사 로그 1행. `(application_id, attempt)` 가 유일키 (§4, §5)."""
-
-    __tablename__ = "application_attempts"
-    __table_args__ = (UniqueConstraint("application_id", "attempt", name="uq_application_attempt"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    application_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
-    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-
-
-class ScheduleConfigRow(Base):
-    """`ScheduleConfig` 최신값 1건 (§ apply-schedule). target(`"collection"`/`"apply"`) 이
-
-    유일키다 — 이력이 아니라 "현재 설정"만 필요해서 다른 테이블처럼 upsert 대상 컬럼을
-    따로 안 뺐다(payload 전체가 곧 조회 대상이다).
-    """
-
-    __tablename__ = "schedule_configs"
-
-    target: Mapped[str] = mapped_column(String, primary_key=True)
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-
-
-class ResumeCacheRow(Base):
-    """`CachedResume` 최신값 1건 (§2.3) — application_id 가 유일키. `ScheduleConfigRow`와 같은
-
-    이유로 이력이 아니라 최신값만 남긴다: REJECTED/EXPIRED 뒤 재지원 때 LLM을 다시 안 부르려는
-    목적이라 "가장 최근에 만든 이력서" 하나만 있으면 된다(2026-08-24 사용자 요청).
-    """
-
-    __tablename__ = "resume_cache"
-
-    application_id: Mapped[str] = mapped_column(String, primary_key=True)
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)

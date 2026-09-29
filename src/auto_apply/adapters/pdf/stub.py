@@ -5,7 +5,7 @@ from auto_apply.ports.storage import BlobStore
 
 
 class StubPdfRenderer:
-    """실제 PDF 렌더러(WeasyPrint 등)는 M2 에서 같은 port 로 교체한다."""
+    """테스트 대역. 실제 렌더러는 §A7 의 Chrome `page.pdf()` 구현으로 같은 port 에 붙인다."""
 
     def __init__(self, store: BlobStore) -> None:
         self._store = store

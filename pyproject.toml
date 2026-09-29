@@ -65,9 +65,6 @@ ignore = ["ANN401"]     # **kwargs: Any 허용
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN", "B"]
-# 전각 괄호·구두점(【】〔〕（）［］ 등)을 정규식으로 직접 매치한다 — 채용공고 제목의
-# 실제 표기다. ASCII로 "고쳐주는" 제안은 오탐 매칭을 없애는 게 아니라 만든다.
-"src/auto_apply/domain/job_identity.py" = ["RUF001"]
 
 # ---------------------------------------------------------------- mypy
 [tool.mypy]
@@ -185,15 +182,6 @@ allow_indirect_imports = true
 source_modules = [
     "auto_apply.api",
     "auto_apply.activities",
-    "auto_apply.telegram",
-    "auto_apply.cli",
-    "auto_apply.watchdog",
     "auto_apply.worker",
-    "auto_apply.schedule",
-    "auto_apply.schedule_config",
-    "auto_apply.apply_intake",
-    "auto_apply.pending_decisions",
-    "auto_apply.process_alerts",
-    "auto_apply.resume_cleanup",
 ]
 forbidden_modules = ["auto_apply.adapters"]

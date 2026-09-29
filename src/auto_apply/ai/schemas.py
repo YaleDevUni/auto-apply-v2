@@ -4,11 +4,7 @@
 PydanticAI든 같은 스키마를 그대로 재사용할 수 있다 (§9.2).
 """
 
-from typing import Literal, Self
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from auto_apply.contracts.recipe import Action
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class _Frozen(BaseModel):
@@ -38,71 +34,7 @@ class ResumeContentSchema(_Frozen):
     highlights: list[ResumeHighlight] = Field(default_factory=list)
     blocks: list[BlockBullets] = Field(default_factory=list)
     ai_usage: list[ResumeHighlight] = Field(default_factory=list)
-    # 프롬프트가 제시한 카테고리 라벨 중 하나를 그대로 인용해야 한다(새 라벨을 만들지 않는다).
-    # 확신이 없으면 빈 문자열로 둔다 — 포트폴리오 파일명으로 바꾸는 건 코드가 한다
-    # (adapters/resume/_assemble.py, "AI는 생성만, 판정·조합은 코드").
-    job_category: str = ""
-    # 이 공고/이 지원 건에 대해 주관적으로 판단한 주의사항(§ wanted-application-caution-
-    # indicators-backlog) — 승인 전 텔레그램 메시지에 그대로 노출된다. 근거 fact_id 가 필요한
-    # 서술이 아니라 공고 본문에 대한 메타 코멘트라 ground_check 가 검증하지 않는다.
+    # 이 공고/이 지원 건에 대해 주관적으로 판단한 주의사항 — 승인 전 사람에게 그대로
+    # 노출된다. 근거 fact_id 가 필요한 서술이 아니라 공고 본문에 대한 메타 코멘트라
+    # ground_check 가 검증하지 않는다.
     caution_notes: list[str] = Field(default_factory=list)
-
-
-class GuidePatchItem(_Frozen):
-    """치환 쌍 하나. `old`는 가이드 본문에서 정확히 그대로 인용해야 한다
-
-    (활동 계층이 문자열 일치로 검증한다).
-    """
-
-    old: str
-    new: str
-    rationale: str = ""
-
-
-class GuidePatchSchema(_Frozen):
-    """이력서 가이드 치환 제안 목록. 전문을 다시 쓰게 하지 않는다(domain/guide_patch.py 참고) —
-
-    사용자 피드백 한 번에 서로 다른 지시가 여러 개 섞여 있을 수 있어 `patches`를 리스트로
-    받는다 — 스키마가 항목 하나만 표현하면 다지시 피드백 중 일부가 조용히 누락된다
-    (메모리 resume-revise-feedback-design 라이브 테스트로 실측).
-    """
-
-    patches: list[GuidePatchItem] = Field(min_length=1)
-
-
-class RecipeDiffSchema(_Frozen):
-    """recipe 수선 제안(§2.4 node B). `actions`가 `contracts.recipe.Action`을 그대로 재사용하는
-
-    이유 — `Action`의 model_validator(selector 필요 여부 등)가 `LLMClient.structured()`의
-    `model_validate()` 경유로 이미 실행된다(§2.4 node C "Pydantic 스키마 검증"이 재프롬프트
-    루프 안에서 공짜로 딸려온다). `expected_elements`/`validation_rules`는 LLM이 건드리지
-    않는다 — 폼 자체의 정체성이라 이전 recipe 값을 코드가 그대로 들고 간다
-    (domain/recipe_repair.py, "AI는 생성만, 조합은 코드").
-    """
-
-    actions: list[Action] = Field(min_length=1, max_length=120)
-    success_signals: list[str] = Field(min_length=1)
-    rationale: str = ""
-
-
-class AgentStep(_Frozen):
-    """텔레그램 채팅 에이전트의 ReAct 루프 한 스텝 (telegram/agent.py, domain/chat_agent.py).
-
-    멀티턴 tool-use 프리미티브가 없어(`LLMClient`는 `complete`/`structured` 뿐, §9.2) Union
-    대신 discriminator 필드(`action`)로 "도구를 부를지 답할지"를 표현한다 —
-    `RecipeDiffSchema`처럼 스키마 하나만 강제할 수 있어서다. 실제 도구 실행은 이 스키마가
-    아니라 telegram/agent.py 의 코드가 한다(AI는 고르기만, 실행·조합은 코드).
-    """
-
-    action: Literal["call_tool", "respond"]
-    tool: str = ""
-    tool_args: dict[str, str] = Field(default_factory=dict)
-    response: str = ""
-
-    @model_validator(mode="after")
-    def _check_shape(self) -> Self:
-        if self.action == "call_tool" and not self.tool:
-            raise ValueError("action=call_tool 이면 tool 이 필요하다")
-        if self.action == "respond" and not self.response:
-            raise ValueError("action=respond 면 response 가 필요하다")
-        return self

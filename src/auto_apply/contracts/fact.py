@@ -1,8 +1,8 @@
 """Fact — 이력서 생성의 유일한 사실 원천 (ARCHITECTURE.md §4).
 
-Recipe/MatchingConfig 와 같은 이유로 코드가 아니라 데이터다: `config/facts.yaml`이 원본이고
-이 파일은 그 스키마만 정의한다. `keywords`는 TrackRule.keywords 와 같은 이유로 둔다 — 자유
-텍스트(content)를 job 설명과 직접 매칭하면 실패하기 쉬워서, 매칭용 신호를 명시적 필드로 뺐다.
+코드가 아니라 데이터다: `config/facts.yaml`이 원본이고 이 파일은 그 스키마만 정의한다.
+`keywords`를 따로 두는 이유 — 자유 텍스트(content)를 job 설명과 직접 매칭하면 실패하기
+쉬워서, 매칭용 신호를 명시적 필드로 뺐다.
 
 `entity`/`block` 계열 필드는 이력서의 경력·프로젝트 섹션을 회사(또는 프로젝트) → 하위 블록
 구조로 조립하기 위한 그룹핑 키다(domain/resume_matching.py의 group_facts_for_resume). 회사·

@@ -37,8 +37,8 @@ class LLMClient(LLMCallable, Protocol):
     """
 
     def turn(self) -> AbstractAsyncContextManager[LLMCallable]:
-        """여러 `complete`/`structured` 호출을 하나의 논리적 대화 턴으로 묶는다 (§ 텔레그램
-        챗 에이전트 오버헤드 절감, 2026-08-24).
+        """여러 `complete`/`structured` 호출을 하나의 논리적 대화 턴으로 묶는다 (§ 대화형
+        에이전트 오버헤드 절감, 2026-08-24).
 
         구현체가 프로세스 등 재사용 가능한 자원을 갖고 있으면 여기서 재사용해 호출마다 드는
         고정비용을 줄일 수 있다(`ClaudeCodeCliLLM.turn()` 실측: 프로세스 재사용 시 ~3.5초의

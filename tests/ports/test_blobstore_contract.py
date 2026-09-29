@@ -85,8 +85,8 @@ async def test_presign_missing_raises_blob_not_found(store: BlobStore):
 
 
 async def test_presign_returns_url_for_existing_key(store: BlobStore):
-    await store.put("dom-snapshots/wanted/abc/1.html", b"<html/>")
-    url = await store.presign("dom-snapshots/wanted/abc/1.html", timedelta(minutes=5))
+    await store.put("runs/run_1/page.html", b"<html/>")
+    url = await store.presign("runs/run_1/page.html", timedelta(minutes=5))
     assert url and "://" in url
 
 

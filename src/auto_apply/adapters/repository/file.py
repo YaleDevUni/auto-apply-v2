@@ -11,14 +11,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
-from auto_apply.contracts.dto import (
-    ApplicationAttempt,
-    ApplicationSummary,
-    CachedResume,
-    PersistState,
-    ScheduleConfig,
-)
-from auto_apply.contracts.job import JobRecord
+from auto_apply.contracts.dto import ApplicationSummary, PersistState
 from auto_apply.domain.enums import ApplicationState
 
 
@@ -99,160 +92,9 @@ class FileApplicationRepository:
         return await asyncio.to_thread(_scan)
 
 
-class FileJobRepository:
-    def __init__(self, root: Path) -> None:
-        self._root = root
-        self._lock = asyncio.Lock()
-
-    def _path(self, platform: str, platform_job_id: str) -> Path:
-        safe = f"{platform}__{platform_job_id}".replace("/", "_")
-        return self._root / "jobs" / f"{safe}.json"
-
-    async def upsert(self, record: JobRecord) -> None:
-        path = self._path(record.job.platform, record.job.platform_job_id)
-
-        def _write() -> None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(record.model_dump(mode="json"), indent=2))
-            tmp.replace(path)  # 원자적 교체 — 같은 공고를 다시 수집해도 행이 늘지 않는다
-
-        async with self._lock:
-            await asyncio.to_thread(_write)
-
-    async def get(self, platform: str, platform_job_id: str) -> JobRecord | None:
-        return await asyncio.to_thread(self._read, self._path(platform, platform_job_id))
-
-    def _read(self, path: Path) -> JobRecord | None:
-        if not path.is_file():
-            return None
-        return JobRecord.model_validate(json.loads(path.read_text()))
-
-    async def actionable(self) -> list[JobRecord]:
-        def _scan() -> list[JobRecord]:
-            jobs_dir = self._root / "jobs"
-            if not jobs_dir.is_dir():
-                return []
-            records = (self._read(p) for p in jobs_dir.glob("*.json"))
-            return [r for r in records if r and r.applicability and r.applicability.actionable]
-
-        return await asyncio.to_thread(_scan)
-
-
-class FileAttemptRepository:
-    def __init__(self, root: Path) -> None:
-        self._root = root
-        self._lock = asyncio.Lock()
-
-    def _path(self, application_id: str) -> Path:
-        safe = application_id.replace("/", "_")
-        return self._root / "attempts" / f"{safe}.json"
-
-    def _read(self, path: Path) -> list[ApplicationAttempt]:
-        if not path.is_file():
-            return []
-        raw = json.loads(path.read_text())
-        return [ApplicationAttempt.model_validate(r) for r in raw]
-
-    async def record(self, attempt: ApplicationAttempt) -> None:
-        path = self._path(attempt.application_id)
-
-        def _write() -> None:
-            history = self._read(path)
-            for i, existing in enumerate(history):
-                if existing.attempt == attempt.attempt:
-                    history[i] = attempt
-                    break
-            else:
-                history.append(attempt)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps([h.model_dump(mode="json") for h in history], indent=2))
-            tmp.replace(path)  # 원자적 교체
-
-        async with self._lock:
-            await asyncio.to_thread(_write)
-
-    async def history(self, application_id: str) -> list[ApplicationAttempt]:
-        return await asyncio.to_thread(self._read, self._path(application_id))
-
-
-class FileScheduleConfigRepository:
-    def __init__(self, root: Path) -> None:
-        self._root = root
-        self._lock = asyncio.Lock()
-
-    def _path(self, target: str) -> Path:
-        safe = target.replace("/", "_")
-        return self._root / "schedule_config" / f"{safe}.json"
-
-    async def get(self, target: str) -> ScheduleConfig | None:
-        return await asyncio.to_thread(self._read, self._path(target))
-
-    def _read(self, path: Path) -> ScheduleConfig | None:
-        if not path.is_file():
-            return None
-        return ScheduleConfig.model_validate(json.loads(path.read_text()))
-
-    async def set(self, config: ScheduleConfig) -> None:
-        path = self._path(config.target)
-
-        def _write() -> None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(config.model_dump(mode="json"), indent=2))
-            tmp.replace(path)  # 원자적 교체
-
-        async with self._lock:
-            await asyncio.to_thread(_write)
-
-
-class FileResumeRepository:
-    def __init__(self, root: Path) -> None:
-        self._root = root
-        self._lock = asyncio.Lock()
-
-    def _path(self, application_id: str) -> Path:
-        safe = application_id.replace("/", "_")
-        return self._root / "resumes" / f"{safe}.json"
-
-    async def get(self, application_id: str) -> CachedResume | None:
-        return await asyncio.to_thread(self._read, self._path(application_id))
-
-    def _read(self, path: Path) -> CachedResume | None:
-        if not path.is_file():
-            return None
-        return CachedResume.model_validate(json.loads(path.read_text()))
-
-    async def save(self, resume: CachedResume) -> None:
-        path = self._path(resume.application_id)
-
-        def _write() -> None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(resume.model_dump(mode="json"), indent=2))
-            tmp.replace(path)  # 원자적 교체
-
-        async with self._lock:
-            await asyncio.to_thread(_write)
-
-    async def delete(self, application_id: str) -> None:
-        path = self._path(application_id)
-
-        def _unlink() -> None:
-            path.unlink(missing_ok=True)
-
-        async with self._lock:
-            await asyncio.to_thread(_unlink)
-
-
 class FileUnitOfWork:
     def __init__(self, root: Path) -> None:
         self.applications = FileApplicationRepository(root)
-        self.jobs = FileJobRepository(root)
-        self.attempts = FileAttemptRepository(root)
-        self.schedule_config = FileScheduleConfigRepository(root)
-        self.resumes = FileResumeRepository(root)
 
     async def __aenter__(self) -> Self:
         return self

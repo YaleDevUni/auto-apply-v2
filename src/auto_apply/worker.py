@@ -1,7 +1,7 @@
 """Temporal worker 엔트리포인트.
 
-Task queue 를 3개로 나눈다 (ARCHITECTURE.md §1): default / ai / browser
-큐마다 워커의 자원 특성이 다르므로 동시성도 따로 잡는다.
+Task queue 를 2개로 나눈다: default / ai. 큐마다 워커의 자원 특성이 다르므로 동시성도
+따로 잡는다. T0.2 에서 Temporal 과 함께 삭제된다.
 """
 
 import argparse
@@ -13,70 +13,37 @@ import structlog
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from auto_apply.activities.application import ApplicationActivities
-from auto_apply.activities.apply_intake import ApplyIntakeActivities
-from auto_apply.activities.browser import BrowserActivities
-from auto_apply.activities.guide import GuideActivities
-from auto_apply.activities.job_collection import JobCollectionActivities
 from auto_apply.activities.ping import PingActivities
-from auto_apply.activities.repair import RepairActivities
 from auto_apply.activities.resume import ResumeActivities
 from auto_apply.bootstrap import Container, build_container
 from auto_apply.config import load_settings
-from auto_apply.process_alerts import run_guarded
 from auto_apply.temporal_config import DATA_CONVERTER
-from auto_apply.workflows.application import ApplicationWorkflow
-from auto_apply.workflows.apply_intake import ApplyIntakeWorkflow
-from auto_apply.workflows.job_collection import JobCollectionWorkflow
 from auto_apply.workflows.ping import PingWorkflow
-from auto_apply.workflows.repair import AutomationRepairWorkflow
 from auto_apply.workflows.resume import ResumeWorkflow
 
 log = structlog.get_logger(__name__)
 
-Queue = Literal["default", "ai", "browser"]
+Queue = Literal["default", "ai"]
 
-# browser 워커는 세션당 메모리가 크고 플랫폼 rate limit 이 있어 동시성을 낮게 잡는다 (§1)
-MAX_CONCURRENT: dict[Queue, int] = {"default": 50, "ai": 5, "browser": 1}
+MAX_CONCURRENT: dict[Queue, int] = {"default": 50, "ai": 5}
 
 
 def _registrations(
-    queue: Queue, c: Container, client: Client
+    queue: Queue, c: Container
 ) -> tuple[Sequence[type], Sequence[Callable[..., Any]]]:
     match queue:
         case "default":
-            return (
-                [ApplicationWorkflow, PingWorkflow, JobCollectionWorkflow, ApplyIntakeWorkflow],
-                [
-                    *ApplicationActivities(c.registry, c.notifier, c.recipes, c.uow).all(),
-                    *PingActivities(c.clock, c.store).all(),
-                    *JobCollectionActivities(
-                        c.job_sources,
-                        c.matching_config,
-                        c.recipes,
-                        c.clock,
-                        c.uow,
-                        auth_dir=c.settings.data_dir / "auth",
-                    ).all(),
-                    *ApplyIntakeActivities(c, client).all(),
-                ],
-            )
+            return [PingWorkflow], [*PingActivities(c.clock, c.store).all()]
         case "ai":
             return (
-                [ResumeWorkflow, AutomationRepairWorkflow],
-                [
-                    *ResumeActivities(c.generator, c.reviewer, c.pdf).all(),
-                    *GuideActivities(c.llm, c.guide).all(),
-                    *RepairActivities(c.llm, c.recipes, c.store).all(),
-                ],
+                [ResumeWorkflow],
+                [*ResumeActivities(c.generator, c.reviewer, c.pdf).all()],
             )
-        case "browser":
-            return [], [*BrowserActivities(c.executor).all()]
 
 
 async def main() -> None:
     parser = argparse.ArgumentParser(prog="auto-apply-worker")
-    parser.add_argument("--queue", choices=["default", "ai", "browser"], default="default")
+    parser.add_argument("--queue", choices=["default", "ai"], default="default")
     args = parser.parse_args()
     queue = cast(Queue, args.queue)
 
@@ -85,7 +52,7 @@ async def main() -> None:
     client = await Client.connect(
         cfg.temporal_address, namespace=cfg.temporal_namespace, data_converter=DATA_CONVERTER
     )
-    workflows, activities = _registrations(queue, container, client)
+    workflows, activities = _registrations(queue, container)
 
     log.info(
         "worker.start",
@@ -107,6 +74,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    # 워커가 죽으면 워크플로우는 FAILED 가 아니라 Running 인 채로 멈춰서 watchdog 도 못 잡는다
-    # (§ process_alerts.py).
-    asyncio.run(run_guarded("worker", main))
+    asyncio.run(main())
