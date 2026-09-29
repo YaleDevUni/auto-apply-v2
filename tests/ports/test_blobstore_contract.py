@@ -86,3 +86,30 @@ async def test_local_delete_cannot_escape_root(tmp_path):
     with pytest.raises(ValueError):
         await store.delete("../outside.txt")
     assert outside.read_bytes() == b"keep"
+
+
+async def test_list_keys_under_prefix(store: BlobStore):
+    for key in ["drafts/u1/b.json", "drafts/u1/a.json", "drafts/u1/sub/c.json", "drafts/u2/x.json"]:
+        await store.put(key, b"{}")
+    await store.put("drafts/u1x.json", b"{}")  # 이름만 겹치는 이웃은 포함되지 않는다
+    assert await store.list_keys("drafts/u1/") == [
+        "drafts/u1/a.json",
+        "drafts/u1/b.json",
+        "drafts/u1/sub/c.json",
+    ]
+    assert await store.list_keys("nothing/") == []
+    await store.delete("drafts/u1/a.json")
+    assert "drafts/u1/a.json" not in await store.list_keys("drafts/u1/")
+
+
+async def test_list_keys_needs_directory_prefix(store: BlobStore):
+    with pytest.raises(ValueError):
+        await store.list_keys("drafts/u1")
+
+
+async def test_local_list_keys_cannot_escape_root(tmp_path):
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "secret.txt").write_bytes(b"keep")
+    store = LocalBlobStore(tmp_path / "root")
+    with pytest.raises(ValueError):
+        await store.list_keys("../outside/")

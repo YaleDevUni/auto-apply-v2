@@ -31,3 +31,8 @@ class InMemoryBlobStore:
 
     async def delete(self, key: str) -> bool:
         return self._blobs.pop(key, None) is not None
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        if not prefix.endswith("/"):
+            raise ValueError(f"prefix 는 / 로 끝나야 한다: {prefix}")
+        return sorted(k for k in self._blobs if k.startswith(prefix))

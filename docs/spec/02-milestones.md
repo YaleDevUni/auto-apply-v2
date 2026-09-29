@@ -123,6 +123,9 @@
 - 범위: `web/`, `docs/spec/checklists/m1-web.md`, `Makefile`
 - 할 일: 경험 목록/편집(entity 별 그룹), 답변KB 목록/편집/삭제, 문서 업로드·목록. 첫 화면 온보딩: 이력서 파일 업로드 →
   추출 초안 항목별 검토(채택/수정/버림) → 확정. 프로필이 비어 있으면 온보딩으로 유도.
+  T1.3 이관: 온보딩 업로드는 `POST /api/profile/drafts/upload`(문서로 저장 안 함, 주민번호는 LLM 전에 가려지고
+  초안에 `redacted_identifiers` 개수만 — "N개를 가렸습니다" 안내), 이어서 검토는 `GET /api/profile/drafts`. 문서 업로드(`/api/documents`)는
+  pdf/docx 본문에 주민번호가 있으면 422 — 전용 안내 문구.
   T1.4 이관: `make check` 에 웹 게이트(`npm run build`·`lint`·`test`) 포함 — node 없는 환경이면 건너뛰되 경고.
   `src/routes/placeholders.tsx` 를 실제 화면으로 교체, 끝까지 안 쓴 shadcn ui(card·separator·textarea) 삭제.
 - 수용 기준: `npm run build`·`npm run lint` 통과, 체크리스트에 온보딩 흐름 추가, 오케스트레이터가 로컬 기동 후 체크리스트 수동 확인.

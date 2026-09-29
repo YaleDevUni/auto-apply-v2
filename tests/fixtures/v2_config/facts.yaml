@@ -1,3 +1,6 @@
+# v2 형식 예시 — 원래 `config/facts.example.yaml`. v3 에서는 v2 임포터(services/v2_import.py) 입력
+# 양식으로만 쓴다(T1.3 테스트 픽스처). 아래 주석은 v2 당시 설명이다.
+#
 # config/facts.yaml — 이력서 생성의 유일한 사실 원천 (§A7).
 #
 # 여기 없는 경력·수치·프로젝트는 LLM 이 지어낼 수 없다 — review 게이트가 모든 서술에 fact_id

@@ -3,6 +3,7 @@
 DTO 생성 자체가 실패해야 한다 — 그래야 저장소·API·에이전트 어느 경로로도 들어오지 못한다.
 """
 
+import random
 from datetime import UTC, datetime
 
 import pytest
@@ -20,7 +21,9 @@ from auto_apply.contracts.profile import (
 from auto_apply.domain.enums import ExperienceKind, MilitaryStatus
 from auto_apply.domain.errors import UniqueIdentifierRejected
 from auto_apply.domain.unique_identifiers import (
+    REDACTION_MARK,
     contains_resident_registration_number,
+    redact_resident_registration_numbers,
     reject_unique_identifiers,
 )
 
@@ -36,57 +39,92 @@ _ZWSP, _ZWNJ, _ZWJ, _BOM = (chr(c) for c in (0x200B, 0x200C, 0x200D, 0xFEFF))
 _EN_DASH = chr(0x2013)
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        RRN,
-        "9001011234567",
-        "900101 - 2234567",
-        "주민번호: 010315-4123456 입니다",
-        f"901231{_EN_DASH}8123456",  # 외국인등록번호(뒷자리 5~8)
-        "850101-9123456",  # 1800년대 출생 뒷자리 9
-        "850101-0123456",  # 1800년대 출생 뒷자리 0
-        "900101.1234567",
-        "900101_1234567",
-        "900101/1234567",
-        _fullwidth("900101-1234567"),
-        _fullwidth("9001011234567"),
-        f"9001{_ZWSP}01-1234{_ZWNJ}567",
-        f"900101{_ZWJ}-{_BOM}1234567",
-    ],
-)
+_DETECTED = [
+    RRN,
+    "9001011234567",
+    "900101 - 2234567",
+    "주민번호: 010315-4123456 입니다",
+    f"901231{_EN_DASH}8123456",  # 외국인등록번호(뒷자리 5~8)
+    "850101-9123456",  # 1800년대 출생 뒷자리 9
+    "850101-0123456",  # 1800년대 출생 뒷자리 0
+    "900101.1234567",
+    "900101_1234567",
+    "900101/1234567",
+    _fullwidth("900101-1234567"),
+    _fullwidth("9001011234567"),
+    f"9001{_ZWSP}01-1234{_ZWNJ}567",
+    f"900101{_ZWJ}-{_BOM}1234567",
+]
+
+
+@pytest.mark.parametrize("text", _DETECTED)
 def test_detects_resident_registration_numbers(text):
     assert contains_resident_registration_number(text)
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "010-1234-5678",  # 휴대폰
-        "+82-10-1234-5678",
-        "+82 10 1234 5678",
-        "02-123-4567",
-        "010.1234.5678",
-        "2023.08 - 2024.04",  # 기간
-        "2026-09-30",  # 날짜
-        "2026.09.30",
-        "2026/09/30",
-        "20260930",
-        "123-45-67890",  # 사업자등록번호
-        "110-123-456789",  # 계좌
-        "1002-345-678901",
-        "1234-5678-9012-3456",  # 카드
-        "1234567890123456",
-        "11-12-345678-90",  # 운전면허
-        "900101-1******",  # 뒷자리 가림
-        "901301-1234567",  # 13월 — 생년월일 꼴이 아니다
-        "12900101-12345678",  # 더 긴 숫자열의 일부
-        "매출 1,234,567원",
-        "",
-    ],
-)
+_IGNORED = [
+    "010-1234-5678",  # 휴대폰
+    "+82-10-1234-5678",
+    "+82 10 1234 5678",
+    "02-123-4567",
+    "010.1234.5678",
+    "2023.08 - 2024.04",  # 기간
+    "2026-09-30",  # 날짜
+    "2026.09.30",
+    "2026/09/30",
+    "20260930",
+    "123-45-67890",  # 사업자등록번호
+    "110-123-456789",  # 계좌
+    "1002-345-678901",
+    "1234-5678-9012-3456",  # 카드
+    "1234567890123456",
+    "11-12-345678-90",  # 운전면허
+    "900101-1******",  # 뒷자리 가림
+    "901301-1234567",  # 13월 — 생년월일 꼴이 아니다
+    "12900101-12345678",  # 더 긴 숫자열의 일부
+    "매출 1,234,567원",
+    "",
+]
+
+
+@pytest.mark.parametrize("text", _IGNORED)
 def test_ignores_non_identifiers(text):
     assert not contains_resident_registration_number(text)
+
+
+# ── 가림 (온보딩 추출이 LLM 에 보내기 전) — 거부와 같은 탐지 집합 ─────────────
+
+
+@pytest.mark.parametrize("text", _DETECTED)
+def test_redact_covers_everything_reject_detects(text):
+    redacted, count = redact_resident_registration_numbers(f"이름 김가상\n{text}\n경력 3년")
+    assert count == 1
+    assert not contains_resident_registration_number(redacted)
+    assert REDACTION_MARK in redacted and "김가상" in redacted and "경력 3년" in redacted
+
+
+@pytest.mark.parametrize("text", _IGNORED)
+def test_redact_leaves_non_identifiers_untouched(text):
+    assert redact_resident_registration_numbers(text) == (text, 0)
+
+
+def test_redact_counts_every_occurrence():
+    text = f"{RRN} / 본인 {_fullwidth('850101-2123456')} / 가족 9001{_ZWSP}011234567 끝"
+    redacted, count = redact_resident_registration_numbers(text)
+    assert count == 3
+    assert redacted.count(REDACTION_MARK) == 3
+    assert not contains_resident_registration_number(redacted)
+
+
+def test_redact_never_leaves_a_detectable_number():
+    """무작위 숫자·구분자 조합에서도 가린 결과는 거부 규칙에 다시 걸리지 않는다."""
+    rng = random.Random(20260930)
+    alphabet = "0123456789" * 3 + "-._/ " + _ZWSP + "\uff10\uff11\uff0d"
+    for _ in range(3000):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randint(10, 40)))
+        redacted, count = redact_resident_registration_numbers(text)
+        assert not contains_resident_registration_number(redacted), text
+        assert (count > 0) == contains_resident_registration_number(text)
 
 
 def test_reject_walks_nested_values_and_hides_the_value():

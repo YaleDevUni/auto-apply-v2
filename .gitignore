@@ -21,16 +21,12 @@ htmlcov/
 *.pem
 storage_state*.json
 
-# 실제 이력 데이터 (개인정보) — config/*.example.yaml 이 대신 형식만 공유한다
+# v2 실제 이력 데이터 (개인정보). v3 는 읽지 않지만 v2 에서 넘어온 체크아웃에 남아 있을 수 있다 —
+# 커밋되지 않게 막아 둔다. 가져오기는 `POST /api/profile/drafts/v2-import` (§A7).
 config/facts.yaml
 config/profile.yaml
 config/portfolio_map.yaml
-
-# 플랫폼별 이력서 가이드 (사람이 쓴 커스텀 프롬프트) — config/resume_guide.example.md 가 형식만 공유한다
 config/resume_guide.*.md
-!config/resume_guide.example.md
-
-# ATS/자체구축 로그인 계정 큐 (실제 비밀번호) — config/credentials.example.json 이 형식만 공유한다
 config/credentials.json
 
 # Local data (LocalBlobStore, sqlite, snapshots)

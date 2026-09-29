@@ -19,3 +19,10 @@ class BlobStore(Protocol):
     async def delete(self, key: str) -> bool:
         """지웠으면 True, 원래 없었으면 False (에러 아님 — 재시도해도 안전하게)."""
         ...
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        """`prefix`(`/` 로 끝나는 디렉터리 꼴, 아니면 ValueError) 아래 모든 키를 정렬해서.
+
+        하위 디렉터리 키도 포함한다. 아무것도 없으면 빈 목록.
+        """
+        ...

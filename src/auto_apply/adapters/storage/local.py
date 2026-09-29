@@ -57,3 +57,16 @@ class LocalBlobStore:
             return True
 
         return await asyncio.to_thread(_unlink)
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        if not prefix.endswith("/"):
+            raise ValueError(f"prefix 는 / 로 끝나야 한다: {prefix}")
+        base = self._path(prefix)
+        root = self._root.resolve()
+
+        def _walk() -> list[str]:
+            if not base.is_dir():
+                return []
+            return sorted(p.relative_to(root).as_posix() for p in base.rglob("*") if p.is_file())
+
+        return await asyncio.to_thread(_walk)

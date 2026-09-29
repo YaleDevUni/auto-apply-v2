@@ -1,0 +1,30 @@
+{
+  "profile": {
+    "name": "이예시",
+    "phone": "010-0000-0001",
+    "email": "yesi.lee@example.com",
+    "education": [
+      {"school": "샘플대학교", "period": "2014.03 - 2019.02", "status": "졸업", "degree": "경영학 학사"}
+    ],
+    "skills": ["콘텐츠 기획", "퍼포먼스 마케팅", "GA4", "포토샵"],
+    "additional": {"military": {"status": "not_applicable"}}
+  },
+  "experiences": [
+    {
+      "kind": "company",
+      "name": "가상커머스",
+      "role": "마케팅팀 매니저",
+      "period": "2019.07 - 2023.12",
+      "facts": [
+        {"text": "인스타그램 브랜드 계정을 운영해 팔로워를 8천 명에서 5만 명으로 늘렸다."},
+        {"text": "시즌 프로모션 기획으로 분기 매출을 전년 대비 18% 끌어올렸다."}
+      ]
+    },
+    {
+      "kind": "activity",
+      "name": "지역 소상공인 마케팅 봉사단",
+      "period": "2018.03 - 2018.12",
+      "facts": [{"text": "소상공인 12곳의 SNS 홍보물을 제작했다."}]
+    }
+  ]
+}

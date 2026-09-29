@@ -18,6 +18,7 @@ dependencies = [
     "pyyaml>=6.0",
     "platformdirs>=4.3",
     "python-multipart>=0.0.32",
+    "pypdf>=6.0",
 ]
 
 [project.scripts]

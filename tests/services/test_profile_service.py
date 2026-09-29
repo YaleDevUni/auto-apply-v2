@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from auto_apply.adapters.extract.pdf_docx import PdfDocxTextExtractor
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.contracts.profile import Profile
 from auto_apply.domain.enums import ExperienceKind
@@ -27,7 +28,9 @@ def svc(uow_factory) -> ProfileService:
 
 @pytest.fixture
 def uploads(uow_factory) -> UploadService:
-    return UploadService(uow_factory, InMemoryBlobStore(), FixedClock(), SeqIds())
+    return UploadService(
+        uow_factory, InMemoryBlobStore(), PdfDocxTextExtractor(), FixedClock(), SeqIds()
+    )
 
 
 def _exp(**kw):

@@ -60,7 +60,7 @@ class ProfileService:
     async def create_experience(self, user_id: str, data: Mapping[str, Any]) -> Experience:
         """`data` 는 id·user_id 없는 경험 초안. fact 의 `id` 가 비어 있으면 여기서 발급한다."""
         async with self._uow() as uow:
-            exp = await self._build_experience(uow, user_id, self._idgen.new_id("exp"), data)
+            exp = await build_experience(uow, self._idgen, user_id, self._idgen.new_id("exp"), data)
             await uow.experiences.save(exp)
             await uow.commit()
         return exp
@@ -70,7 +70,7 @@ class ProfileService:
     ) -> Experience:
         async with self._uow() as uow:
             await _owned_experience(uow, user_id, experience_id)
-            exp = await self._build_experience(uow, user_id, experience_id, data)
+            exp = await build_experience(uow, self._idgen, user_id, experience_id, data)
             await uow.experiences.save(exp)
             await uow.commit()
         return exp
@@ -80,34 +80,6 @@ class ProfileService:
             await _owned_experience(uow, user_id, experience_id)
             await uow.experiences.delete(experience_id)
             await uow.commit()
-
-    async def _build_experience(
-        self, uow: UnitOfWork, user_id: str, experience_id: str, data: Mapping[str, Any]
-    ) -> Experience:
-        payload = {**data, "id": experience_id, "user_id": user_id}
-        payload["facts"] = [self._with_fact_id(f) for f in data.get("facts", [])]
-        payload["sections"] = [
-            {**s, "facts": [self._with_fact_id(f) for f in s.get("facts", [])]}
-            for s in data.get("sections", [])
-        ]
-        exp = Experience.model_validate(payload)
-        # fact id 는 이력서 서술이 근거로 인용하는 키라 사용자 전체에서 유일해야 한다
-        # (ground_check).
-        others = {
-            f.id
-            for e in await uow.experiences.list_for_user(user_id)
-            if e.id != experience_id
-            for f in e.all_facts()
-        }
-        if any(f.id in others for f in exp.all_facts()):
-            raise InvalidInput("fact id 가 다른 경험의 fact 와 겹친다")
-        docs = {d.id for d in await uow.documents.list_for_user(user_id)}
-        if any(doc_id not in docs for doc_id in exp.document_ids):
-            raise InvalidInput("document_ids 에 없는 문서가 있다")
-        return exp
-
-    def _with_fact_id(self, fact: Mapping[str, Any]) -> dict[str, Any]:
-        return {**fact, "id": fact.get("id") or self._idgen.new_id("fact")}
 
     # ── 답변KB ──────────────────────────────────────────────────────────────
     async def list_answers(self, user_id: str) -> list[Answer]:
@@ -172,6 +144,40 @@ class ProfileService:
             await _owned_answer(uow, user_id, answer_id)
             await uow.answers.delete(answer_id)
             await uow.commit()
+
+
+async def build_experience(
+    uow: UnitOfWork, idgen: IdGen, user_id: str, experience_id: str, data: Mapping[str, Any]
+) -> Experience:
+    """`data`(id·user_id 없는 경험 초안)를 검증된 Experience 로. 저장은 호출자가 같은 `uow` 로 한다.
+
+    비어 있는 fact `id` 는 발급하고, 사용자 단위 fact id 유일성·첨부 문서 참조를 검사한다.
+    초안 확정(services/profile_drafts.py)도 이 경로로 경험을 만든다.
+    """
+
+    def with_fact_id(fact: Mapping[str, Any]) -> dict[str, Any]:
+        return {**fact, "id": fact.get("id") or idgen.new_id("fact")}
+
+    payload = {**data, "id": experience_id, "user_id": user_id}
+    payload["facts"] = [with_fact_id(f) for f in data.get("facts", [])]
+    payload["sections"] = [
+        {**s, "facts": [with_fact_id(f) for f in s.get("facts", [])]}
+        for s in data.get("sections", [])
+    ]
+    exp = Experience.model_validate(payload)
+    # fact id 는 이력서 서술이 근거로 인용하는 키라 사용자 전체에서 유일해야 한다 (ground_check).
+    others = {
+        f.id
+        for e in await uow.experiences.list_for_user(user_id)
+        if e.id != experience_id
+        for f in e.all_facts()
+    }
+    if any(f.id in others for f in exp.all_facts()):
+        raise InvalidInput("fact id 가 다른 경험의 fact 와 겹친다")
+    docs = {d.id for d in await uow.documents.list_for_user(user_id)}
+    if any(doc_id not in docs for doc_id in exp.document_ids):
+        raise InvalidInput("document_ids 에 없는 문서가 있다")
+    return exp
 
 
 async def _owned_experience(uow: UnitOfWork, user_id: str, experience_id: str) -> Experience:

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
+from auto_apply.adapters.extract.pdf_docx import PdfDocxTextExtractor
 from auto_apply.adapters.facts.repository import RepositoryFactSource
 from auto_apply.adapters.guide.file import FileGuideSource
 from auto_apply.adapters.guide.static import StaticGuideSource
@@ -35,9 +36,11 @@ from auto_apply.ports.profile import ProfileSource
 from auto_apply.ports.repository import UnitOfWork
 from auto_apply.ports.resume import ResumeGenerator, ResumeReviewer
 from auto_apply.ports.storage import BlobStore
+from auto_apply.ports.text_extract import DocumentTextExtractor
 from auto_apply.runner.job_runner import JobRunner
 from auto_apply.services.document import DocumentService
 from auto_apply.services.profile import ProfileService
+from auto_apply.services.profile_drafts import ProfileDraftService
 from auto_apply.services.uploads import UploadService
 
 
@@ -58,6 +61,7 @@ class Container:
     documents: DocumentService
     profiles: ProfileService
     uploads: UploadService
+    drafts: ProfileDraftService
     runner: JobRunner
     # 변경 API 가 요구하는 설치별 토큰 (§A10). 웹은 `GET /api/session` 으로 받는다.
     session_token: str
@@ -178,6 +182,11 @@ def build_container(cfg: Settings) -> Container:
     reviewer = SimpleResumeReviewer(facts)
     # §A7: WeasyPrint 는 제거했고 Chrome `page.pdf()` 구현은 M5 에서 같은 port 로 붙인다.
     pdf = StubPdfRenderer(store)
+    # 대역(FakeTextExtractor)은 등록한 바이트만 읽는 테스트 전용이라 설정 선택지로 두지 않는다.
+    extractor: DocumentTextExtractor = PdfDocxTextExtractor()
+    uploads = UploadService(
+        uow, store, extractor, clock, idgen, max_document_bytes=cfg.document_max_bytes
+    )
     return Container(
         settings=cfg,
         clock=clock,
@@ -193,7 +202,8 @@ def build_container(cfg: Settings) -> Container:
         guide=guide,
         documents=DocumentService(generator, reviewer, pdf),
         profiles=ProfileService(uow, clock, idgen),
-        uploads=UploadService(uow, store, clock, idgen, max_document_bytes=cfg.document_max_bytes),
+        uploads=uploads,
+        drafts=ProfileDraftService(uow, store, uploads, extractor, llm, clock, idgen),
         runner=JobRunner(),
         session_token=ensure_session_token(cfg.session_token_path),
     )

@@ -1,3 +1,6 @@
+# v2 형식 예시 — 원래 `config/profile.example.yaml`. v3 에서는 v2 임포터(services/v2_import.py) 입력
+# 양식으로만 쓴다(T1.3 테스트 픽스처). 아래 주석은 v2 당시 설명이다.
+#
 # config/profile.yaml — 이력서 헤더/학력/스킬태그/언어의 유일한 원천 (§A7).
 #
 # facts.yaml과 달리 여기 값은 LLM 을 거치지 않고 이력서 템플릿에 그대로 꽂힌다 — 서술이

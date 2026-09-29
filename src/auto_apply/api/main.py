@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from auto_apply import __version__
-from auto_apply.api import document_routes, profile_routes
+from auto_apply.api import document_routes, draft_routes, profile_routes
 from auto_apply.api.deps import ContainerDep
 from auto_apply.api.errors import install_error_handlers
 from auto_apply.api.security import TOKEN_HEADER, LocalSecurityMiddleware, session_router
@@ -61,6 +61,7 @@ def create_app(settings: Settings | None = None, *, prepare: bool = True) -> Fas
     app.include_router(session_router)
     app.include_router(profile_routes.router)
     app.include_router(document_routes.router)
+    app.include_router(draft_routes.router)
 
     @app.get("/health")
     async def health(c: ContainerDep) -> dict[str, Any]:

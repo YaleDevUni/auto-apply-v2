@@ -369,12 +369,20 @@ def test_many_small_parts_rejected_fast(client):
     _assert_error(client.post("/api/documents", content=huge, headers=MULTIPART), 413, "too_large")
 
 
-async def test_upload_memory_peak_is_about_one_file(tmp_path):
+@pytest.mark.parametrize(
+    ("name", "head", "max_ratio"),
+    [
+        ("a.png", b"\x89PNG\r\n\x1a\n", 2),
+        # PDF·DOCX 는 저장 전 주민번호 검사(§A7)로 파서가 한 벌 더 읽는다 — 그 몫까지만 허용.
+        ("a.pdf", b"%PDF-", 4),
+    ],
+)
+async def test_upload_memory_peak_is_about_one_file(tmp_path, name, head, max_ratio):
     """⑤ 본문 전체를 메모리에 올리지 않는다 (예전 구현: 10MB 업로드에 peak 105MB).
 
     TestClient 는 요청 본문을 한 덩어리로 만들어 보내므로, 스트리밍하는 ASGITransport 로
     직접 부른다.
-    남는 것은 서비스에 넘기는 파일 바이트 한 벌(≈1x)뿐이어야 한다.
+    multipart 가 남기는 것은 서비스에 넘기는 파일 바이트 한 벌(≈1x)뿐이어야 한다.
     """
     import tracemalloc
 
@@ -395,7 +403,7 @@ async def test_upload_memory_peak_is_about_one_file(tmp_path):
     app.state.container = build_container(cfg)
 
     async def body():
-        yield _part("file", b"", "a.pdf")[:-2] + b"%PDF-"
+        yield _part("file", b"", name)[:-2] + head
         chunk = b"0" * 65536
         for _ in range(size // len(chunk)):
             yield chunk
@@ -411,5 +419,5 @@ async def test_upload_memory_peak_is_about_one_file(tmp_path):
     finally:
         tracemalloc.stop()
     assert res.status_code == 201, res.text
-    assert res.json()["size_bytes"] == size + 5
-    assert peak < 2 * size, f"peak {peak / size:.2f}x 파일 크기"
+    assert res.json()["size_bytes"] == size + len(head)
+    assert peak < max_ratio * size, f"peak {peak / size:.2f}x 파일 크기"

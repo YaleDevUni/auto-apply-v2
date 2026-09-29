@@ -153,10 +153,38 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
   상한, 닫는 경계까지 오지 않은(잘린) 본문과 파트 헤더 과대는 422. 파일 파트는 1 MiB 넘으면 임시 파일로 흘러 peak ≈ 파일 1벌.
   `UploadService`(`services/uploads.py`)가 저장·삭제를 맡는다: 메타 저장이 실패하면 방금 쓴 바이트를 지우고, 삭제는 메타·경험
   첨부 참조를 한 트랜잭션으로 지운 **뒤** `BlobStore.delete` 로 바이트를 지운다(고아 파일 0).
+  **본문 주민등록번호 검사**: PDF·DOCX 는 저장 전에 `DocumentTextExtractor` 로 글자를 뽑아 주민등록번호 꼴이 있으면
+  `unique_identifier_rejected`(422, 바이트·메타 둘 다 남기지 않고 에러에 원문 없음). 온보딩 추출처럼 가리고 받지 않는
+  이유: 고정 파일은 사용자가 사이트에 **그대로 제출하는 원본**이라 서버가 내용을 임의로 바꾸면 안 된다.
+  한계: 글자를 못 뽑는 파일 — 이미지(png·jpg), 스캔본·암호 PDF, 추출기 상한(30쪽 등) 초과 — 은 검사하지 못한 채 받는다.
+  PDF 검사는 파서가 바이트를 한 벌 더 읽어 업로드 메모리 peak 가 파일 크기의 3배 안팎이 된다.
 - **ProfileService**(`services/profile.py`)가 저장소가 강제하지 않는 규칙을 맡는다: 경험·fact·답변 id 발급(fact `id` 를
   비워 보내면 발급), fact id 의 사용자 단위 유일성, 경험 `document_ids` 참조 검사, 소유자 검사(남의 것은 404). 로컬 1인
   설치라 사용자 id 는 `DEFAULT_USER_ID` 상수 하나다.
-- **온보딩 추출**: 이력서 PDF/DOCX → LLM 구조화 추출 → 초안(사용자 검토 후 확정). 추출물도 스키마 검증 통과해야 저장.
+- **온보딩 추출** (`services/profile_drafts.py`·`resume_extraction.py`): 이력서 파일(PDF/DOCX) → `DocumentTextExtractor` port
+  (실제: `adapters/extract/pdf_docx.py` — pypdf, DOCX 는 zip+WordprocessingML 직접 파싱 / 대역: 등록한 바이트만 읽는
+  `FakeTextExtractor`, 테스트 전용이라 설정 선택지 없음) → LLM 구조화 추출(`ai/profile_extraction.py` 의
+  `ProfileExtraction`, 스키마 위반은 2회 재프롬프트) → **초안**. 초안은 사용자가 확정하기 전까지 본 프로필과 떨어져 있다.
+  - 추출 텍스트의 주민등록번호 꼴은 **LLM 에 보내기 전 메모리에서 가린다**(`redact_resident_registration_numbers`,
+    탐지 규칙은 거부와 같은 `domain/unique_identifiers.py` 한 곳, 절대 규칙 5). 원문·가린 값·위치는 저장·로그 어디에도
+    없고, 초안의 `redacted_identifiers`(개수)만 남아 웹이 "N개를 가렸습니다"를 안내한다. 고정 파일 업로드(위)와 달리
+    가리는 이유: 추출 원문은 제출되지 않고 초안의 재료일 뿐이며, 번호가 든 이력서로도 온보딩할 수 있어야 한다.
+    파일명에 번호가 있으면 LLM 호출 전에 422. 텍스트 5만 자 상한.
+    추출기 상한: PDF 30쪽, DOCX 본문 XML 20 MiB(선언·실제 둘 다), DOCTYPE/ENTITY 가 있는 DOCX 는 거부.
+  - 초안 저장(`services/draft_store.py`)은 BlobStore JSON `drafts/{user_id}/{draft_id}.json` — 검토 뒤 지우는 일회성
+    작업물이라 테이블을 두지 않는다. 목록은 `BlobStore.list_keys(prefix)` 로 본다(읽을 수 없는 파일은 건너뜀).
+    초안 id 는 `[A-Za-z0-9_-]{1,64}` 만. `ProfileExtraction`·초안 모델은 `IdentifierFree`.
+  - API: `POST /api/profile/drafts/upload`(multipart `file` — 온보딩 기본 경로, 파일을 문서로 저장하지 않는다),
+    `POST /api/profile/drafts {document_id}`(이미 올린 문서에서), `POST /api/profile/drafts/v2-import {profile_yaml, facts_yaml}`,
+    `GET /api/profile/drafts`(목록: id·출처·출처 파일명·생성 시각·값 있는 인적사항 필드 수·경험 수·가린 개수, 최근 순 —
+    새로고침 뒤 이어서 검토), `GET·PUT·DELETE /api/profile/drafts/{id}`(PUT = 검토 중 편집, 같은 스키마로 재검증),
+    `POST /api/profile/drafts/{id}/confirm {profile_fields, experience_indexes}` — 고른 항목만 한 트랜잭션으로 병합하고
+    초안을 지운다. 병합 규칙(`services/draft_merge.py`): 초안이 빈 칸·`None` 이면 기존 값 유지, 목록(링크·학력·스킬·어학)은
+    없는 항목만 뒤에 붙인다. 경험은 `build_experience` 로 id·fact id·섹션 key(`s1`…)를 새로 발급받는다.
+  - v2 임포터(`services/v2_import.py`, LLM 없음): v2 `profile.yaml`·`facts.yaml` 을 같은 초안 경로로. fact 를 `entity`
+    (없으면 v2 `kind`)로 묶어 Experience, `block` 별로 section — `domain/experience_facts.py` 의 역방향이라 확정 뒤
+    이력서 블록 구조가 v2 와 같다. YAML 별칭 거부, `user_id` 가 둘 이상이면 거부. 입력 양식 예시는
+    `tests/fixtures/v2_config/`(리포 `config/` 는 없다).
 - **공고맞춤 생성** (D11 기본 전략): 공고 본문 → 관련 fact 선택(v2 `select_relevant_blocks`) → 불릿 생성 → `ground_check` → 직군 템플릿 렌더.
 - **직군 템플릿** (D12): `templates/{family}/resume.html.j2`, `portfolio.html.j2`(해당 시). family 별 섹션 구성·포트폴리오 필요도(`required|optional|none`) 는 데이터(`families.yaml`)로.
 - **PDF 렌더**: 헤드리스 Chromium `page.pdf()` (Windows 호환). `PdfRenderer` port 유지, 기존 WeasyPrint 구현은 제거.
@@ -191,8 +219,10 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
   보안 미들웨어는 CORS 안쪽이라 403 에도 CORS 헤더가 붙는다. CORS 허용 헤더는 `Content-Type`·토큰 헤더만.
 - API 에러는 한 모양: `{"error": {"code", "message", "details": [{"loc", "msg"}]}}`. 검증 실패 상세에 **입력값을 싣지 않는다**
   (FastAPI 기본 422 의 `input` 은 거부한 주민번호를 되돌려준다, 절대 규칙 5). 코드: `validation_error`·`unique_identifier_rejected`
-  (422) · `not_found`(404) · `conflict`(409) · `too_large`(413) · `unsupported_type`(415) · `host_not_allowed`·`origin_not_allowed`·
-  `invalid_token`(403) · `internal_error`(500, 원인은 로그에만).
+  (422) · `extraction_failed`(422, 문서에서 글자를 못 뽑음) · `not_found`(404) · `conflict`(409) · `too_large`(413) ·
+  `unsupported_type`(415) · `host_not_allowed`·`origin_not_allowed`·`invalid_token`(403) ·
+  `llm_invalid_output`·`llm_auth_required`·`llm_quota_exceeded`·`llm_error`(502, LLM 에러 문자열은 모델 출력 원문을 담을 수 있어
+  응답에 싣지 않는다) · `internal_error`(500, 원인은 로그에만).
 - 설정(`settings` 테이블 + 최초 `.env` 없이도 동작): `llm_backend=cli|api`, API 키(파일 권한 0600), `submit_mode`, 대기 타임아웃, 언어.
   `settings` 테이블 전까지의 우선순위: 환경변수 > (개발 모드일 때만) `./.env` > 사용자 설정 디렉터리 `.env`
   (`platformdirs.user_config_dir("auto-apply")`, `AUTO_APPLY_CONFIG_DIR` 로 이동 가능). 개발 모드 = `AUTO_APPLY_DEV=1`

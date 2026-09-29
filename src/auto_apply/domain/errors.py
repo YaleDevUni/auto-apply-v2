@@ -97,6 +97,14 @@ class UploadRejected(AutoApplyError):
         self.reason = reason
 
 
+class TextExtractionFailed(AutoApplyError):
+    """DocumentTextExtractor 계약: 문서에서 글자를 뽑지 못했다 (§A7 온보딩 추출).
+
+    지원하지 않는 형식·망가진 파일·암호·텍스트 없는 스캔본·상한 초과를 전부 이 하나로 알린다 —
+    어느 쪽이든 사용자가 다른 파일을 올려야 풀린다. 메시지에 문서 내용을 싣지 않는다.
+    """
+
+
 NON_RETRYABLE: tuple[str, ...] = (
     CaptchaEncountered.__name__,
     AuthRequired.__name__,

@@ -77,6 +77,12 @@ def test_mutation_with_wrong_token_is_403(client, token):
         ("DELETE", "/api/answers/x"),
         ("POST", "/api/documents"),
         ("DELETE", "/api/documents/x"),
+        ("POST", "/api/profile/drafts"),
+        ("POST", "/api/profile/drafts/v2-import"),
+        ("POST", "/api/profile/drafts/upload"),
+        ("PUT", "/api/profile/drafts/x"),
+        ("DELETE", "/api/profile/drafts/x"),
+        ("POST", "/api/profile/drafts/x/confirm"),
     ],
 )
 def test_every_mutation_requires_token(client, method, path):

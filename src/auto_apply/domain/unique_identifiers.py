@@ -35,6 +35,21 @@ def contains_resident_registration_number(text: str) -> bool:
     return _RRN.search(_normalize(text)) is not None
 
 
+# 가린 자리 표시. 숫자가 없어 다시 패턴에 걸리지 않는다.
+REDACTION_MARK = "[주민등록번호 가림]"
+
+
+def redact_resident_registration_numbers(text: str) -> tuple[str, int]:
+    """(가린 텍스트, 가린 개수). 탐지 규칙은 거부와 같다(NFKC·zero-width·구분자).
+
+    가린 게 있으면 텍스트 전체를 정규화한 형태로 돌려준다 — 전각·zero-width 로 쪼갠 번호도
+    같은 위치에서 가려야 해서다. 없으면 원문 그대로. 가린 값·위치는 어디에도 남기지 않는다.
+    """
+    normalized = _normalize(text)
+    redacted, count = _RRN.subn(REDACTION_MARK, normalized)
+    return (redacted, count) if count else (text, 0)
+
+
 def _strings(value: object) -> Iterator[str]:
     if isinstance(value, str):
         yield value
