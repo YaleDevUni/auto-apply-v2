@@ -37,8 +37,8 @@ cache_control 4개 초과 폴백: 위 캐싱을 라이브 배치로 돌리다(20
 "A maximum of 4 blocks with cache_control may be provided. Found 5." 400 을 내는 걸 재현했다
 — CLI 가 이미 내부적으로 몇 개의 브레이크포인트를 쓰고 있어서 우리가 붙이는 것까지 합치면
 한도를 넘는 것으로 보이는데, 어떤 프롬프트에서 재현되는지는 CLI 내부 구현에 달려 있어 우리
-쪽에서 미리 피할 수 없다. 같은 activity 를 Temporal 이 재시도해도 프롬프트 크기가 그대로면
-매번 다시 걸려 재시도 예산을 태울 뿐이라(`_AI_RETRY`, `workflows/resume.py`), `_run`이 이
+쪽에서 미리 피할 수 없다. 바깥에서 같은 호출을 재시도해도 프롬프트 크기가 그대로면
+매번 다시 걸려 재시도 예산을 태울 뿐이라, `_run`이 이
 시그니처(`_CACHE_OVERFLOW_PATTERN`)를 만나면 그 자리에서 `cache_control` 없이 한 번 더
 호출한다 — 캐싱은 최적화일 뿐 정확성엔 필요 없다.
 

@@ -9,7 +9,7 @@ from auto_apply.contracts.dto import (
 
 
 class ResumeGenerator(Protocol):
-    """simple(plain 함수) → langgraph(M3) 교체 지점 (§9.2)."""
+    """공고맞춤 이력서 생성 교체 지점 (§A7)."""
 
     async def generate(self, req: GenerateResumeRequest) -> ResumeDraft: ...
 

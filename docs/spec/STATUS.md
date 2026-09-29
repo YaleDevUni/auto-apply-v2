@@ -4,7 +4,7 @@
 
 ## 현재
 - 마일스톤: **M0 · 정리와 뼈대** (진행 중)
-- 다음 태스크: **T0.2 Temporal 제거 · SQLite 전환**
+- 다음 태스크: **T0.3 계층 규칙 · 앱 진입점 재구성**
 - 차단 요소: 없음
 
 ## 완료
@@ -12,9 +12,12 @@
   v2 는 `legacy/v2-telegram-recipe` 브랜치로 보존(origin push 완료).
 - T0.1 폐기 코드 삭제 — 검증 PASS_WITH_NOTES. 카드 밖 삭제(ApplicationWorkflow·API 라우터·cli·포트폴리오 매핑)는 정당,
   잔재는 T0.2·M1·M6 카드로 이관. 웹 콘솔은 M1 전까지 동작 안 함(엔드포인트 삭제됨). D16(TanStack Router) 추가.
+- T0.2 Temporal·Postgres·S3 제거, SQLite+Alembic — 검증 PASS_WITH_NOTES. 상태 이력 A→B→A 버그를 append-only 로 고쳐 amend.
+  잔재는 T0.3·M3·M4·M5·M7 카드로 이관. 로컬 v2 데이터(`var/`·config v2 파일) 삭제 완료(`var/resumes` 만 사용자 확인 대기).
 
 ## 열린 질문 (다음 마일스톤 시작 전에 사용자에게)
-- 로컬 `var/`(v2 로그인 세션 storage_state·지원 기록)·`config/{portfolio_map.yaml,resume_guide.wanted.md}` 삭제 여부 — gitignore 라 되돌릴 수 없음, 사용자 답 전까지 보존
+- 로컬 `var/resumes/`(과거 생성 이력서 PDF 67개) 삭제 여부
+- 로컬 `.env` 가 v2(`REPOSITORY=postgres`, `DRY_RUN_ONLY=false`) — 백업 후 `.env.example` 기준 재생성 제안, 사용자 답 대기
 - M1: 인적사항 필드 목록(병역·보훈·장애 등 한국 특화 항목을 기본 노출할지 접을지)
 - M5: 직군 템플릿 디자인 톤(1안 여러 개 vs 직군당 1안)
 

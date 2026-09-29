@@ -7,9 +7,10 @@ from auto_apply.domain.enums import ApplicationState
 
 class ApplicationRepository(Protocol):
     async def upsert_state(self, state: PersistState) -> None:
-        """(application_id, workflow_run_id, state) 기준 멱등 upsert (§4.1).
+        """전이 1건을 이력에 append 한다 (§A3). 이름과 달리 합치지 않는다 — 최신 = 마지막 호출.
 
-        activity 는 최소 1회 실행이므로 같은 값으로 두 번 불려도 결과가 같아야 한다.
+        같은 run 안에서도 A→B→A 로 되돌아올 수 있어 (run, state) 로 중복을 거르지 않는다.
+        전이 검증·중복 차단은 `ApplicationService.transition()`(M4) 몫이다.
         """
         ...
 
@@ -20,8 +21,8 @@ class ApplicationRepository(Protocol):
     async def list_recent(self, limit: int = 10) -> list[ApplicationSummary]:
         """최근 갱신된 지원 건 상위 `limit`개, 각 건의 최신 상태만.
 
-        "최근"의 기준은 구현마다 다르다 (postgres 는 history row 의 자동증가 id, file 은 파일
-        mtime) — 정확한 정렬 보장이 필요한 용도가 아니라 강한 계약을 두지 않는다.
+        "최근"의 기준은 구현마다 다르다 (sqlite 는 마지막 이력 행의 순번, memory 는 삽입 순서)
+        — 정확한 정렬 보장이 필요한 용도가 아니라 강한 계약을 두지 않는다.
         """
         ...
 

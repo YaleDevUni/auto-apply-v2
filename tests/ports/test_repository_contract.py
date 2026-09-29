@@ -1,56 +1,33 @@
-"""ApplicationRepository contract test — 멱등성이 계약의 핵심이다 (§4.1).
+"""ApplicationRepository contract test — 상태 이력은 append-only, 최신 = 마지막 전이 (§A3).
 
-activity 는 최소 1회 실행이므로 같은 값으로 두 번 불려도 결과가 같아야 한다.
-postgres 파라미터만 실제 DB 라운드트립이라 `docker`로 표시한다 — `make test`는 memory/file 만
-돌고, postgres 는 `make up` 이 떠 있는 `make test-all`에서만 돈다.
+같은 run 안에서도 A→B→A 로 되돌아올 수 있다(FILLING↔NEEDS_INPUT). 중복 전이를 거르는 건
+저장소가 아니라 전이 검증(M4 `ApplicationService.transition()`)의 몫이다.
+sqlite 는 Alembic head 로 만든 실제 파일 DB 라운드트립이다 — 외부 인프라가 필요 없어 기본 실행된다.
 """
 
 from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from auto_apply.adapters.repository.file import FileUnitOfWork
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
-from auto_apply.adapters.repository.models import Base
-from auto_apply.adapters.repository.postgres import SqlAlchemyUnitOfWork, build_engine
-from auto_apply.config import Settings
+from auto_apply.adapters.repository.sqlite import SqliteUnitOfWork, build_engine
 from auto_apply.contracts.dto import PersistState
 from auto_apply.domain.enums import ApplicationState
 from auto_apply.ports.repository import UnitOfWork
 
-_PG_TABLES = "application_state_history"
 
-
-@pytest.fixture(params=["memory", "file", pytest.param("postgres", marks=pytest.mark.docker)])
-async def uow_factory(request: pytest.FixtureRequest, tmp_path):
+@pytest.fixture(params=["memory", "sqlite"])
+async def uow_factory(request: pytest.FixtureRequest):
     if request.param == "memory":
         rows: dict = {}
         yield lambda: InMemoryUnitOfWork(rows)
         return
-    if request.param == "file":
-        yield lambda: FileUnitOfWork(tmp_path)
-        return
-
-    # postgres — 매 테스트 전에 비워서 이전 테스트의 app_1 행과 섞이지 않게 한다.
-    # 반드시 운영 database_url 과 분리된 DB 를 쓴다 — 섞이면 TRUNCATE 가 실제 데이터를
-    # 지운다 (postgres-integration-test-data-wipe-hazard 로 실측).
-    settings = Settings()
-    test_url = settings.test_database_url
-    assert test_url != settings.database_url, (
-        "TEST_DATABASE_URL 이 DATABASE_URL 과 같다 — 이 fixture 는 매 테스트 전에 TRUNCATE 하므로"
-        " 운영 DB 를 그대로 가리키면 실제 데이터가 지워진다. db-init/01-create-test-db.sql 참고."
-    )
-    engine = build_engine(test_url)
-    async with engine.begin() as conn:
-        # alembic 을 별도로 이 DB에 돌리지 않는다 — models.py 가 유일한 스키마 정의라
-        # create_all 이 alembic 마이그레이션과 항상 같은 결과를 낸다 (스키마가 갈리면 그 자체가
-        # models.py 변경 시 놓친 마이그레이션이라는 신호다).
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(text(f"TRUNCATE TABLE {_PG_TABLES} RESTART IDENTITY"))
+    engine = build_engine(request.getfixturevalue("sqlite_url"))
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    yield lambda: SqlAlchemyUnitOfWork(session_factory)
+    yield lambda: SqliteUnitOfWork(session_factory)
     await engine.dispose()
 
 
@@ -67,17 +44,8 @@ async def test_upsert_then_history(uow_factory):
     assert [h.state for h in history] == [ApplicationState.EVALUATING]
 
 
-async def test_duplicate_upsert_does_not_duplicate_rows(uow_factory):
-    """activity 재시도로 같은 호출이 두 번 와도 이력이 늘어나지 않는다."""
-    for _ in range(3):
-        async with uow_factory() as uow:
-            await uow.applications.upsert_state(_state(ApplicationState.SCHEDULED))
-            await uow.commit()
-    async with uow_factory() as uow:
-        assert len(await uow.applications.history("app_1")) == 1
-
-
-async def test_same_state_updates_values_in_place(uow_factory):
+async def test_every_call_appends_a_row(uow_factory):
+    """저장소는 중복을 합치지 않는다 — 부른 만큼 이력이 쌓이고, 값은 각 행에 그대로 남는다."""
     at = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
     async with uow_factory() as uow:
         await uow.applications.upsert_state(_state(ApplicationState.SCHEDULED))
@@ -85,8 +53,7 @@ async def test_same_state_updates_values_in_place(uow_factory):
         await uow.commit()
     async with uow_factory() as uow:
         history = await uow.applications.history("app_1")
-    assert len(history) == 1
-    assert history[0].scheduled_at == at
+    assert [h.scheduled_at for h in history] == [None, at]
 
 
 async def test_different_states_are_appended_in_order(uow_factory):
@@ -123,10 +90,7 @@ async def test_unknown_application_returns_empty_history(uow_factory):
 
 
 async def test_list_recent_returns_latest_state_of_each_application(uow_factory):
-    """텔레그램 채팅 에이전트의 list_applications 도구가 쓴다 — 정렬 순서는 백엔드마다
-
-    다를 수 있어(ports/repository.py 참고) 존재 여부/최신 상태만 본다.
-    """
+    """정렬 순서는 백엔드마다 다를 수 있어(ports/repository.py 참고) 존재 여부/최신 상태만 본다."""
     async with uow_factory() as uow:
         await uow.applications.upsert_state(
             PersistState(
@@ -169,10 +133,7 @@ async def test_list_recent_respects_limit(uow_factory):
 
 
 async def test_latest_states_returns_only_the_latest_per_requested_id(uow_factory):
-    """apply_intake.py 의 사전 필터가 쓰는 배치 조회 — 요청한 id 중 이력이 있는 것만, 그마저도
-
-    최신 상태 하나씩만 돌려준다.
-    """
+    """배치 조회 — 요청한 id 중 이력이 있는 것만, 최신 상태 하나씩만 돌려준다."""
     async with uow_factory() as uow:
         await uow.applications.upsert_state(
             PersistState(
@@ -207,3 +168,49 @@ async def test_latest_states_empty_ids_returns_empty_dict(uow_factory):
 async def test_satisfies_protocol(uow_factory):
     uow: UnitOfWork = uow_factory()
     assert hasattr(uow.applications, "upsert_state")
+
+
+async def test_uncommitted_writes_are_rolled_back(uow_factory, request):
+    if request.node.callspec.params["uow_factory"] == "memory":
+        pytest.skip("memory 대역은 트랜잭션이 없다")
+    async with uow_factory() as uow:
+        await uow.applications.upsert_state(_state(ApplicationState.EVALUATING))
+    async with uow_factory() as uow:
+        assert await uow.applications.history("app_1") == []
+
+
+async def test_return_to_earlier_state_in_same_run_is_latest(uow_factory):
+    """회귀: 같은 run 에서 A→B→A 면 최신은 A, 이력 3행 (예전 (run, state) 멱등키는 B 를 남겼다)."""
+    async with uow_factory() as uow:
+        for s in (
+            ApplicationState.EXECUTING,
+            ApplicationState.NEEDS_HUMAN,
+            ApplicationState.EXECUTING,
+        ):
+            await uow.applications.upsert_state(_state(s))
+        await uow.commit()
+    async with uow_factory() as uow:
+        history = await uow.applications.history("app_1")
+        latest = await uow.applications.latest_states(["app_1"])
+        [summary] = await uow.applications.list_recent()
+    assert [h.state for h in history] == [
+        ApplicationState.EXECUTING,
+        ApplicationState.NEEDS_HUMAN,
+        ApplicationState.EXECUTING,
+    ]
+    assert latest == {"app_1": ApplicationState.EXECUTING}
+    assert summary.state is ApplicationState.EXECUTING
+
+
+async def test_sqlite_enforces_foreign_keys(sqlite_url):
+    """runs 가 없는 지원 건을 가리키지 못한다 — 연결마다 PRAGMA foreign_keys 가 켜져 있어야 한다."""
+    engine = build_engine(sqlite_url)
+    with pytest.raises(IntegrityError):
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO runs (id, application_id, kind, status, started_at)"
+                    " VALUES ('r1', 'missing', 'fill', 'running', '2026-09-30 00:00:00')"
+                )
+            )
+    await engine.dispose()

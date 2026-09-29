@@ -9,19 +9,6 @@ setup: ## 의존성 설치 + .env 생성
 	@test -f .env || (cp .env.example .env && echo "→ .env 생성됨")
 	@test -f config/facts.yaml || (cp config/facts.example.yaml config/facts.yaml && echo "→ config/facts.yaml 생성됨 (실제 이력으로 채울 것)")
 
-up: ## 인프라 기동 (postgres/temporal/temporal-ui/minio)
-	docker compose up -d
-	@echo "Temporal UI → http://localhost:8080   MinIO → http://localhost:9001"
-
-down: ## 인프라 정지
-	docker compose down
-
-reset: ## 인프라 + 볼륨 삭제 (데이터 날아감)
-	docker compose down -v
-
-migrate: ## Alembic 마이그레이션 적용 (REPOSITORY=postgres 일 때, make up 필요)
-	uv run alembic upgrade head
-
 fmt: ## 포매팅
 	uv run ruff format src tests
 	uv run ruff check --fix src tests
@@ -36,13 +23,13 @@ type: ## 타입 체크
 arch: ## 계층 규칙 검사 (§A2)
 	uv run lint-imports
 
-test: ## 단위/계약/워크플로우 테스트 (docker·브라우저 불필요) — make check 가 쓰는 게이트
-	uv run pytest -m "not docker and not native"
+test: ## 테스트 — make check 가 쓰는 게이트 (docker·Chrome·claude CLI 불필요)
+	uv run pytest -m "not native"
 
-test-fast: ## 개발 중 빠른 반복용 — Temporal 을 띄우는 테스트까지 뺀다 (게이트 아님)
-	uv run pytest -m "not docker and not native and not temporal"
+test-fast: ## 개발 중 빠른 반복용 — 첫 실패에서 멈추고 직전 실패부터 (게이트 아님)
+	uv run pytest -m "not native" -x --ff
 
-test-all: ## 전체 (make up 필요)
+test-all: ## native 포함 전체 (Chrome·claude CLI 필요)
 	uv run pytest
 
 check: lint type arch test ## 커밋 전 전체 검사
@@ -50,10 +37,7 @@ check: lint type arch test ## 커밋 전 전체 검사
 api: ## FastAPI 개발 서버
 	uv run uvicorn auto_apply.api.main:app --reload --port 8000
 
-worker: ## Temporal worker (QUEUE=default|ai)
-	uv run python -m auto_apply.worker --queue $${QUEUE:-default}
-
 web: ## 웹 콘솔 dev 서버 (make api 가 먼저 떠 있어야 한다)
 	cd web && npm install && npm run dev
 
-.PHONY: help setup up down reset migrate fmt lint type arch test test-fast test-all check api worker web
+.PHONY: help setup fmt lint type arch test test-fast test-all check api web

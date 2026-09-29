@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """환경변수 → 어댑터 선택 (ARCHITECTURE.md §11.4)."""
+    """환경변수 → 어댑터 선택 (bootstrap.py, §A2)."""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -14,34 +14,18 @@ class Settings(BaseSettings):
 
     # 어댑터 선택
     llm_provider: Literal["stub", "anthropic", "claude_cli"] = "stub"
-    storage: Literal["local", "memory", "s3"] = "local"
-    resume_engine: Literal["simple", "langgraph"] = "simple"
-    repository: Literal["memory", "file", "postgres"] = "file"
+    storage: Literal["local", "memory"] = "local"
+    resume_engine: Literal["simple"] = "simple"
+    repository: Literal["sqlite", "memory"] = "sqlite"
     facts_source: Literal["static", "yaml"] = "yaml"
     profile_source: Literal["static", "yaml"] = "yaml"
     guide_source: Literal["static", "file"] = "file"
 
-    # 인프라
-    database_url: str = "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply"
-    # postgres contract test 전용 DB — TRUNCATE 로 상태를 비우므로 운영 database_url 과
-    # 반드시 분리한다 (postgres-integration-test-data-wipe-hazard, db-init/ 참고).
-    test_database_url: str = (
-        "postgresql+asyncpg://auto_apply:auto_apply@localhost:5432/auto_apply_test"
-    )
-    temporal_address: str = "localhost:7233"
-    temporal_namespace: str = "default"
+    # 저장소 (D3·D4: SQLite + 로컬 파일. platformdirs 데이터 디렉터리 전환은 T0.3)
     data_dir: Path = Path("./var")
     facts_path: Path = Path("./config/facts.yaml")
     profile_path: Path = Path("./config/profile.yaml")
     resume_guide_dir: Path = Path("./config")  # resume_guide.{platform}.md 를 이 안에서 찾는다
-
-    s3_endpoint_url: str = "http://localhost:9000"
-    s3_bucket: str = "auto-apply"
-    s3_access_key: str = ""
-    s3_secret_key: str = ""
-    # S3BlobStore contract test 전용 버킷 — TRUNCATE 대신 매 테스트 전 전체 object 삭제라
-    # postgres-integration-test-data-wipe-hazard 와 같은 이유로 운영 s3_bucket 과 분리한다.
-    s3_test_bucket: str = "auto-apply-test"
 
     # 외부 서비스
     anthropic_api_key: str = ""
@@ -68,10 +52,15 @@ class Settings(BaseSettings):
     resume_max_project_blocks: int = Field(default=20, ge=1)
     resume_max_career_blocks_per_entity: int = Field(default=20, ge=1)
 
-    # 웹 콘솔(§12) 프론트엔드(Vite dev 서버)가 cross-origin 으로 API 를 부를 수 있게 허용하는
+    # 웹 콘솔 프론트엔드(Vite dev 서버)가 cross-origin 으로 API 를 부를 수 있게 허용하는
     # origin. 이 콘솔은 인증 계층이 없다(사용자 결정 — 로컬/사설망 전용 전제) — 그래서 CORS 도
     # 와일드카드가 아니라 이 값 하나만 명시적으로 허용한다.
     web_cors_origin: str = "http://localhost:5173"
+
+    @property
+    def database_url(self) -> str:
+        """DB 는 데이터 디렉터리 안의 파일 하나다 (§A1) — 따로 설정할 값이 아니라 파생값이다."""
+        return f"sqlite+aiosqlite:///{(self.data_dir / 'db.sqlite3').resolve().as_posix()}"
 
 
 def load_settings() -> Settings:

@@ -61,6 +61,10 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
 - 전이 표는 `domain/application_state.py` 에 순수 함수로. 허용되지 않은 전이는 예외.
 - 상태를 쓰는 통로는 `ApplicationService.transition()` **하나** (v2 의 persist_state 규칙 계승).
 - `runs` 테이블: 에이전트 세션 1회 = run 1행 (`kind=fill|revise|submit`, 토큰, 소요시간, transcript 경로, 결과).
+- 초기 스키마(T0.2, Alembic `0001`): `applications`(지원 건 1행 = 최신 상태 스냅샷) · `application_state_history`
+  (전이 이력 = 감사 로그, **append-only** — 전이마다 새 행, 자동 증가 `id` 가 순번, 최신 = 가장 큰 순번. 같은 run 안의
+  FILLING↔NEEDS_INPUT 왕복도 그대로 쌓인다) · `runs`(최소 컬럼). 스키마는 Alembic 이 유일한 원천이고
+  `models.py` 와의 일치는 테스트가 대조한다.
 - 크래시 복구: 기동 시 `RUNNING` run 을 `INTERRUPTED` 로 닫고 지원 건을 직전 재개 가능 상태로 되돌린다.
 
 ## §A4 제출 차단 하네스 (SubmitGuard) — 제품의 핵심 안전장치

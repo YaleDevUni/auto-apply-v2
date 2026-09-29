@@ -1,83 +1,60 @@
-import asyncio
-from logging.config import fileConfig
+"""Alembic 환경 — SQLite 단일 DB (D3).
 
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+URL 은 `Config.set_main_option("sqlalchemy.url", ...)` 로 받은 값이 우선이고, 없으면
+`Settings().database_url`(데이터 디렉터리의 db.sqlite3)이다. 앱은 aiosqlite 로 붙지만 마이그레이션은
+이벤트 루프 없이도 돌도록(기동 전·테스트 fixture) 동기 드라이버로 바꿔 실행한다.
+"""
+
+from logging.config import fileConfig
+from pathlib import Path
+
+from sqlalchemy import create_engine, pool
+from sqlalchemy.engine import URL, make_url
 
 from alembic import context
 from auto_apply.adapters.repository.models import Base
 from auto_apply.config import Settings
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
 config = context.config
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# 프로그램에서 부를 때(테스트·앱 기동)는 호출자의 로깅 설정을 덮어쓰지 않는다.
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
-# DB_URL 은 alembic.ini 가 아니라 Settings(.env)에서 가져온다 — 두 곳에 같은 값을
-# 중복해서 관리하지 않기 위해서다 (ARCHITECTURE.md §11.4 composition root 원칙과 같은 이유).
-config.set_main_option("sqlalchemy.url", Settings().database_url)
+
+def _sync_url() -> URL:
+    url = make_url(config.get_main_option("sqlalchemy.url") or Settings().database_url)
+    if url.drivername == "sqlite+aiosqlite":
+        url = url.set(drivername="sqlite")
+    if url.database and url.database != ":memory:":
+        Path(url.database).parent.mkdir(parents=True, exist_ok=True)
+    return url
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode.
-
-    This configures the context with just a URL
-    and not an Engine, though an Engine is acceptable
-    here as well.  By skipping the Engine creation
-    we don't even need a DBAPI to be available.
-
-    Calls to context.execute() here emit the given string to the
-    script output.
-
-    """
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=_sync_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        render_as_batch=True,
     )
-
     with context.begin_transaction():
         context.run_migrations()
-
-
-def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
-
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def run_async_migrations() -> None:
-    """In this scenario we need to create an Engine
-    and associate a connection with the context.
-
-    """
-
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-
-    asyncio.run(run_async_migrations())
+    engine = create_engine(_sync_url(), poolclass=pool.NullPool)
+    with engine.connect() as connection:
+        # SQLite 는 ALTER 가 제한적이라 batch 모드(테이블 재작성)로 렌더한다.
+        context.configure(
+            connection=connection, target_metadata=target_metadata, render_as_batch=True
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+    engine.dispose()
 
 
 if context.is_offline_mode():

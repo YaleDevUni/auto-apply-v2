@@ -17,13 +17,11 @@ from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.adapters.pdf.stub import StubPdfRenderer
 from auto_apply.adapters.profile.static import StaticProfileSource
 from auto_apply.adapters.profile.yaml_source import YamlProfileSource
-from auto_apply.adapters.repository.file import FileUnitOfWork
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
-from auto_apply.adapters.repository.postgres import sqlalchemy_uow_factory
+from auto_apply.adapters.repository.sqlite import sqlite_uow_factory
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
 from auto_apply.adapters.storage.local import LocalBlobStore
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
-from auto_apply.adapters.storage.s3 import S3BlobStore
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import PersistState
 from auto_apply.ports.clock import Clock, IdGen
@@ -35,6 +33,7 @@ from auto_apply.ports.profile import ProfileSource
 from auto_apply.ports.repository import UnitOfWork
 from auto_apply.ports.resume import ResumeGenerator, ResumeReviewer
 from auto_apply.ports.storage import BlobStore
+from auto_apply.services.document import DocumentService
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +50,7 @@ class Container:
     facts: FactSource
     profile: ProfileSource
     guide: GuideSource
+    documents: DocumentService
 
 
 def _build_store(cfg: Settings) -> BlobStore:
@@ -59,13 +59,6 @@ def _build_store(cfg: Settings) -> BlobStore:
             return InMemoryBlobStore()
         case "local":
             return LocalBlobStore(cfg.data_dir)
-        case "s3":
-            return S3BlobStore(
-                endpoint_url=cfg.s3_endpoint_url,
-                bucket=cfg.s3_bucket,
-                access_key=cfg.s3_access_key,
-                secret_key=cfg.s3_secret_key,
-            )
 
 
 def _build_llm(cfg: Settings) -> LLMClient:
@@ -90,11 +83,8 @@ def _build_uow(cfg: Settings) -> Callable[[], UnitOfWork]:
             # 클로저 밖에서 한 번만 만들어 공유해야 서로 다른 `c.uow()` 호출 사이에 쓴 값이 남는다.
             rows: dict[str, list[PersistState]] = {}
             return lambda: InMemoryUnitOfWork(rows)
-        case "file":
-            root = cfg.data_dir
-            return lambda: FileUnitOfWork(root)
-        case "postgres":
-            return sqlalchemy_uow_factory(cfg.database_url)
+        case "sqlite":
+            return sqlite_uow_factory(cfg.database_url)
 
 
 def _build_facts(cfg: Settings) -> FactSource:
@@ -129,6 +119,18 @@ def build_container(cfg: Settings) -> Container:
     facts = _build_facts(cfg)
     profile = _build_profile(cfg)
     guide = _build_guide(cfg)
+    generator = SimpleResumeGenerator(
+        llm,
+        idgen,
+        facts,
+        profile,
+        guide,
+        max_project_blocks=cfg.resume_max_project_blocks,
+        max_career_blocks_per_entity=cfg.resume_max_career_blocks_per_entity,
+    )
+    reviewer = SimpleResumeReviewer(facts)
+    # §A7: WeasyPrint 는 제거했고 Chrome `page.pdf()` 구현은 M5 에서 같은 port 로 붙인다.
+    pdf = StubPdfRenderer(store)
     return Container(
         settings=cfg,
         clock=clock,
@@ -136,19 +138,11 @@ def build_container(cfg: Settings) -> Container:
         store=store,
         llm=llm,
         uow=_build_uow(cfg),
-        generator=SimpleResumeGenerator(
-            llm,
-            idgen,
-            facts,
-            profile,
-            guide,
-            max_project_blocks=cfg.resume_max_project_blocks,
-            max_career_blocks_per_entity=cfg.resume_max_career_blocks_per_entity,
-        ),
-        reviewer=SimpleResumeReviewer(facts),
-        # §A7: WeasyPrint 는 제거했고 Chrome `page.pdf()` 구현은 M5 에서 같은 port 로 붙인다.
-        pdf=StubPdfRenderer(store),
+        generator=generator,
+        reviewer=reviewer,
+        pdf=pdf,
         facts=facts,
         profile=profile,
         guide=guide,
+        documents=DocumentService(generator, reviewer, pdf),
     )

@@ -6,7 +6,7 @@ from auto_apply.domain.errors import BlobNotFound
 
 
 class LocalBlobStore:
-    """로컬 파일시스템. MinIO 없이 개발할 때 쓴다 (§11.2)."""
+    """로컬 파일시스템 — 데이터 디렉터리의 파일 저장소 (§A1, D4)."""
 
     def __init__(self, root: Path) -> None:
         self._root = root

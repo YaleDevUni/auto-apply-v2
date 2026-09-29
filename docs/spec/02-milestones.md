@@ -57,6 +57,8 @@
 - 할 일: §A2 계층(domain/contracts/ports/adapters/services/runner/api/bootstrap)으로 arch 규칙 갱신. `auto-apply` 콘솔 스크립트 →
   platformdirs 데이터 디렉터리 생성 + 마이그레이션 자동 적용 + FastAPI(127.0.0.1) + 빈 JobRunner 기동. `/health`.
 - 수용 기준: `uv run auto-apply --port 0` 기동 스모크 테스트 통과, arch 검사가 새 계층 위반을 잡는 테스트 1개.
+- T0.2 검증 이관: Alembic 스크립트를 패키지 안(`src/auto_apply/…`)으로 옮겨 설치본에서도 자동 마이그레이션이 되게. `data_dir`·`env_file` 을 platformdirs 로.
+  남은 v2 주석(`domain/errors.py` 의 Temporal 근거 제외) 정리.
 
 ### T0.4 문서 정리
 - 의존: T0.3
@@ -78,14 +80,18 @@
 
 ## M3 · 에이전트 런타임 · 채우기(fill) run
 목표: AgentRuntime 3구현, MCP(HTTP) 노출, fill run 이 픽스처 사이트에서 FillLog + `ready_for_review` 까지.
+이관: `domain/errors.py` 의 `NON_RETRYABLE`(Temporal 근거)을 §A9 JobRunner 재시도 정책으로 재정의하거나 삭제.
 수용 기준: Scripted 런타임으로 상태기계 전 경로 테스트, CLI 런타임은 `native` 마커 e2e 1건(짐 사이트), ask_user 일시정지/재개 테스트.
 
 ## M4 · 승인 큐 · 재진입(submit/revise)
 목표: 트리거 API/UI, 승인 큐 UI(스크린샷·필드표·편집), submit run(§A4 L6 대조), revise run, 크래시 복구.
+이관: 상태 쓰기 포트를 `ApplicationService` 만 쓰도록 봉인(절대 규칙 6), `upsert_state`→`append_state` 개명(이미 append-only),
+`PersistState.workflow_run_id`→`run_id`.
 수용 기준: SUBMIT_MISMATCH 경로 테스트, dry_run 에서 클릭 0회 검증, 중복 지원 경고 테스트.
 
 ## M5 · 공고맞춤 문서 · 직군 템플릿
 목표: 4개 직군 이력서 템플릿 + 포트폴리오(직군별 필요도), Chrome PDF 렌더, 자소서 답변 생성(ground_check·글자수).
+이관: `ResumeReviewExhausted` 를 `services/document.py` 에서 `domain/errors.py` 로.
 수용 기준: 직군별 렌더 골든 테스트(HTML 스냅샷), ground_check 회귀 테스트, 글자수 초과 거부 테스트.
 
 ## M6 · 가이드 자동 학습
@@ -95,4 +101,5 @@ v2 잔재인 `ports/guide.py`·`adapters/guide/file.py`·`config.py` 의 `resume
 
 ## M7 · 배포
 목표: `uv tool install` 한 줄 설치, 웹 빌드 산출물 패키지 포함, 첫 실행 마법사, mac/windows CI 매트릭스, README 설치 가이드.
+이관: Makefile `SHELL := /bin/bash` 등 Windows 비호환 정리(개발 명령을 Python 태스크로).
 수용 기준: CI 가 mac·windows 에서 `make check` 녹색, 깨끗한 환경 설치 스모크.

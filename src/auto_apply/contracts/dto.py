@@ -1,4 +1,4 @@
-"""워크플로우 입출력 타입. workflow 파일이 import 해도 안전한 유일한 데이터 계층."""
+"""계층 사이를 오가는 DTO — 벤더 의존 없는 순수 데이터 계층 (§A2)."""
 
 from datetime import datetime
 
