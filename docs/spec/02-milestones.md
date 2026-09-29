@@ -2,7 +2,7 @@
 
 > 태스크 카드는 **서브에이전트 한 번에 끝낼 수 있는 크기**로 자른다 (파일 범위 명시, 수용 기준은 테스트로).
 > 상세 카드는 **마일스톤 시작 시점에** 쓴다 — 미리 써둔 세부는 앞 마일스톤 결과로 낡는다.
-> 지금은 M0 만 상세, M1~M7 은 목표·수용 기준까지만 있다.
+> M0(완료)·M1 은 상세, M2~M7 은 목표·수용 기준까지만 있다.
 
 카드 형식:
 ```
@@ -71,9 +71,59 @@
 
 ## M1 · 프로필 · 지식베이스
 목표: 웹에서 인적사항/경험/문서/답변KB 를 CRUD 하고, 기존 이력서 파일로 초안을 추출한다.
-웹 콘솔은 **TanStack Router(D16)** 로 페이지 라우팅을 도입하고, T0.1 에서 끊긴 `web/src/lib/api.ts` 의 `/applications/*` 호출을 걷어낸다.
-T0.3 이관: `config.py` 의 facts/profile/guide `./config/...`(cwd 기준) 경로를 DB·platformdirs 기준으로, `LocalBlobStore` 루트를 §A1 의 `files/` 로.
 수용 기준: 프로필 API contract 테스트, 추출 결과 스키마 검증 회귀 테스트(샘플 PDF 2종: 개발/비개발), 웹 온보딩 화면 수동 확인 체크리스트.
+병렬: T1.3(백엔드)과 T1.4(웹)는 파일 범위가 겹치지 않아 T1.2 뒤 worktree 로 병렬 실행 가능.
+
+### T1.1 프로필 저장소 DB 전환 (Profile · Experience · AnswerKB · Document)
+- 의존: M0
+- 범위: `src/auto_apply/{contracts,ports,domain,adapters/{repository,profile,facts,storage},config.py,bootstrap.py}`,
+  `adapters/repository/migrations/versions/0002_*`, `tests/`
+- 할 일: §A7 모델을 SQLite 로. **Profile** 을 기본(이름·연락처·링크·학력·스킬·언어)과 **추가 정보**(병역·보훈·장애·희망연봉·
+  입사가능일·거주지역 — 전부 선택, 비어 있으면 실행 중 `ask_user`, D10)로 나눈 언어 중립 필드로 확장.
+  **Experience**(v2 Fact 일반화: entity 종류 company/project/activity/education, 기간·역할·fact 문장·`skills`·링크·첨부 문서 id).
+  **AnswerKB**(정규화 질문 키, 답, 출처 application_id, 갱신일). **Document**(업로드 고정 파일 메타 — 바이트는 BlobStore `files/`).
+  고유식별정보 거부는 도메인 규칙으로(주민등록번호 패턴을 Profile·AnswerKB 어느 필드에도 저장 불가, 절대 규칙 5).
+  yaml/static 소스(`adapters/{facts,profile}`)는 repository(sqlite+memory)로 교체하고 `config.py` 의 `./config/...` 경로 제거.
+  `LocalBlobStore` 루트를 `DATA_DIR/files/` 로. 기존 이력서 생성(DocumentService)이 새 저장소로 계속 동작해야 한다.
+- 수용 기준: repository contract test 가 sqlite·memory 둘 다에 돈다(프로필·경험·답변·문서 CRUD), 주민번호 거부 테스트,
+  0002 마이그레이션 up/down + 모델 대조 테스트, `grep -rn "\./config" src/` 0건, 기존 DocumentService 테스트 녹색.
+
+### T1.2 ProfileService · 프로필 REST API · 로컬 보안 헤더
+- 의존: T1.1
+- 범위: `src/auto_apply/{services/profile.py,api/,bootstrap.py,config.py}`, `tests/`
+- 할 일: ProfileService(검증·주민번호 거부·AnswerKB 질문 키 정규화). `/api/profile`, `/api/experiences`, `/api/answers`,
+  `/api/documents`(multipart 업로드: pdf/docx/png/jpg 화이트리스트·크기 상한) CRUD. §A10 로컬 보안을 **첫 변경 API 와 함께** 도입:
+  설치별 랜덤 토큰(데이터 디렉터리 파일 0600, 최초 기동 생성) + 모든 변경 요청에 `Origin` 검사 + 토큰 헤더,
+  웹이 토큰을 받는 `GET /api/session`(CORS 로 타 출처 차단). 에러는 일관된 JSON 스키마.
+- 수용 기준: API contract 테스트(성공·검증 실패·404), 토큰 없음/틀린 Origin → 403 테스트, 업로드 타입·크기 거부 테스트.
+- T1.1 이관: Experience/fact id 발급과 사용자 단위 유일성은 서비스가 보장(저장소는 강제 안 함), 기본 `user_id` 상수 1곳 정의.
+
+### T1.3 이력서 파일 → 프로필 초안 추출 (+ v2 yaml 가져오기)
+- 의존: T1.2
+- 범위: `src/auto_apply/{ports,adapters/extract/,ai/,services/,api/}`, `tests/fixtures/resumes/`, `pyproject.toml`
+- 할 일: 새 외부 의존성 절차(§A2)대로 `DocumentTextExtractor` port(PDF·DOCX → 텍스트) + 구현 2개(실제 라이브러리 + 테스트 대역).
+  `ai/` 에 추출 프롬프트·구조화 출력 스키마(Profile/Experience 초안). LLM 출력은 Pydantic 검증 통과분만 **초안**으로 저장,
+  사용자가 확정해야 본 프로필에 병합(`POST /api/profile/drafts/{id}/confirm`, 항목별 선택). v2 `config/facts.yaml`·`profile.yaml`
+  을 같은 초안 경로로 가져오는 임포터. 픽스처 PDF 2종(개발/비개발)은 **가상의 인물**로 만든다(실제 개인정보 금지).
+- 수용 기준: 추출 스키마 검증 회귀 테스트(픽스처 2종 × stub LLM 고정 응답, 잘못된 응답 거부), 초안→확정 병합 테스트,
+  yaml 임포터 테스트, 추출기 contract test(실제+대역).
+- T1.1 이관: `config/*.example.yaml` 은 임포터 입력 양식으로만 남기거나 픽스처로 옮기고 `config/` 정리.
+
+### T1.4 웹 콘솔 재구성 — TanStack Router · 레이아웃 · 인적사항 화면
+- 의존: T1.2
+- 범위: `web/`
+- 할 일: TanStack Router(D16) 도입, v2 화면(`ApplicationList`·`ApplicationDetail`·`ApplyBar` 등)과 `api.ts` 의 `/applications/*`
+  제거. API 클라이언트를 `/api/session` 토큰 헤더 포함으로 재작성, TanStack Query 훅. 공통 레이아웃(사이드 내비: 프로필·경험·답변·문서).
+  **인적사항 화면**: 기본 항목은 펼침, 추가 정보(병역·보훈·장애·희망연봉·입사가능일·거주지역)는 접힌 섹션 +
+  "비워두면 지원 중에 물어봅니다" 안내. i18n 키 구조(D14, 리소스는 ko 만).
+- 수용 기준: `npm run build`·`npm run lint` 통과, `docs/spec/checklists/m1-web.md` 에 인적사항 화면 수동 확인 항목 작성.
+
+### T1.5 웹 — 경험 · 답변KB · 문서 · 온보딩(추출 검토) 화면
+- 의존: T1.3, T1.4
+- 범위: `web/`, `docs/spec/checklists/m1-web.md`
+- 할 일: 경험 목록/편집(entity 별 그룹), 답변KB 목록/편집/삭제, 문서 업로드·목록. 첫 화면 온보딩: 이력서 파일 업로드 →
+  추출 초안 항목별 검토(채택/수정/버림) → 확정. 프로필이 비어 있으면 온보딩으로 유도.
+- 수용 기준: `npm run build`·`npm run lint` 통과, 체크리스트에 온보딩 흐름 추가, 오케스트레이터가 로컬 기동 후 체크리스트 수동 확인.
 
 ## M2 · 브라우저 호스트 · 제출 차단 하네스
 목표: 설치된 Chrome 을 전용 프로필로 띄우고(mac/win 경로 탐지), BrowserToolbox 도구와 §A4 L1~L5 를 구현.

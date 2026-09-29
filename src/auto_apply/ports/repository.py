@@ -3,6 +3,12 @@ from typing import Protocol, Self
 
 from auto_apply.contracts.dto import ApplicationSummary, PersistState
 from auto_apply.domain.enums import ApplicationState
+from auto_apply.ports.profile_store import (
+    AnswerRepository,
+    DocumentRepository,
+    ExperienceRepository,
+    ProfileRepository,
+)
 
 
 class ApplicationRepository(Protocol):
@@ -39,6 +45,18 @@ class UnitOfWork(Protocol):
     # 구현체가 더 구체적인 타입을 노출하면 타입 체크에 실패한다.
     @property
     def applications(self) -> ApplicationRepository: ...
+
+    @property
+    def profiles(self) -> ProfileRepository: ...
+
+    @property
+    def experiences(self) -> ExperienceRepository: ...
+
+    @property
+    def answers(self) -> AnswerRepository: ...
+
+    @property
+    def documents(self) -> DocumentRepository: ...
 
     async def __aenter__(self) -> Self: ...
 

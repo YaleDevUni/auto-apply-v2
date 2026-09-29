@@ -13,8 +13,6 @@ def _settings(data_dir, **kw) -> Settings:
         data_dir=data_dir,
         storage="memory",
         llm_provider="stub",
-        facts_source="static",
-        profile_source="static",
         guide_source="static",
         **kw,
     )

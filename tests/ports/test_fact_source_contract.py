@@ -1,79 +1,55 @@
-"""FactSource contract test."""
+"""FactSource contract test — 저장소의 Experience 가 이력서 파이프라인용 Fact 로 나온다 (§A7).
 
-from pathlib import Path
-
-import pytest
-
-from auto_apply.adapters.facts.static import StaticFactSource
-from auto_apply.adapters.facts.yaml_file import YamlFactSource
-from auto_apply.contracts.fact import Fact
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-SAMPLE_YAML = """
-- id: f-1
-  user_id: u1
-  kind: experience
-  content: "3년간 백엔드 개발"
-  keywords: [백엔드, python]
-  source: "이력서 v1"
-- id: f-2
-  user_id: other-user
-  kind: skill
-  content: "다른 사용자의 사실"
-  keywords: [무관]
+구현은 `RepositoryFactSource` 하나지만 UoW 두 구현(memory·sqlite, tests/conftest.py)으로 돈다.
 """
 
-
-def _write_sample_yaml(tmp_path: Path) -> Path:
-    path = tmp_path / "facts.yaml"
-    path.write_text(SAMPLE_YAML, encoding="utf-8")
-    return path
-
-
-@pytest.fixture(params=["static", "yaml"])
-def make_source(request: pytest.FixtureRequest, tmp_path):
-    if request.param == "static":
-        facts = [
-            Fact(
-                id="f-1",
-                user_id="u1",
-                kind="experience",
-                content="3년간 백엔드 개발",
-                keywords=["백엔드"],
-            ),
-            Fact(id="f-2", user_id="other-user", kind="skill", content="다른 사용자의 사실"),
-        ]
-        return StaticFactSource(facts)
-    return YamlFactSource(_write_sample_yaml(tmp_path))
+from auto_apply.adapters.facts.repository import RepositoryFactSource
+from auto_apply.contracts.experience import Experience, ExperienceFact
+from auto_apply.contracts.fact import Fact
+from auto_apply.domain.enums import ExperienceKind
 
 
-async def test_list_for_user_returns_only_that_users_facts(make_source):
-    facts = await make_source.list_for_user("u1")
+def _exp(exp_id: str, user_id: str, fact_id: str) -> Experience:
+    return Experience(
+        id=exp_id,
+        user_id=user_id,
+        kind=ExperienceKind.PROJECT,
+        name=f"프로젝트 {exp_id}",
+        skills=["Python"],
+        facts=[ExperienceFact(id=fact_id, text="3년간 백엔드 개발")],
+    )
+
+
+async def _seed(uow_factory, *experiences: Experience) -> None:
+    async with uow_factory() as uow:
+        for exp in experiences:
+            await uow.experiences.save(exp)
+        await uow.commit()
+
+
+async def test_list_for_user_returns_only_that_users_facts(uow_factory):
+    await _seed(uow_factory, _exp("p1", "u1", "f-1"), _exp("p2", "other", "f-2"))
+    facts = await RepositoryFactSource(uow_factory).list_for_user("u1")
     assert [f.id for f in facts] == ["f-1"]
     assert all(isinstance(f, Fact) for f in facts)
+    assert facts[0].keywords == ["Python"]
+    assert facts[0].entity == "p1"
 
 
-async def test_list_for_user_returns_empty_for_unknown_user(make_source):
-    assert await make_source.list_for_user("nobody") == []
+async def test_list_follows_experience_order(uow_factory):
+    await _seed(uow_factory, _exp("p2", "u1", "f-2"), _exp("p1", "u1", "f-1"))
+    facts = await RepositoryFactSource(uow_factory).list_for_user("u1")
+    assert [f.id for f in facts] == ["f-2", "f-1"]
 
 
-async def test_yaml_source_parses_nested_fields(tmp_path):
-    facts = await YamlFactSource(_write_sample_yaml(tmp_path)).list_for_user("u1")
-    assert facts[0].keywords == ["백엔드", "python"]
-    assert facts[0].source == "이력서 v1"
+async def test_list_for_user_returns_empty_for_unknown_user(uow_factory):
+    assert await RepositoryFactSource(uow_factory).list_for_user("nobody") == []
 
 
-async def test_static_source_returns_empty_by_default():
-    assert await StaticFactSource().list_for_user("u1") == []
-
-
-async def test_repo_facts_example_yaml_is_valid():
-    """config/facts.example.yaml(placeholder 템플릿, git 추적)이 스키마를 통과하는지 확인한다.
-
-    실제 config/facts.yaml은 개인정보라 gitignore 대상이라 여기서 검증할 수 없다.
-    """
-    path = REPO_ROOT / "config" / "facts.example.yaml"
-    facts = await YamlFactSource(path).list_for_user("default")
-    assert len(facts) >= 1
-    assert all(f.user_id == "default" for f in facts)
+async def test_edits_are_visible_on_next_call(uow_factory):
+    """캐시하지 않는다 — 경험을 고치면 바로 다음 생성부터 보여야 한다."""
+    source = RepositoryFactSource(uow_factory)
+    await _seed(uow_factory, _exp("p1", "u1", "f-1"))
+    assert [f.id for f in await source.list_for_user("u1")] == ["f-1"]
+    await _seed(uow_factory, _exp("p1", "u1", "f-9"))
+    assert [f.id for f in await source.list_for_user("u1")] == ["f-9"]

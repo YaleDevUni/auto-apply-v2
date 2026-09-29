@@ -2,7 +2,7 @@
 
 같은 run 안에서도 A→B→A 로 되돌아올 수 있다(FILLING↔NEEDS_INPUT). 중복 전이를 거르는 건
 저장소가 아니라 전이 검증(M4 `ApplicationService.transition()`)의 몫이다.
-sqlite 는 Alembic head 로 만든 실제 파일 DB 라운드트립이다 — 외부 인프라가 필요 없어 기본 실행된다.
+`uow_factory`(tests/conftest.py)가 memory·sqlite 둘 다로 돈다.
 """
 
 from datetime import UTC, datetime
@@ -10,25 +10,11 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
-from auto_apply.adapters.repository.sqlite import SqliteUnitOfWork, build_engine
+from auto_apply.adapters.repository.sqlite import build_engine
 from auto_apply.contracts.dto import PersistState
 from auto_apply.domain.enums import ApplicationState
 from auto_apply.ports.repository import UnitOfWork
-
-
-@pytest.fixture(params=["memory", "sqlite"])
-async def uow_factory(request: pytest.FixtureRequest):
-    if request.param == "memory":
-        rows: dict = {}
-        yield lambda: InMemoryUnitOfWork(rows)
-        return
-    engine = build_engine(request.getfixturevalue("sqlite_url"))
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    yield lambda: SqliteUnitOfWork(session_factory)
-    await engine.dispose()
 
 
 def _state(state: ApplicationState, run_id: str = "run_1", **kw) -> PersistState:

@@ -1,10 +1,31 @@
+from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Self
 
+from auto_apply.adapters.repository.memory_profile import (
+    InMemoryAnswerRepository,
+    InMemoryDocumentRepository,
+    InMemoryExperienceRepository,
+    InMemoryProfileRepository,
+)
 from auto_apply.contracts.dto import ApplicationSummary, PersistState
+from auto_apply.contracts.experience import Experience
+from auto_apply.contracts.knowledge import Answer, DocumentMeta
+from auto_apply.contracts.profile import Profile
 from auto_apply.domain.enums import ApplicationState
 
 Rows = dict[str, list[PersistState]]
+
+
+@dataclass
+class InMemoryDatabase:
+    """UoW 여러 개가 공유하는 "DB". 트랜잭션이 없다 — 쓰는 즉시 보이고 롤백되지 않는다."""
+
+    applications: Rows = field(default_factory=dict)
+    profiles: dict[str, Profile] = field(default_factory=dict)
+    experiences: dict[str, Experience] = field(default_factory=dict)
+    answers: dict[str, Answer] = field(default_factory=dict)
+    documents: dict[str, DocumentMeta] = field(default_factory=dict)
 
 
 def _summary(application_id: str, latest: PersistState) -> ApplicationSummary:
@@ -40,8 +61,12 @@ class InMemoryApplicationRepository:
 
 
 class InMemoryUnitOfWork:
-    def __init__(self, rows: Rows) -> None:
-        self.applications = InMemoryApplicationRepository(rows)
+    def __init__(self, db: InMemoryDatabase) -> None:
+        self.applications = InMemoryApplicationRepository(db.applications)
+        self.profiles = InMemoryProfileRepository(db.profiles)
+        self.experiences = InMemoryExperienceRepository(db.experiences)
+        self.answers = InMemoryAnswerRepository(db.answers)
+        self.documents = InMemoryDocumentRepository(db.documents)
 
     async def __aenter__(self) -> Self:
         return self

@@ -3,10 +3,10 @@ from pathlib import Path
 
 
 class FileGuideSource:
-    """`config/resume_guide.{platform}.md`를 읽고 쓴다. 파일이 없으면 빈 가이드로 취급한다 —
+    """`DATA_DIR/guides/resume_guide.{platform}.md`(Settings.guide_dir)를 읽고 쓴다. 파일이 없으면
 
-    아직 아무 규칙도 안 쌓였다는 뜻이라 정상이다. 이 파일들은 사람이 쓴 커스텀 프롬프트라
-    `.gitignore`로 뺀다(`config/resume_guide.example.md` 참고).
+    빈 가이드로 취급한다 — 아직 아무 규칙도 안 쌓였다는 뜻이라 정상이다. 데이터 디렉터리에 있어
+    저장소에 커밋되지 않는다. §A8 가이드 DB(M6)로 대체된다.
     """
 
     def __init__(self, dir_path: Path) -> None:

@@ -11,6 +11,8 @@ from sqlalchemy import create_engine, inspect
 from auto_apply.adapters.repository.migrate import MigrationError, alembic_config, upgrade_to_head
 from auto_apply.adapters.repository.models import Base
 
+_PROFILE_TABLES = {"profiles", "experiences", "answers", "documents"}  # 0002 (T1.1)
+
 
 def _sync(url: str) -> str:
     return url.replace("sqlite+aiosqlite://", "sqlite://")
@@ -28,7 +30,38 @@ def test_initial_schema_has_minimal_tables(sqlite_url):
     engine = create_engine(_sync(sqlite_url))
     tables = set(inspect(engine).get_table_names())
     engine.dispose()
-    assert {"applications", "application_state_history", "runs"} <= tables
+    assert {"applications", "application_state_history", "runs"} | _PROFILE_TABLES <= tables
+
+
+def test_0002_adds_profile_tables_and_downgrade_removes_only_them(tmp_path):
+    """0002 up/down (T1.1): 0001 의 지원 건 데이터는 0002 를 오르내려도 남는다."""
+    db = tmp_path / "db.sqlite3"
+    cfg = alembic_config(f"sqlite:///{db.as_posix()}")
+    command.upgrade(cfg, "0001")
+    assert _PROFILE_TABLES.isdisjoint(_tables(db))
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "insert into applications (id, state, payload, last_event_id)"
+            " values ('app_1', 'evaluating', '{}', 0)"
+        )
+
+    command.upgrade(cfg, "0002")
+    assert _tables(db) >= _PROFILE_TABLES
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "insert into answers (id, user_id, question_key, answer, updated_at)"
+            " values ('a1', 'u1', 'k', 'v', '2026-09-30 00:00:00')"
+        )
+        with pytest.raises(sqlite3.IntegrityError):  # (user_id, question_key) 유일
+            conn.execute(
+                "insert into answers (id, user_id, question_key, answer, updated_at)"
+                " values ('a2', 'u1', 'k', 'v', '2026-09-30 00:00:00')"
+            )
+
+    command.downgrade(cfg, "0001")
+    assert _PROFILE_TABLES.isdisjoint(_tables(db))
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("select id from applications").fetchall() == [("app_1",)]
 
 
 def test_downgrade_to_base_and_back(sqlite_url):

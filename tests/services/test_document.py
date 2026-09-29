@@ -2,7 +2,13 @@
 
 import pytest
 
+from auto_apply.adapters.clock.system import UuidIdGen
+from auto_apply.adapters.facts.repository import RepositoryFactSource
+from auto_apply.adapters.guide.static import StaticGuideSource
+from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.adapters.pdf.stub import StubPdfRenderer
+from auto_apply.adapters.profile.repository import RepositoryProfileSource
+from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.contracts.dto import (
     GenerateResumeRequest,
@@ -11,6 +17,9 @@ from auto_apply.contracts.dto import (
     ReviewRequest,
     ReviewVerdict,
 )
+from auto_apply.contracts.experience import Experience, ExperienceFact, ExperienceSection
+from auto_apply.contracts.profile import Profile
+from auto_apply.domain.enums import ExperienceKind
 from auto_apply.domain.errors import LLMAuthRequired
 from auto_apply.services.document import MAX_REVIEW_ROUNDS, DocumentService, ResumeReviewExhausted
 
@@ -85,3 +94,82 @@ async def test_llm_failure_propagates_without_retry():
 async def test_render_pdf_delegates_to_renderer():
     rendered = await _service(_CountingGenerator(), _Reviewer(pass_on=1)).render_pdf(_DRAFT)
     assert rendered.bytes_written > 0
+
+
+# ── 저장소 경유 (T1.1): 프로필·경험을 DB 에서 읽어도 생성·검토가 그대로 돈다 ─────────────
+
+
+async def test_generates_from_profile_and_experiences_in_repository(uow_factory):
+    async with uow_factory() as uow:
+        await uow.profiles.save(Profile(user_id="u1", name="홍길동", skills=["Python"]))
+        await uow.experiences.save(
+            Experience(
+                id="acme",
+                user_id="u1",
+                kind=ExperienceKind.COMPANY,
+                name="Acme",
+                role="백엔드",
+                period="2023.01 - 2023.12",
+                sections=[
+                    ExperienceSection(
+                        key="pay",
+                        title="결제 API",
+                        facts=[
+                            ExperienceFact(id="f-pay", text="결제 API 설계", skills=["FastAPI"])
+                        ],
+                    )
+                ],
+            )
+        )
+        await uow.commit()
+    facts = RepositoryFactSource(uow_factory)
+    payload = {
+        "summary": "결제 API 를 설계한 백엔드 엔지니어입니다",
+        "highlights": [{"text": "결제 API 설계", "fact_ids": ["f-pay"]}],
+        "blocks": [
+            {"block_id": "acme:pay", "bullets": [{"text": "결제 API 설계", "fact_ids": ["f-pay"]}]}
+        ],
+    }
+    generator = SimpleResumeGenerator(
+        StubLLM(payloads=[payload]),
+        UuidIdGen(),
+        facts,
+        RepositoryProfileSource(uow_factory),
+        StaticGuideSource(),
+    )
+    service = DocumentService(
+        generator, SimpleResumeReviewer(facts), StubPdfRenderer(InMemoryBlobStore())
+    )
+
+    draft = await service.generate_resume(_REQ)
+
+    assert draft.used_fact_ids == ["f-pay"]
+    assert draft.content["name"] == "홍길동"
+    [career] = draft.content["career"]
+    assert career["company"] == "Acme(백엔드)"
+    assert career["blocks"][0]["title"] == "결제 API"
+
+
+async def test_hallucinated_fact_id_still_fails_review_through_repository(uow_factory):
+    """ground_check 는 저장소의 fact 로 판정한다 — 없는 fact_id 인용은 여전히 거부 (절대 규칙 4)."""
+    async with uow_factory() as uow:
+        await uow.profiles.save(Profile(user_id="u1", name="홍길동"))
+        await uow.commit()
+    facts = RepositoryFactSource(uow_factory)
+    payload = {
+        "summary": "없는 경력을 쓴 요약 문장입니다",
+        "highlights": [{"text": "지어낸 경력", "fact_ids": ["nope"]}],
+    }
+    generator = SimpleResumeGenerator(
+        StubLLM(payloads=[payload] * MAX_REVIEW_ROUNDS),
+        UuidIdGen(),
+        facts,
+        RepositoryProfileSource(uow_factory),
+        StaticGuideSource(),
+    )
+    service = DocumentService(
+        generator, SimpleResumeReviewer(facts), StubPdfRenderer(InMemoryBlobStore())
+    )
+
+    with pytest.raises(ResumeReviewExhausted):
+        await service.generate_resume(_REQ)

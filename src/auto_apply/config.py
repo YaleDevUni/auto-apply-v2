@@ -67,16 +67,13 @@ class Settings(BaseSettings):
     llm_provider: Literal["stub", "anthropic", "claude_cli"] = "stub"
     storage: Literal["local", "memory"] = "local"
     resume_engine: Literal["simple"] = "simple"
+    # 프로필·경험·답변KB·문서 메타도 이 repository 에 있다 (§A7) — 따로 고르는 소스가 없다.
     repository: Literal["sqlite", "memory"] = "sqlite"
-    facts_source: Literal["static", "yaml"] = "yaml"
-    profile_source: Literal["static", "yaml"] = "yaml"
     guide_source: Literal["static", "file"] = "file"
 
-    # 저장소 (D3·D4: SQLite + 로컬 파일, §A1 데이터 디렉터리)
+    # 저장소 (D3·D4: SQLite + 로컬 파일, §A1 데이터 디렉터리). 모든 경로는 여기서 파생한다 —
+    # cwd 기준 경로를 두면 설치본을 어느 폴더에서 띄웠느냐에 따라 다른 데이터를 읽는다.
     data_dir: Path = DEFAULT_DATA_DIR
-    facts_path: Path = Path("./config/facts.yaml")
-    profile_path: Path = Path("./config/profile.yaml")
-    resume_guide_dir: Path = Path("./config")  # resume_guide.{platform}.md 를 이 안에서 찾는다
 
     # 외부 서비스
     anthropic_api_key: str = ""
@@ -124,6 +121,16 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         """DB 는 데이터 디렉터리 안의 파일 하나다 (§A1) — 따로 설정할 값이 아니라 파생값이다."""
         return f"sqlite+aiosqlite:///{(self.data_dir / 'db.sqlite3').resolve().as_posix()}"
+
+    @property
+    def files_dir(self) -> Path:
+        """업로드·생성 파일 바이트(BlobStore 루트, §A1 `files/`)."""
+        return self.data_dir / "files"
+
+    @property
+    def guide_dir(self) -> Path:
+        """`resume_guide.{platform}.md` 위치. §A8 가이드 DB(M6) 전까지의 파일 저장소."""
+        return self.data_dir / "guides"
 
 
 def load_settings() -> Settings:

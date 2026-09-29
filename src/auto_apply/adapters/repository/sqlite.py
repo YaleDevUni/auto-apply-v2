@@ -18,6 +18,12 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from auto_apply.adapters.repository.models import ApplicationRow, ApplicationStateRow
+from auto_apply.adapters.repository.sqlite_profile import (
+    SqliteAnswerRepository,
+    SqliteDocumentRepository,
+    SqliteExperienceRepository,
+    SqliteProfileRepository,
+)
 from auto_apply.contracts.dto import ApplicationSummary, PersistState
 from auto_apply.domain.enums import ApplicationState
 
@@ -103,6 +109,10 @@ class SqliteUnitOfWork:
     def __init__(self, session_factory: SessionFactory) -> None:
         self._session: AsyncSession = session_factory()
         self.applications = SqliteApplicationRepository(self._session)
+        self.profiles = SqliteProfileRepository(self._session)
+        self.experiences = SqliteExperienceRepository(self._session)
+        self.answers = SqliteAnswerRepository(self._session)
+        self.documents = SqliteDocumentRepository(self._session)
 
     async def __aenter__(self) -> Self:
         return self

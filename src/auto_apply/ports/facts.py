@@ -4,9 +4,10 @@ from auto_apply.contracts.fact import Fact
 
 
 class FactSource(Protocol):
-    """`config/facts.yaml`(사람이 직접 채움)을 읽는 포트.
+    """이력서 생성 파이프라인이 읽는 평평한 fact 목록 (§A7).
 
-    UnitOfWork 밖에 독립된 읽기 전용 포트. DB 저장으로의 교체는 M1 프로필·지식베이스 몫(§A7).
+    원본은 저장소의 Experience 다 — 구현은 `domain/experience_facts.py` 로 변환해 돌려준다.
+    캐시하지 않는다: 사용자가 경험을 고치면 바로 다음 생성부터 보여야 한다.
     """
 
     async def list_for_user(self, user_id: str) -> list[Fact]: ...

@@ -131,8 +131,17 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
 
 ## §A7 프로필 · 문서
 
-- **Profile**: 인적사항(이름·연락처·링크·병역·희망조건…) — 언어 중립 필드 + 표시 라벨 i18n.
+- **Profile**: 인적사항 — 기본(이름·연락처·링크·학력·스킬·언어) + **추가 정보**(병역·보훈·장애·희망연봉·입사가능일·거주지역,
+  전부 선택, `None` = 아직 모름 → 실행 중 `ask_user`, D10). 언어 중립 필드 + 표시 라벨 i18n.
 - **Experience/Fact** (v2 Fact 모델 일반화): entity(회사/프로젝트/활동/교육) · 기간 · 역할 · fact 문장(지표 포함) · `skills`(v2 `tech_stack` 일반화) · 링크 · 첨부.
+  저장은 중첩(Experience → 선택적 `sections`(= v2 block) → fact), 이력서 파이프라인은 여전히 평평한 `Fact` 를 받는다 —
+  `FactSource` 구현이 `domain/experience_facts.py` 로 결정론적으로 펼친다(섹션 없으면 블록 `main` 하나, activity·education 은 블록 없이 fact 만).
+- **저장**: 프로필·경험·답변·문서 메타 모두 `UnitOfWork` 의 repository(sqlite + memory 대역, 리비전 0002). cwd 기준 `config/*.yaml` 소스는 없다.
+  `resume_guide.{platform}.md` 는 §A8 DB 전까지 데이터 디렉터리 `guides/` 에 둔다.
+- **고유식별정보 거부** (절대 규칙 5): 주민등록번호(외국인등록번호 포함) 꼴을 두 겹으로 막는다 — Profile·Experience·Answer·DocumentMeta DTO
+  생성 시점, 그리고 검증기를 건너뛴 값(`model_copy(update=)`·`model_construct`)을 위해 repository `save` 시점(sqlite·memory 공통).
+  규칙은 `domain/unique_identifiers.py` 한 곳: NFKC 정규화(전각 숫자) + zero-width 제거 뒤, 생년월일 꼴 6자리 + 구분자(하이픈 계열·`.`·`_`·`/`·공백·없음)
+  + 7자리. 에러 메시지·로그에 입력값을 싣지 않는다.
 - **AnswerKB**: (정규화 질문 키, 답, 출처 지원 건, 갱신일). 에이전트가 먼저 조회, 없으면 `ask_user`.
 - **Document**: 사용자 업로드 고정 파일 / 생성 파일(PDF) — 버전·생성 근거(fact_ids) 보관.
 - **온보딩 추출**: 이력서 PDF/DOCX → LLM 구조화 추출 → 초안(사용자 검토 후 확정). 추출물도 스키마 검증 통과해야 저장.

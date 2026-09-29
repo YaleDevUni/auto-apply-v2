@@ -1,8 +1,12 @@
 """composition root 테스트 — 설정만 바꿔 구현이 교체되는지 확인 (§A2)."""
 
+from pathlib import Path
+
 from alembic import command
 
+from auto_apply.adapters.facts.repository import RepositoryFactSource
 from auto_apply.adapters.llm.claude_code_cli import ClaudeCodeCliLLM
+from auto_apply.adapters.profile.repository import RepositoryProfileSource
 from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
 from auto_apply.adapters.repository.migrate import alembic_config
 from auto_apply.adapters.repository.sqlite import SqliteUnitOfWork
@@ -11,7 +15,9 @@ from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.bootstrap import build_container
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import PersistState
-from auto_apply.domain.enums import ApplicationState
+from auto_apply.contracts.experience import Experience, ExperienceFact
+from auto_apply.contracts.profile import Profile
+from auto_apply.domain.enums import ApplicationState, ExperienceKind
 
 
 def test_offline_profile_builds():
@@ -79,3 +85,42 @@ async def test_sqlite_repository_roundtrip_through_container(tmp_path):
 def test_container_exposes_document_service():
     c = build_container(Settings(storage="memory", repository="memory"))
     assert c.documents is not None
+
+
+def test_blob_store_root_is_files_dir_in_data_dir(tmp_path):
+    """업로드·생성 파일 바이트는 데이터 디렉터리의 `files/` 에 (§A1)."""
+    cfg = Settings(storage="local", repository="memory", data_dir=tmp_path)
+    c = build_container(cfg)
+    assert isinstance(c.store, LocalBlobStore)
+    assert cfg.files_dir == tmp_path / "files"
+    assert c.store._root == tmp_path / "files"
+
+
+def test_all_paths_derive_from_data_dir(tmp_path, monkeypatch):
+    """cwd 기준 `./config` 경로가 없다 — 어느 폴더에서 띄워도 같은 데이터를 읽는다 (T1.1)."""
+    monkeypatch.chdir(tmp_path)
+    cfg = Settings(_env_file=None, data_dir=tmp_path / "data")
+    assert cfg.guide_dir == tmp_path / "data" / "guides"
+    paths = [v for v in cfg.model_dump().values() if isinstance(v, Path)]
+    assert paths == [cfg.data_dir]
+    assert cfg.files_dir.is_relative_to(cfg.data_dir)
+
+
+async def test_resume_pipeline_reads_profile_and_facts_from_repository():
+    c = build_container(Settings(storage="memory", repository="memory"))
+    assert isinstance(c.facts, RepositoryFactSource)
+    assert isinstance(c.profile, RepositoryProfileSource)
+    async with c.uow() as uow:
+        await uow.profiles.save(Profile(user_id="u1", name="홍길동"))
+        await uow.experiences.save(
+            Experience(
+                id="p1",
+                user_id="u1",
+                kind=ExperienceKind.PROJECT,
+                name="P",
+                facts=[ExperienceFact(id="f1", text="개발")],
+            )
+        )
+        await uow.commit()
+    assert (await c.profile.get("u1")).name == "홍길동"
+    assert [f.id for f in await c.facts.list_for_user("u1")] == ["f1"]

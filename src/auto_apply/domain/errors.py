@@ -62,8 +62,20 @@ class BlobNotFound(AutoApplyError):
 class ProfileNotFound(AutoApplyError):
     """ProfileSource 계약: 없는 user_id 를 get 하면 이 에러.
 
-    config/profile.yaml 미기재 = 설정 오류라 재시도해도 결과가 같다.
+    인적사항을 아직 저장하지 않았다는 뜻이라 재시도해도 결과가 같다.
     """
+
+
+class UniqueIdentifierRejected(AutoApplyError, ValueError):
+    """고유식별정보(주민등록번호 등)는 저장하지 않는다 (00-product 절대 규칙 5).
+
+    ValueError 이기도 한 이유: DTO 검증기 안에서 던지면 pydantic 이 ValidationError 로 감싸
+    API 가 일반 입력 검증 실패와 같은 경로로 거절할 수 있다. 메시지에 값 자체는 넣지 않는다.
+    """
+
+
+class AnswerKeyConflict(AutoApplyError):
+    """AnswerRepository 계약: 같은 사용자의 다른 답변이 이미 같은 질문 키를 쓰고 있다."""
 
 
 NON_RETRYABLE: tuple[str, ...] = (

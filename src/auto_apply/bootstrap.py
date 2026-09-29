@@ -8,24 +8,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
-from auto_apply.adapters.facts.static import StaticFactSource
-from auto_apply.adapters.facts.yaml_file import YamlFactSource
+from auto_apply.adapters.facts.repository import RepositoryFactSource
 from auto_apply.adapters.guide.file import FileGuideSource
 from auto_apply.adapters.guide.static import StaticGuideSource
 from auto_apply.adapters.llm.anthropic import AnthropicLLM
 from auto_apply.adapters.llm.claude_code_cli import ClaudeCodeCliLLM
 from auto_apply.adapters.llm.stub import StubLLM
 from auto_apply.adapters.pdf.stub import StubPdfRenderer
-from auto_apply.adapters.profile.static import StaticProfileSource
-from auto_apply.adapters.profile.yaml_source import YamlProfileSource
-from auto_apply.adapters.repository.memory import InMemoryUnitOfWork
+from auto_apply.adapters.profile.repository import RepositoryProfileSource
+from auto_apply.adapters.repository.memory import InMemoryDatabase, InMemoryUnitOfWork
 from auto_apply.adapters.repository.migrate import MigrationError, upgrade_to_head
 from auto_apply.adapters.repository.sqlite import sqlite_uow_factory
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
 from auto_apply.adapters.storage.local import LocalBlobStore
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.config import Settings
-from auto_apply.contracts.dto import PersistState
 from auto_apply.ports.clock import Clock, IdGen
 from auto_apply.ports.facts import FactSource
 from auto_apply.ports.guide import GuideSource
@@ -83,7 +80,7 @@ def _build_store(cfg: Settings) -> BlobStore:
         case "memory":
             return InMemoryBlobStore()
         case "local":
-            return LocalBlobStore(cfg.data_dir)
+            return LocalBlobStore(cfg.files_dir)
 
 
 def _build_llm(cfg: Settings) -> LLMClient:
@@ -106,26 +103,10 @@ def _build_uow(cfg: Settings) -> Callable[[], UnitOfWork]:
     match cfg.repository:
         case "memory":
             # 클로저 밖에서 한 번만 만들어 공유해야 서로 다른 `c.uow()` 호출 사이에 쓴 값이 남는다.
-            rows: dict[str, list[PersistState]] = {}
-            return lambda: InMemoryUnitOfWork(rows)
+            db = InMemoryDatabase()
+            return lambda: InMemoryUnitOfWork(db)
         case "sqlite":
             return sqlite_uow_factory(cfg.database_url)
-
-
-def _build_facts(cfg: Settings) -> FactSource:
-    match cfg.facts_source:
-        case "static":
-            return StaticFactSource()
-        case "yaml":
-            return YamlFactSource(cfg.facts_path)
-
-
-def _build_profile(cfg: Settings) -> ProfileSource:
-    match cfg.profile_source:
-        case "static":
-            return StaticProfileSource()
-        case "yaml":
-            return YamlProfileSource(cfg.profile_path)
 
 
 def _build_guide(cfg: Settings) -> GuideSource:
@@ -133,7 +114,7 @@ def _build_guide(cfg: Settings) -> GuideSource:
         case "static":
             return StaticGuideSource()
         case "file":
-            return FileGuideSource(cfg.resume_guide_dir)
+            return FileGuideSource(cfg.guide_dir)
 
 
 def build_container(cfg: Settings) -> Container:
@@ -141,8 +122,10 @@ def build_container(cfg: Settings) -> Container:
     clock = SystemClock()
     store = _build_store(cfg)
     llm = _build_llm(cfg)
-    facts = _build_facts(cfg)
-    profile = _build_profile(cfg)
+    uow = _build_uow(cfg)
+    # 프로필·경험은 repository 에 있다 (§A7) — 이력서 파이프라인은 같은 UoW 로 읽는다.
+    facts: FactSource = RepositoryFactSource(uow)
+    profile: ProfileSource = RepositoryProfileSource(uow)
     guide = _build_guide(cfg)
     generator = SimpleResumeGenerator(
         llm,
@@ -162,7 +145,7 @@ def build_container(cfg: Settings) -> Container:
         idgen=idgen,
         store=store,
         llm=llm,
-        uow=_build_uow(cfg),
+        uow=uow,
         generator=generator,
         reviewer=reviewer,
         pdf=pdf,

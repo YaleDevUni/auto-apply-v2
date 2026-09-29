@@ -35,3 +35,27 @@ TERMINAL_STATES: frozenset[ApplicationState] = frozenset(
         ApplicationState.NEEDS_HUMAN,
     }
 )
+
+
+# ── 프로필 · 지식베이스 (§A7) ────────────────────────────────────────────────
+# 값은 언어 중립 식별자다(D14) — 화면 표시 라벨은 웹 i18n 키가 맡는다.
+
+
+class ExperienceKind(StrEnum):
+    COMPANY = "company"
+    PROJECT = "project"
+    ACTIVITY = "activity"
+    EDUCATION = "education"
+
+
+class MilitaryStatus(StrEnum):
+    COMPLETED = "completed"  # 군필
+    SERVING = "serving"  # 복무 중
+    NOT_COMPLETED = "not_completed"  # 미필
+    EXEMPT = "exempt"  # 면제
+    NOT_APPLICABLE = "not_applicable"  # 해당 없음
+
+
+class DocumentKind(StrEnum):
+    UPLOADED = "uploaded"  # 사용자가 올린 고정 파일 (D11)
+    GENERATED = "generated"  # 공고맞춤 생성 PDF (M5)

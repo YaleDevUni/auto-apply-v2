@@ -3,16 +3,38 @@
 import pytest
 
 from auto_apply.adapters.clock.system import UuidIdGen
-from auto_apply.adapters.facts.static import StaticFactSource
 from auto_apply.adapters.guide.static import StaticGuideSource
 from auto_apply.adapters.llm.stub import StubLLM
-from auto_apply.adapters.profile.static import StaticProfileSource
 from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResumeReviewer
 from auto_apply.contracts.dto import GenerateResumeRequest, JobRef, ResumeDraft, ReviewRequest
 from auto_apply.contracts.fact import Fact
 from auto_apply.contracts.profile import Profile
-from auto_apply.domain.errors import LLMSchemaViolation
+from auto_apply.domain.errors import LLMSchemaViolation, ProfileNotFound
 from auto_apply.ports.guide import GuideSource
+
+
+class StaticFactSource:
+    """FactSource 대역 — 이 파일은 저장소가 아니라 생성·검토 로직을 본다. 저장소 경유 경로는
+
+    tests/ports/test_fact_source_contract.py · tests/services/test_document.py 가 본다."""
+
+    def __init__(self, facts: list[Fact]) -> None:
+        self._facts = facts
+
+    async def list_for_user(self, user_id: str) -> list[Fact]:
+        return [f for f in self._facts if f.user_id == user_id]
+
+
+class StaticProfileSource:
+    def __init__(self, profiles: list[Profile]) -> None:
+        self._profiles = profiles
+
+    async def get(self, user_id: str) -> Profile:
+        for profile in self._profiles:
+            if profile.user_id == user_id:
+                return profile
+        raise ProfileNotFound(user_id)
+
 
 JOB = JobRef(
     job_id="j1",
