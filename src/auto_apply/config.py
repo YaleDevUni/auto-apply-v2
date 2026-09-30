@@ -150,6 +150,11 @@ class Settings(BaseSettings):
         return self.data_dir / "session_token"
 
     @property
+    def chrome_profile_dir(self) -> Path:
+        """앱 전용 Chrome user-data-dir (§A1, D6). 사용자 기본 프로필은 쓰지 않는다."""
+        return self.data_dir / "chrome-profile"
+
+    @property
     def guide_dir(self) -> Path:
         """`resume_guide.{platform}.md` 위치. §A8 가이드 DB(M6) 전까지의 파일 저장소."""
         return self.data_dir / "guides"

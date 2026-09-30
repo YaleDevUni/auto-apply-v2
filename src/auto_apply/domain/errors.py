@@ -105,6 +105,25 @@ class TextExtractionFailed(AutoApplyError):
     """
 
 
+class ChromeNotFound(TerminalError):
+    """BrowserHost 계약: 이 PC 에서 Chrome 을 찾지 못했다 (D6). 사람이 설치해야 풀린다."""
+
+
+class BrowserProfileInUse(TerminalError):
+    """BrowserHost 계약: 앱 전용 브라우저 프로필을 다른 호스트가 쓰고 있다.
+
+    같은 데이터 디렉터리로 auto-apply 를 두 번 띄운 경우다 — 한 프로필을 두 브라우저가 쓰면
+    쿠키·세션 파일이 깨진다. 먼저 뜬 쪽을 끄면 풀린다.
+    """
+
+
+class BrowserLaunchFailed(AutoApplyError):
+    """BrowserHost 계약: 브라우저를 찾았지만 띄우지 못했다(크래시·시간 초과 등).
+
+    인프라성 실패라 재시도 대상이다 (§A9).
+    """
+
+
 NON_RETRYABLE: tuple[str, ...] = (
     CaptchaEncountered.__name__,
     AuthRequired.__name__,
@@ -116,4 +135,7 @@ NON_RETRYABLE: tuple[str, ...] = (
     # 재시도로 저절로 안 풀리는 claude CLI 실패 — 사람이 개입해야 한다 (로그인/한도 리셋).
     LLMAuthRequired.__name__,
     LLMQuotaExceeded.__name__,
+    # 사람이 Chrome 을 설치하거나 먼저 뜬 auto-apply 를 꺼야 풀린다.
+    ChromeNotFound.__name__,
+    BrowserProfileInUse.__name__,
 )

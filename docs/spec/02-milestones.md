@@ -201,6 +201,8 @@
   최대 대기 설정). 구현 2개: 인메모리(테스트·단일 프로세스) — UI 연결은 M3/M4. 로그인 벽 휴리스틱(비밀번호 입력 필드·로그인 URL
   패턴)은 domain 순수 함수, 도구는 **비밀번호를 입력하지 않는다**(절대 규칙 3 — fill 이 password 타입 필드를 거부). CAPTCHA 감지 시
   `request_human`. 타임아웃이면 `NEEDS_LOGIN`/`NEEDS_INPUT` 결과로 종료(상태 전이는 M3/M4 가 ApplicationService 로).
+- T2.1 이관: 전용 프로필 Chrome 에서 Google 계정 로그인이 자동화 플래그(`--enable-automation`)로 막히는지 실측(사람 로그인 흐름에 치명적이면
+  플래그 조정은 **우회가 아니라** 정상 브라우저로 보이게 하는 범위에서만 — CAPTCHA·봇 탐지 우회 금지). BrowserHost 탭 조작을 port 로 올릴지 결정(T2.4).
 - 수용 기준: native 로그인 벽 픽스처 — 감지 → 대기 → (테스트가 사람 대신 쿠키 설정) → 재개 → 폼 도달. password 필드 fill 거부 테스트,
   타임아웃 테스트, 로그인 휴리스틱 단위 테스트.
 

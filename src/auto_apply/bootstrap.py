@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from auto_apply.adapters.browser.playwright_host import PlaywrightBrowserHost
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
 from auto_apply.adapters.extract.pdf_docx import PdfDocxTextExtractor
 from auto_apply.adapters.facts.repository import RepositoryFactSource
@@ -27,6 +28,7 @@ from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResum
 from auto_apply.adapters.storage.local import LocalBlobStore
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.config import Settings
+from auto_apply.ports.browser import BrowserHost
 from auto_apply.ports.clock import Clock, IdGen
 from auto_apply.ports.facts import FactSource
 from auto_apply.ports.guide import GuideSource
@@ -63,6 +65,9 @@ class Container:
     uploads: UploadService
     drafts: ProfileDraftService
     runner: JobRunner
+    # 첫 사용 때 뜨고 앱 종료 때 닫힌다(api/main.py lifespan). 대역은 테스트 전용이라
+    # 설정 선택지가 없다.
+    browser: BrowserHost
     # 변경 API 가 요구하는 설치별 토큰 (§A10). 웹은 `GET /api/session` 으로 받는다.
     session_token: str
 
@@ -205,5 +210,6 @@ def build_container(cfg: Settings) -> Container:
         uploads=uploads,
         drafts=ProfileDraftService(uow, store, uploads, extractor, llm, clock, idgen),
         runner=JobRunner(),
+        browser=PlaywrightBrowserHost(cfg.chrome_profile_dir),
         session_token=ensure_session_token(cfg.session_token_path),
     )

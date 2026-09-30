@@ -31,8 +31,15 @@
   `DATA_DIR` 로 덮어쓸 수 있다(테스트·개발).
 - 진입점: `auto-apply [--port N]`(콘솔 스크립트, `__main__.py`). 기동 순서는 FastAPI lifespan 하나에 모여 있어
   `uvicorn auto_apply.api.main:app` 으로 띄워도 같다 — ① 데이터 디렉터리 생성 ② Alembic head 자동 적용
-  ③ 컨테이너 조립 ④ JobRunner 기동. 종료 시 JobRunner 를 먼저 세운다. 바인드는 `127.0.0.1` 고정(옵션 없음),
+  ③ 컨테이너 조립 ④ JobRunner 기동. 종료 시 JobRunner 를 먼저 세우고 브라우저를 닫는다. 바인드는 `127.0.0.1` 고정(옵션 없음),
   `--port 0` 이면 빈 포트를 골라 `auto-apply ready: http://127.0.0.1:<port>` 한 줄을 찍는다. 상태 확인은 `GET /health`.
+- BrowserHost(`ports/browser.py`, D6): 기동 시 띄우지 않고 **첫 사용 때** 설치된 Chrome 을 `chrome-profile/` 로 headful
+  기동한다 — `channel="chrome"` 우선, 실패하면 mac/Windows 표준 설치 경로를 찾아 `executable_path`, 둘 다 없으면
+  `ChromeNotFound`. 사용자 기본 Chrome 프로필(또는 그 안)을 가리키면 기동을 거부한다(`PolicyViolation`).
+  프로필은 옆의 `chrome-profile.lock` OS 파일 잠금으로 한 호스트만 쓴다 — 같은 데이터 디렉터리로 두 번째 앱이 뜨면
+  브라우저 첫 사용에서 `BrowserProfileInUse`(잠금은 프로세스가 죽으면 OS 가 푼다). 사람이 브라우저를 닫으면 다음 사용 때
+  다시 띄운다. 페이지는 불투명 `PageHandle` 로만 밖에 나간다. Ctrl+C 신호는 Playwright 가 아니라 앱이 받아
+  lifespan 에서 정상 종료한다(쿠키가 디스크에 써지게).
 
 ## §A2 계층 (make arch 가 강제)
 

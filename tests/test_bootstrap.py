@@ -4,6 +4,7 @@ from pathlib import Path
 
 from alembic import command
 
+from auto_apply.adapters.browser.playwright_host import PlaywrightBrowserHost
 from auto_apply.adapters.facts.repository import RepositoryFactSource
 from auto_apply.adapters.llm.claude_code_cli import ClaudeCodeCliLLM
 from auto_apply.adapters.profile.repository import RepositoryProfileSource
@@ -104,6 +105,18 @@ def test_all_paths_derive_from_data_dir(tmp_path, monkeypatch):
     paths = [v for v in cfg.model_dump().values() if isinstance(v, Path)]
     assert paths == [cfg.data_dir]
     assert cfg.files_dir.is_relative_to(cfg.data_dir)
+    assert cfg.chrome_profile_dir == tmp_path / "data" / "chrome-profile"
+
+
+def test_browser_host_is_lazy_chrome_on_app_profile(tmp_path):
+    """조립만으로 브라우저를 띄우거나 프로필을 만들지 않는다 — 첫 사용 때 뜬다 (§A1, D6)."""
+    c = build_container(Settings(storage="memory", repository="memory", data_dir=tmp_path))
+    assert isinstance(c.browser, PlaywrightBrowserHost)
+    assert c.browser.running is False
+    assert c.browser._profile_dir == tmp_path / "chrome-profile"
+    assert c.browser._bundled is False
+    assert c.browser._headless is False
+    assert not (tmp_path / "chrome-profile").exists()
 
 
 async def test_resume_pipeline_reads_profile_and_facts_from_repository():

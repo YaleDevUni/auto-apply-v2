@@ -1,7 +1,7 @@
 """FastAPI 앱 조립. 기동 순서는 lifespan 하나에 모은다 (§A1).
 
 `auto-apply` 콘솔 스크립트(`__main__.py`)와 `uvicorn auto_apply.api.main:app` 이 같은 경로로 뜬다 —
-어느 쪽으로 띄워도 데이터 디렉터리 준비·마이그레이션·JobRunner 기동이 빠지지 않게.
+어느 쪽으로 띄워도 데이터 디렉터리 준비·마이그레이션·JobRunner 기동·브라우저 정리가 빠지지 않게.
 """
 
 from collections.abc import AsyncIterator
@@ -34,7 +34,9 @@ def create_app(settings: Settings | None = None, *, prepare: bool = True) -> Fas
         try:
             yield
         finally:
+            # 러너가 먼저 서야 브라우저를 쓰던 작업이 닫힌 브라우저를 다시 띄우지 않는다.
             await container.runner.stop()
+            await container.browser.close()
 
     # API 문서는 개발 모드에서만 — 설치본은 쓰는 사람이 없고, 열어두면 공격 표면 지도만 된다 (§A10).
     docs = cfg.dev_mode
