@@ -5,9 +5,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from auto_apply.contracts.dto import ApplicationRecord, PersistState
+from auto_apply.contracts.jobs import BROWSER_KINDS, JobKind, JobRecord, JobStatus, RunRecord
 from auto_apply.domain.enums import ApplicationState, RunKind, RunStatus
 from auto_apply.domain.errors import InvalidInput, NotFound, UniqueIdentifierRejected
-from auto_apply.ports.jobs import BROWSER_KINDS, JobKind, JobRecord, JobStatus, RunRecord
 
 T0 = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
 ALL = frozenset(JobKind)

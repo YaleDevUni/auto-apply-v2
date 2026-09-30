@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from auto_apply.contracts.agent import AgentTool
 from auto_apply.contracts.browser_tools import (
     BackInput,
     CheckInput,
@@ -110,3 +111,13 @@ _SPECS = (
 )
 
 TOOLS: Mapping[str, ToolSpec] = MappingProxyType({s.name: s for s in _SPECS})
+
+
+def agent_tools() -> tuple[AgentTool, ...]:
+    """런타임에 넘길 도구 목록 (§A6) — 입력 모델의 JSON Schema 가 곧 도구 스키마다."""
+    return tuple(
+        AgentTool(
+            name=s.name, description=s.description, input_schema=s.input_model.model_json_schema()
+        )
+        for s in _SPECS
+    )

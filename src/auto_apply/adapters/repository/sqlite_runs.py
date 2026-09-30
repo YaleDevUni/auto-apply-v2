@@ -8,10 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auto_apply.adapters.repository.models import RunRow
 from auto_apply.adapters.repository.sqlite_jobs import from_db, to_db
 from auto_apply.contracts._base import ensure_identifier_free
+from auto_apply.contracts.jobs import RunRecord
 from auto_apply.domain.enums import RunKind, RunStatus
 from auto_apply.domain.errors import InvalidInput, NotFound
 from auto_apply.domain.unique_identifiers import reject_unique_identifiers
-from auto_apply.ports.jobs import RunRecord
 
 _RUN_COLUMNS = (
     RunRow.id,

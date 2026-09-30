@@ -302,6 +302,31 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
 | `ScriptedAgentRuntime` | 테스트 대역 — 미리 정한 도구 호출 시퀀스 재생 (gym 테스트·상태기계 테스트용) |
 
 - 시스템 프롬프트 = 역할/규칙 + 전역 가이드 + 도메인 가이드(§A8) + run 종류별 지시 + (재진입이면) FillLog/피드백.
+- port(T3.3, `ports/agent.py`): `run(system_prompt, tools: [AgentTool], call_tool, *, limits) -> AgentOutcome`
+  (DTO `contracts/agent.py`). 런타임은 브라우저를 직접 만지지 않는다 — 도구는 호출자가 넘긴 `call_tool(name, args) ->
+  ToolReply{ok, content(JSON), done}` 로만 부르고, 없는 이름·잘못된 인자도 그대로 넘겨 에러 답을 받고 이어간다. `done` 을
+  받으면 멈춘다. 도구 목록은 `browser_toolbox_specs.agent_tools()`(TOOLS 의 입력 모델 JSON Schema). 계약 테스트
+  `tests/ports/test_agent_runtime_contract.py`(CLI·API 구현이 params 로 붙는다).
+- fill run(`runner/fill.py` `FillRunHandler`, JobRunner 의 `fill` 핸들러): run 기록 시작 → QUEUED→FILLING → 프롬프트
+  (`ai/fill_prompt.py` 순수 빌더 — 프로필 요약 줄의 키가 FillLog source key) → 런타임 → **도구 결과로만** 전이
+  (`runner/fill_session.decide`, 위에서부터 첫 일치). 에이전트 출력 텍스트는 상태에 영향이 없다.
+
+  | 끝난 모양 | 지원 건 | run |
+  |---|---|---|
+  | L5 제출 흔적(`incident`) | INCIDENT | failed |
+  | `ready_for_review` | AWAITING_APPROVAL (ReviewRecord 저장) | done |
+  | 사람 대기가 끝나지 않음(`needs_human`) | NEEDS_LOGIN · NEEDS_INPUT | done |
+  | 도구가 `guard_unavailable` — 그 호출에서 run 을 끝낸다(닫힌 쪽) | FAILED (재시도 없음) | failed |
+  | `report_failure` · 도구 수/시간 한도 · 끝 도구 없이 멈춤 | FAILED | failed |
+
+  끝난 모양은 핸들러가 직접 전이하고 job 은 DONE 이다. 핸들러 밖으로 나가는 것은 예외(브라우저 기동·런타임 장애 등)뿐 —
+  run 을 failed 로 닫고 다시 던져 §A9 재시도 정책에 맡긴다. 끝 전이가 그 사이 취소 등에 밀리면(`InvalidTransition`)
+  run 을 failed 로 닫고 러너가 CONFLICT 로 둔다. 정지(취소)면 run 을 닫지 않고 가드도 내리지 않는다 — 크래시 복구가
+  INTERRUPTED·QUEUED 로 되돌린다.
+- 한도(`AgentLimits`, 기본 도구 200회·1800초): 런타임이 지키고, `FillSession` 이 한 번 더 센다 — 넘친 호출은 도구에 닿지
+  않고 `run_limit`(done) 로 돌아간다. 런타임이 멈춰 버리면 호출자가 한도+30초에 끊는다.
+- 기록(`services/run_artifacts.py`): BlobStore `runs/<run_id>/review.json`(ReviewRecord) · `fill_log.json`(끝난 모양과 상관없이
+  FillLog 부분 기록 — 재진입 run 이 읽는다). 저장 직전에 고유식별정보를 한 번 더 본다.
 - 텍스트 전용 LLM 호출(추출·생성·반성)은 기존 `LLMCallable` port 를 유지해 같은 두 경로(CLI/API)로.
 
 ## §A7 프로필 · 문서
@@ -378,13 +403,13 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
 - `jobs(id, kind, application_id, status, attempt, payload, created_at, run_after, started_at, finished_at, error)`
   (`0004`) — SQLite 행 잠금 대신 단일 프로세스 asyncio 러너가 소비. `status = queued|running|done|failed|interrupted`,
   `run_after` 는 백오프 재시도 시각(행에 남겨 정지·재기동에도 유지). `application_id` 는 지원 건 없는 작업(반성)을 위해 nullable.
-  꺼내기(`claim_next`)는 조건부 UPDATE 라 두 소비자가 같은 행을 꺼내지 않는다. port·DTO 는 `ports/jobs.py`(`JobRepository`·
-  `RunRepository`, UoW 의 `jobs`·`runs`).
+  꺼내기(`claim_next`)는 조건부 UPDATE 라 두 소비자가 같은 행을 꺼내지 않는다. port 는 `ports/jobs.py`(`JobRepository`·
+  `RunRepository`, UoW 의 `jobs`·`runs`), DTO(`JobRecord`·`RunRecord`·`JobKind`)는 `contracts/jobs.py`.
 - 슬롯: 브라우저 필요 작업(fill/revise/submit)은 **동시성 1**(전용 크롬 창 하나), 생성·반성은 별도 슬롯(기본 2).
   핸들러 등록 표(`JobKind → handler`, bootstrap 이 넘긴다) — 없는 kind 는 job FAILED(지원 건도 QUEUED→FAILED).
 - SQLite 트랜잭션은 `BEGIN IMMEDIATE` — 읽고 쓰는 트랜잭션(claim·transition) 둘이 DEFERRED 로 겹치면 쓰기 잠금 승격에서
   기다리지 않고 "database is locked" 로 실패한다. 처음부터 쓰기 잠금을 잡아 뒤에 온 쪽이 timeout(30초)까지 기다린다.
-- 재시도(`domain/errors.py` `classify_failure`·`RetryPolicy`): 예외를 `FailureKind` 로 가른다.
+- 재시도(`domain/failure.py` `classify_failure`·`RetryPolicy`, 예외 정의는 `domain/errors.py`): 예외를 `FailureKind` 로 가른다.
 
   | 실패 | 예외 | 처리 |
   |---|---|---|

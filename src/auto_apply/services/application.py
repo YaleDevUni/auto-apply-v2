@@ -17,7 +17,8 @@ from auto_apply.domain.application_state import (
     failure_target,
 )
 from auto_apply.domain.enums import ApplicationState, SubmitMode
-from auto_apply.domain.errors import FailureKind, InvalidInput, InvalidTransition, NotFound
+from auto_apply.domain.errors import InvalidInput, InvalidTransition, NotFound
+from auto_apply.domain.failure import FailureKind
 from auto_apply.ports.clock import Clock, IdGen
 from auto_apply.ports.repository import UnitOfWork
 
@@ -103,6 +104,13 @@ class ApplicationService:
             reason=reason,
         )
         return state
+
+    async def get(self, application_id: str) -> ApplicationRecord:
+        async with self._uow() as uow:
+            record = await uow.applications.get(application_id)
+        if record is None:
+            raise NotFound(application_id)
+        return record
 
     async def current_state(self, application_id: str) -> ApplicationState:
         async with self._uow() as uow:

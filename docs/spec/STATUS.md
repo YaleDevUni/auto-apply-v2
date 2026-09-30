@@ -4,7 +4,7 @@
 
 ## 현재
 - 마일스톤: **M3 · 에이전트 런타임 · 채우기(fill) run** (M2 완료)
-- 다음 태스크: **T3.2** JobRunner 큐·재시도·크래시 복구 → T3.3 … T3.7
+- 다음 태스크: **T3.3** AgentRuntime port·Scripted·fill run 핸들러 → T3.4 … T3.7
 - **병렬 실행 금지**(사용자 지시 2026-09-30, 메모리 부족) — 서브에이전트는 한 번에 하나.
 - 차단 요소: 없음
 - 결정: `.env.v2.bak` 보존(사용자 지시, 손대지 않음). `main` 은 M1 완료 시 push.
@@ -34,6 +34,8 @@
   (사후 확인 '입력칸·폼 제출 버튼 있으면 계속'으로 넓힘 — 최종 버튼은 분류기가 여전히 막음 / 신호 있으면 type=button 단계 버튼도 Risky) 수용. **M2 완료.**
 - T3.1 v3 상태기계(+INCIDENT)·ApplicationService.transition 유일 통로(AST 봉인 테스트)·조건부 UPDATE 동시 전이 방어·Alembic 0003.
   지적: 크래시 복구 SUBMITTING→FAILED 는 '제출됐을 수 있음'을 숨김 → T3.2 에서 INCIDENT 로. 16만 토큰·62회(교대 기준 근처).
+- T3.2 JobRunner(jobs 0004·run_after 백오프·브라우저 슬롯 1)·재시도 분류(모르는 예외 FATAL, submit 은 절대 재시도 안 함)·크래시 복구
+  (SUBMITTING→INCIDENT 반영). SQLite BEGIN IMMEDIATE 로 동시 claim 수정. job/run DTO 가 ports/ 에 있음 — T3.3 에서 contracts/ 로.
 
 ## 열린 질문 (다음 마일스톤 시작 전에 사용자에게)
 - (백로그) 부하 시 `tests/api/test_profile_api.py::test_experience_crud[memory]` 1회 실패(재현 안 됨) — 플레이키 여부 조사.

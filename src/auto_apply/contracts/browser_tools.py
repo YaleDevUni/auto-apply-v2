@@ -134,6 +134,7 @@ class ToolError(StrEnum):
     AWAITING_HUMAN = "awaiting_human"
     NEEDS_LOGIN = "needs_login"  # request_login 을 사람이 끝내지 않았다(타임아웃·거절) — run 끝
     NEEDS_INPUT = "needs_input"  # request_human 을 사람이 끝내지 않았다 — run 끝
+    RUN_LIMIT = "run_limit"  # run 의 도구 호출 수·시간 상한을 넘었다 — run 끝 (§A6)
 
 
 class ToolResult(Frozen):

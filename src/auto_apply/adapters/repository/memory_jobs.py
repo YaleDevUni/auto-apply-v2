@@ -1,4 +1,4 @@
-"""메모리 작업 큐·run 기록 — 테스트 대역 (§A2 구현 2개, ports/jobs.py).
+"""메모리 작업 큐·run 기록 — 테스트 대역 (§A2 구현 2개, ports/jobs.py · DTO contracts/jobs.py).
 
 asyncio 단일 스레드라 한 메서드 안에 await 가 없으면 원자적이다 — claim 이 겹치지 않는다.
 """
@@ -6,10 +6,10 @@ asyncio 단일 스레드라 한 메서드 안에 await 가 없으면 원자적�
 from datetime import datetime
 
 from auto_apply.contracts._base import ensure_identifier_free
+from auto_apply.contracts.jobs import JobKind, JobRecord, JobStatus, RunRecord
 from auto_apply.domain.enums import RunStatus
 from auto_apply.domain.errors import InvalidInput, NotFound
 from auto_apply.domain.unique_identifiers import reject_unique_identifiers
-from auto_apply.ports.jobs import JobKind, JobRecord, JobStatus, RunRecord
 
 
 class InMemoryJobRepository:

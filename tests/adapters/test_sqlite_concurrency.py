@@ -9,7 +9,7 @@ import asyncio
 from datetime import UTC, datetime
 
 from auto_apply.adapters.repository.sqlite import sqlite_uow_factory
-from auto_apply.ports.jobs import JobKind, JobRecord
+from auto_apply.contracts.jobs import JobKind, JobRecord
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 

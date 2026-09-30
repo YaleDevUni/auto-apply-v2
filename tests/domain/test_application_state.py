@@ -17,7 +17,8 @@ from auto_apply.domain.application_state import (
     failure_target,
 )
 from auto_apply.domain.enums import ApplicationState as S
-from auto_apply.domain.errors import FailureKind, InvalidTransition, classify_failure
+from auto_apply.domain.errors import InvalidTransition
+from auto_apply.domain.failure import FailureKind, classify_failure
 
 _EXPECTED_EDGES = {
     (S.DRAFT, S.QUEUED),

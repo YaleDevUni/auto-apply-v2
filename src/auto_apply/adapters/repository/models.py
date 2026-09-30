@@ -78,7 +78,7 @@ class RunRow(Base):
 
 
 class JobRow(Base):
-    """작업 큐 1건 (§A9). kind·status 값은 ports/jobs `JobKind`·`JobStatus`. 시각은 UTC naive."""
+    """작업 큐 1건 (§A9). kind·status 값은 contracts/jobs 의 열거형. 시각은 UTC naive."""
 
     __tablename__ = "jobs"
 

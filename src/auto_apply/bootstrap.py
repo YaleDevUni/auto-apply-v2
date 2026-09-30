@@ -10,12 +10,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from auto_apply.adapters.agent.scripted import ScriptedAgentRuntime
+from auto_apply.adapters.browser.playwright_guarded import PlaywrightGuardedPageDriver
 from auto_apply.adapters.browser.playwright_host import PlaywrightBrowserHost
 from auto_apply.adapters.clock.system import SystemClock, UuidIdGen
 from auto_apply.adapters.extract.pdf_docx import PdfDocxTextExtractor
 from auto_apply.adapters.facts.repository import RepositoryFactSource
 from auto_apply.adapters.guide.file import FileGuideSource
 from auto_apply.adapters.guide.static import StaticGuideSource
+from auto_apply.adapters.human_gate.memory import InMemoryHumanGate
 from auto_apply.adapters.llm.anthropic import AnthropicLLM
 from auto_apply.adapters.llm.claude_code_cli import ClaudeCodeCliLLM
 from auto_apply.adapters.llm.stub import StubLLM
@@ -28,10 +31,13 @@ from auto_apply.adapters.resume.simple import SimpleResumeGenerator, SimpleResum
 from auto_apply.adapters.storage.local import LocalBlobStore
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.config import Settings
+from auto_apply.contracts.dto import ApplicationRecord
+from auto_apply.contracts.jobs import JobKind
 from auto_apply.ports.browser import BrowserHost
 from auto_apply.ports.clock import Clock, IdGen
 from auto_apply.ports.facts import FactSource
 from auto_apply.ports.guide import GuideSource
+from auto_apply.ports.human_gate import HumanGate
 from auto_apply.ports.llm import LLMClient
 from auto_apply.ports.pdf import PdfRenderer
 from auto_apply.ports.profile import ProfileSource
@@ -39,11 +45,14 @@ from auto_apply.ports.repository import UnitOfWork
 from auto_apply.ports.resume import ResumeGenerator, ResumeReviewer
 from auto_apply.ports.storage import BlobStore
 from auto_apply.ports.text_extract import DocumentTextExtractor
+from auto_apply.runner.fill import FillRunHandler
 from auto_apply.runner.job_runner import JobRunner
 from auto_apply.services.application import ApplicationService
+from auto_apply.services.browser_toolbox import BrowserToolbox
 from auto_apply.services.document import DocumentService
-from auto_apply.services.profile import ProfileService
+from auto_apply.services.profile import DEFAULT_USER_ID, ProfileService
 from auto_apply.services.profile_drafts import ProfileDraftService
+from auto_apply.services.run_artifacts import RunArtifacts
 from auto_apply.services.uploads import UploadService
 
 
@@ -71,6 +80,8 @@ class Container:
     # 첫 사용 때 뜨고 앱 종료 때 닫힌다(api/main.py lifespan). 대역은 테스트 전용이라
     # 설정 선택지가 없다.
     browser: BrowserHost
+    # run 이 사람(로그인·CAPTCHA)을 기다리는 통로 — UI 가 pending()·answer() 한다 (§A5)
+    human_gate: HumanGate
     # 변경 API 가 요구하는 설치별 토큰 (§A10). 웹은 `GET /api/session` 으로 받는다.
     session_token: str
 
@@ -196,6 +207,25 @@ def build_container(cfg: Settings) -> Container:
         uow, store, extractor, clock, idgen, max_document_bytes=cfg.document_max_bytes
     )
     applications = ApplicationService(uow, clock, idgen)
+    browser = PlaywrightBrowserHost(cfg.chrome_profile_dir)
+    pages = PlaywrightGuardedPageDriver(browser)
+    human_gate = InMemoryHumanGate()
+    # 앱 자신의 출처(승인 API)는 자동화 브라우저에서 열지 않는다(§A5). 실제 포트는 기동 뒤에야
+    # 정해져 아직 여기 없다 — T3.5 가 서버 출처를 넘긴다.
+    forbidden = (cfg.web_cors_origin,) if cfg.web_cors_origin else ()
+
+    def toolbox(record: ApplicationRecord, run_id: str) -> BrowserToolbox:
+        return BrowserToolbox(
+            browser, pages, uploads, human_gate=human_gate, user_id=DEFAULT_USER_ID,
+            application_id=record.application_id, run_id=run_id, forbidden_origins=forbidden,
+        )  # fmt: skip
+
+    # 실제 런타임(ClaudeCli)은 T3.6. 그때까지 빈 스크립트라 fill run 은 도구를 하나도 부르지 않고
+    # (브라우저도 띄우지 않고) FAILED 로 닫힌다.
+    fill = FillRunHandler(
+        uow, applications, RunArtifacts(store), ScriptedAgentRuntime(), toolbox, profile,
+        clock, idgen,
+    )  # fmt: skip
     return Container(
         settings=cfg,
         clock=clock,
@@ -214,8 +244,9 @@ def build_container(cfg: Settings) -> Container:
         uploads=uploads,
         drafts=ProfileDraftService(uow, store, uploads, extractor, llm, clock, idgen),
         applications=applications,
-        # 핸들러(fill·revise·submit·generate)는 T3.3~ 가 여기 등록한다 — 없는 kind 는 FAILED.
-        runner=JobRunner(uow, applications, clock, idgen),
-        browser=PlaywrightBrowserHost(cfg.chrome_profile_dir),
+        # revise·submit·generate 는 이후 카드가 등록한다 — 없는 kind 는 FAILED.
+        runner=JobRunner(uow, applications, clock, idgen, handlers={JobKind.FILL: fill}),
+        browser=browser,
+        human_gate=human_gate,
         session_token=ensure_session_token(cfg.session_token_path),
     )

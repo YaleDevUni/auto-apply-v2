@@ -16,7 +16,7 @@ SOURCE_KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,127}$"
 
 
 class FillSourceKind(StrEnum):
-    PROFILE = "profile"  # key = 인적사항 필드 (예: "email", "links.github")
+    PROFILE = "profile"  # key = 인적사항 필드 (예: "email", "links.0" — ai/fill_prompt 요약의 키)
     FACT = "fact"  # key = fact id
     ANSWER_KB = "answer_kb"  # key = 답변 id
     GENERATED = "generated"  # 생성물 (자소서 답변·문서) — key 는 있으면 생성물 id

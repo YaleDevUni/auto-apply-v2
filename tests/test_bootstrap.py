@@ -18,6 +18,7 @@ from auto_apply.bootstrap import build_container
 from auto_apply.config import Settings
 from auto_apply.contracts.dto import ApplicationRecord, PersistState
 from auto_apply.contracts.experience import Experience, ExperienceFact
+from auto_apply.contracts.jobs import JobKind, JobRecord
 from auto_apply.contracts.profile import Profile
 from auto_apply.domain.enums import ApplicationState, ExperienceKind
 
@@ -148,3 +149,19 @@ async def test_resume_pipeline_reads_profile_and_facts_from_repository():
         await uow.commit()
     assert (await c.profile.get("u1")).name == "홍길동"
     assert [f.id for f in await c.facts.list_for_user("u1")] == ["f1"]
+
+
+async def test_fill_handler_is_registered_and_fails_closed_without_runtime():
+    """T3.6 전까지 실제 런타임이 없다 — fill job 은 브라우저를 띄우지 않고 FAILED 로 닫힌다."""
+    c = build_container(Settings(storage="memory", repository="memory", llm_provider="stub"))
+    fill = c.runner._handlers[JobKind.FILL]
+    app = await c.applications.create("https://jobs.example.com/p/1")
+    await c.applications.transition(app.application_id, ApplicationState.QUEUED, run_id=None)
+    now = datetime.now(UTC)
+    job = JobRecord(
+        job_id="job_1", kind=JobKind.FILL, application_id=app.application_id,
+        created_at=now, run_after=now,
+    )  # fmt: skip
+    await fill(job)
+    assert await c.applications.current_state(app.application_id) is ApplicationState.FAILED
+    assert c.browser.running is False

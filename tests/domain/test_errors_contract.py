@@ -7,8 +7,8 @@
 import pytest
 
 from auto_apply.domain import errors as E
-from auto_apply.domain.errors import FailureKind as F
-from auto_apply.domain.errors import RetryPolicy, classify_failure
+from auto_apply.domain.failure import FailureKind as F
+from auto_apply.domain.failure import RetryPolicy, classify_failure
 
 _EXPECTED: dict[type[BaseException], F] = {
     E.BrowserLaunchFailed: F.TRANSIENT,

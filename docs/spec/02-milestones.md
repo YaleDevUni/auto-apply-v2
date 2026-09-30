@@ -262,7 +262,7 @@
 
 ### T3.3 AgentRuntime port · ScriptedAgentRuntime · fill run 핸들러 (§A6)
 - 의존: T3.2
-- 범위: `src/auto_apply/{ports/agent.py,adapters/agent/scripted.py,ai/,runner/fill.py,services/,contracts/}`, `tests/`, §A6
+- 범위: `src/auto_apply/{ports/agent.py,ports/jobs.py,adapters/agent/scripted.py,ai/,runner/,services/,contracts/,domain/errors.py,bootstrap.py}`, `tests/`, §A6
 - 할 일: `AgentRuntime` port — `run(system_prompt, tools: 도구 명세 목록, call_tool, *, limits) -> AgentOutcome`(벤더 타입 노출 금지,
   도구 실행은 호출자가 넘긴 `call_tool` 로만 — 런타임이 브라우저를 직접 만지지 않는다). `ScriptedAgentRuntime`(미리 적은 도구 호출
   시퀀스 재생) + contract test 틀(이후 CLI·API 구현이 params 로 붙는다). fill run 핸들러: 시스템 프롬프트 조립(역할·규칙 + 전역/도메인
@@ -270,6 +270,8 @@
   `ready_for_review`→AWAITING_APPROVAL(ReviewRecord·FillLog 저장), `needs_human` NEEDS_LOGIN/NEEDS_INPUT, `report_failure`·도구 한도 초과→FAILED,
   L5 INCIDENT→INCIDENT, 가드 불가(GUARD_UNAVAILABLE)→FAILED(재시도 없음). run 한도(도구 호출 수·시간) 설정.
   에이전트 출력 텍스트는 상태에 영향 없음 — 오직 도구 결과만.
+  T3.2 이관: fill 핸들러를 bootstrap handlers 에 등록·run 저장소 start/finish 호출, 도구 결과 INCIDENT 는 `SubmitIncident`/직접 전이.
+  job·run DTO 를 `ports/jobs.py` 에서 `contracts/` 로 옮기고(§A2 — DTO 는 contracts), `domain/errors.py`(227줄) 책임 분리 검토.
 - 수용 기준: Scripted 런타임 + 짐 픽스처(native)로 fill run → AWAITING_APPROVAL, 제출 0건. 대역 드라이버로 모든 종료 경로 → 상태 표 테스트.
   에이전트가 없는 도구 이름·잘못된 인자를 부르면 ToolResult 에러로 돌려받고 run 은 계속(한도까지).
 

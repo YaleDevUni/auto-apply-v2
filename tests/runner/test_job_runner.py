@@ -4,16 +4,16 @@ import asyncio
 
 import pytest
 
+from auto_apply.contracts.jobs import JobKind, JobRecord, JobStatus
 from auto_apply.domain.enums import ApplicationState as S
 from auto_apply.domain.errors import (
     AuthRequired,
     BrowserLaunchFailed,
     CaptchaEncountered,
-    RetryPolicy,
     SubmitGuardUnavailable,
     SubmitIncident,
 )
-from auto_apply.ports.jobs import JobKind, JobRecord, JobStatus
+from auto_apply.domain.failure import RetryPolicy
 from tests.runner.kit import T0, Rig, wait_until
 
 

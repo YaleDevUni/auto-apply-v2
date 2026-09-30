@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auto_apply.adapters.repository.models import JobRow
 from auto_apply.contracts._base import ensure_identifier_free
+from auto_apply.contracts.jobs import JobKind, JobRecord, JobStatus
 from auto_apply.domain.errors import InvalidInput, NotFound
 from auto_apply.domain.unique_identifiers import reject_unique_identifiers
-from auto_apply.ports.jobs import JobKind, JobRecord, JobStatus
 
 
 def to_db(at: datetime) -> datetime:

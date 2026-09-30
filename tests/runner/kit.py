@@ -4,9 +4,9 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 
+from auto_apply.contracts.jobs import JobKind, JobRecord, JobStatus
 from auto_apply.domain.enums import ApplicationState as S
-from auto_apply.domain.errors import RetryPolicy
-from auto_apply.ports.jobs import JobKind, JobRecord, JobStatus
+from auto_apply.domain.failure import RetryPolicy
 from auto_apply.runner.job_runner import Handler, JobRunner
 from auto_apply.services.application import ApplicationService
 from tests.services.fakes import SeqIds

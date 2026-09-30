@@ -12,11 +12,11 @@ from auto_apply.adapters.repository.memory_profile import (
 )
 from auto_apply.contracts.dto import ApplicationRecord, ApplicationSummary, PersistState
 from auto_apply.contracts.experience import Experience
+from auto_apply.contracts.jobs import JobRecord, RunRecord
 from auto_apply.contracts.knowledge import Answer, DocumentMeta
 from auto_apply.contracts.profile import Profile
 from auto_apply.domain.enums import ApplicationState
 from auto_apply.domain.errors import InvalidInput, InvalidTransition, NotFound
-from auto_apply.ports.jobs import JobRecord, RunRecord
 
 Rows = dict[str, list[PersistState]]
 

@@ -7,7 +7,8 @@ JobRunner(§A9)는 이 표를 거쳐서만 지원 건을 되돌린다.
 from types import MappingProxyType
 
 from auto_apply.domain.enums import ApplicationState as S
-from auto_apply.domain.errors import FailureKind, InvalidTransition
+from auto_apply.domain.errors import InvalidTransition
+from auto_apply.domain.failure import FailureKind
 
 INITIAL_STATE = S.DRAFT
 

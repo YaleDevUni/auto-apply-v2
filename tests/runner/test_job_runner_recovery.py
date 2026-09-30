@@ -2,10 +2,10 @@
 
 import asyncio
 
+from auto_apply.contracts.jobs import JobKind, JobRecord, JobStatus, RunRecord
 from auto_apply.domain.enums import ApplicationState as S
 from auto_apply.domain.enums import RunKind, RunStatus
-from auto_apply.domain.errors import RetryPolicy
-from auto_apply.ports.jobs import JobKind, JobRecord, JobStatus, RunRecord
+from auto_apply.domain.failure import RetryPolicy
 from auto_apply.runner.recovery import can_rerun
 from tests.runner.kit import T0, Rig, wait_until
 

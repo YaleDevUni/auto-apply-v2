@@ -9,10 +9,11 @@ from collections.abc import Callable
 
 import structlog
 
+from auto_apply.contracts.jobs import NEVER_RETRY_KINDS, JobRecord
 from auto_apply.domain.enums import ApplicationState
-from auto_apply.domain.errors import FailureKind, NotFound, RetryPolicy
+from auto_apply.domain.errors import NotFound
+from auto_apply.domain.failure import FailureKind, RetryPolicy
 from auto_apply.ports.clock import Clock, IdGen
-from auto_apply.ports.jobs import NEVER_RETRY_KINDS, JobRecord
 from auto_apply.ports.repository import UnitOfWork
 from auto_apply.services.application import ApplicationService
 

@@ -12,16 +12,16 @@ from datetime import timedelta
 
 import structlog
 
-from auto_apply.domain.errors import FailureKind, RetryPolicy, classify_failure
-from auto_apply.domain.unique_identifiers import redact_resident_registration_numbers
-from auto_apply.ports.clock import Clock, IdGen
-from auto_apply.ports.jobs import (
+from auto_apply.contracts.jobs import (
     BROWSER_KINDS,
     NEVER_RETRY_KINDS,
     JobKind,
     JobRecord,
     JobStatus,
 )
+from auto_apply.domain.failure import FailureKind, RetryPolicy, classify_failure
+from auto_apply.domain.unique_identifiers import redact_resident_registration_numbers
+from auto_apply.ports.clock import Clock, IdGen
 from auto_apply.ports.repository import UnitOfWork
 from auto_apply.runner.recovery import can_rerun, recover_interrupted
 from auto_apply.services.application import ApplicationService

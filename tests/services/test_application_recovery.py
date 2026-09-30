@@ -3,7 +3,8 @@
 import pytest
 
 from auto_apply.domain.enums import ApplicationState as S
-from auto_apply.domain.errors import FailureKind, NotFound
+from auto_apply.domain.errors import NotFound
+from auto_apply.domain.failure import FailureKind
 from auto_apply.services.application import ApplicationService
 from tests.services.fakes import FixedClock, SeqIds
 
