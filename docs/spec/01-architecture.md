@@ -93,6 +93,11 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
 | L6 제출 실행 | 승인 후에만 | SUBMITTING 단계에서도 에이전트는 제출 버튼을 못 누른다. `commit_submit()` 을 부르면 **하네스가** (a) FillLog 필드 값 DOM 재판독·대조 (b) 기록된 제출 대상과 동일 요소인지 확인 (c) `submit_mode=live` 확인 후 직접 클릭. dry_run 이면 클릭 없이 증거만 남김 |
 
 - 비-risky 클릭(다음/Next/저장 후 계속, 파일 업로드 등)은 relaxed 모드 — 단계 저장·업로드 POST 허용.
+- L2 는 **허용 목록**이다(T2.2): 위험 신호가 없어도 Safe 근거(입력 요소 · 실제 href 링크 · 안전 어휘 — 한글 음절·ASCII 만인
+  라벨)가 있어야 Safe, 나머지는 `UNRECOGNIZED` 로 risky. `type=submit` 은 라벨("다음")보다 우선하고, type 값은 HTML 처럼
+  ASCII 대소문자만 무시한다(알 수 없는 button type = submit). 어휘는 `domain/submit_vocabulary.py` 데이터로 분리.
+- L5 완료 판정(`detect_completion`)은 폼 안내문("지원이 완료되면 …")·버튼 라벨("지원 완료")에 걸리지 않게 한국어는
+  과거형(되었/됐)·감사 인사를, URL 은 호스트를 뺀 경로·쿼리 토큰만 본다. 클릭 전부터 있던 근거인지 가르는 건 SubmitGuard 몫.
 - **테스트 짐(gym)**: `tests/fixtures/sites/` 에 로컬 정적 사이트 — SPA fetch 제출, multipart 제출, confirm 대화상자 제출,
   "지원하기"가 폼 여는 버튼인 경우, 다단계 저장, iframe 폼, 제출 어휘가 없는 버튼(`확인`) 등.
   **모든 픽스처에서 FILL 단계 제출 성공 0건**이 하네스 PR 의 통과 조건이다.

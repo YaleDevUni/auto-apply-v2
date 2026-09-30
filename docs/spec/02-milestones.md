@@ -186,6 +186,11 @@
   차단 발생 → `SUBMIT_BLOCKED` 반환. L4: FILL 단계 `confirm()/beforeunload` 자동 거절. L5: 클릭 후 URL/본문 완료 어휘 →
   run 즉시 중단 + `INCIDENT` 이벤트. `ready_for_review(submit_ref, notes)`: 제출 대상 기술자(선택자 후보·텍스트·위치) + FillLog 확정.
   **하네스 설정은 가이드·프롬프트·도구 인자로 바꿀 수 없다**(모드 전환 API 없음). 실패하면 막는 쪽으로 닫힌다(라우팅 설치 실패 = 클릭 거부).
+- T2.2 이관(설계 과제): 분류기는 허용 목록 방식이라 `type=submit` 인 "다음"(단계별 폼 POST 저장)도 Risky → strict 가
+  중간 저장을 막는다. 차단을 약화하지 말고, 차단된 클릭이 **최종 제출인지 단계 이동인지 모르는 상태**를 에이전트에 그대로 알려
+  (`SUBMIT_BLOCKED` 에 "단계 이동일 수 있음" 구분 없이 ready_for_review 로 유도하되 FillLog 에 단계 표시), 다단계 POST 사이트는
+  승인 후 SUBMITTING 에서 하네스가 단계별로 진행하는 방식(§A4 L6 확장)을 §A4 에 설계로 적는다. 짐에 type=submit 다단계 픽스처 포함.
+  `detect_completion` 은 클릭 전 페이지 문구와 비교해 원래 있던 문구로 오탐하지 않게.
 - 수용 기준: native **짐 전 픽스처에서 FILL 단계 제출 0건** — 모든 버튼을 차례로 누르는 적대적 스크립트로(T2.3 기록 서버 단언),
   다단계 중간 저장은 통과, 완료 페이지 도달 시 INCIDENT, confirm 거절 테스트, 하네스 층을 하나씩 끄면 테스트가 실패하는지 확인.
 

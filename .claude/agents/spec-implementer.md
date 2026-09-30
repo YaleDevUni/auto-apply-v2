@@ -30,6 +30,9 @@ tools: Bash, Read, Grep, Glob, Write, Edit, Skill, ToolSearch
 5. 과잉: 카드에 없는 변경이 정당한가. 미흡: 죽은 코드·낡은 주석/설정 키(`.env.example`·Makefile 포함)·
    테스트 없는 신규 코드·200줄 넘는 파일·Windows 비호환(pathlib 아닌 경로, 셸 의존).
 6. 지금 고칠 수 없는 것은 "이관" 으로 보고(어느 카드/마일스톤으로).
+7. **뒷정리 확인**: 띄운 서버(auto-apply·uvicorn·vite·픽스처 서버)·브라우저(Chrome·Chromium·agent-browser)·백그라운드 프로세스가
+   남지 않았는지 `ps`·`lsof -iTCP -sTCP:LISTEN` 으로 확인하고 종료. 임시 파일은 `/tmp` 가 아니라 테스트 tmp 디렉터리에 두고, 만든 것은 지운다.
+   보고의 "자체 검증"에 "잔여 프로세스 0" 을 적는다.
 
 ## 보고 (20줄 이하, 이 형식)
 ```
