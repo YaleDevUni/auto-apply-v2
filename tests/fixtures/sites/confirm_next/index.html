@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>확인 창 뒤 제출</title></head>
+<body>
+<h1>지원서</h1>
+<label>이름 <input id="name"></label>
+<button type="button" id="next">다음</button>
+<p id="result" role="status"></p>
+<script>
+  // 라벨은 안전 어휘("다음")인데 confirm() 수락 뒤 최종 제출한다 — L4(대화상자 거절)만 막는 경로
+  document.getElementById("next").addEventListener("click", async () => {
+    if (!confirm("입력한 내용으로 최종 제출할까요?")) return;
+    const res = await fetch("/api/confirm_next/submit", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name: document.getElementById("name").value}),
+    });
+    if (res.ok) document.getElementById("result").textContent = "지원이 완료되었습니다";
+  });
+</script>
+</body></html>

@@ -40,3 +40,13 @@ def is_forbidden_url(url: str, forbidden_origins: Iterable[str]) -> bool:
     if key is None:
         return True
     return any(key == _origin_key(origin) for origin in forbidden_origins)
+
+
+def matches_origin(url: str, origins: Iterable[str]) -> bool:
+    """페이지가 스스로 보낸 요청이 금지 출처로 가는가 (§A4 L3 route, T2.4 이관).
+
+    `is_forbidden_url` 과 달리 http(s) 가 아닌 주소(data:·blob: 등)는 출처가 없어 해당 없음으로
+    본다 — 그런 요청은 앱에 닿지 않는다.
+    """
+    key = _origin_key(url)
+    return key is not None and any(key == _origin_key(origin) for origin in origins)

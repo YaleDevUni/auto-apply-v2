@@ -53,3 +53,6 @@ playwright-report/
 # graphify (지식 그래프, 로컬에서 재생성 — graphify . --code-only)
 graphify-out/
 .claude/settings.json.graphify-bak
+
+# 서브에이전트 교대용 핸드오프 노트 (세션 간 인계, 커밋하지 않음)
+.claude/handoffs/

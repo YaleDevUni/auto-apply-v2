@@ -86,6 +86,8 @@ async def test_installed_chrome_channel_first(profile):
     assert call["headless"] is False  # 제품은 사람이 보는 창이다 (D6)
     # Ctrl+C 는 앱 lifespan 이 받아 정상 종료한다 — Playwright 가 Chrome 을 먼저 죽이지 않게
     assert call["handle_sigint"] is call["handle_sigterm"] is call["handle_sighup"] is False
+    # 서비스 워커의 요청은 하네스 route 를 비껴갈 수 있다 (§A4 L3)
+    assert call["service_workers"] == "block"
     assert profile.is_dir()
 
 

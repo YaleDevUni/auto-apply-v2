@@ -14,6 +14,7 @@ from pydantic import ConfigDict, Field, StringConstraints, field_validator, mode
 from auto_apply.contracts._base import Frozen
 from auto_apply.contracts.fill_log import FillSource
 from auto_apply.contracts.page import PageSnapshot, Ref
+from auto_apply.contracts.submit_guard import GuardReport
 
 # 긴 자소서 답변(수천 자)도 한 번에 넣을 수 있게, 그러나 페이지를 망가뜨릴 만큼은 아니게.
 MAX_FILL_CHARS = 20_000
@@ -91,6 +92,16 @@ class ReportFailureInput(ToolInput):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class ClickInput(ToolInput):
+    # ref 하나뿐이다 — 모드·강제·좌표 같은 인자로 하네스를 바꿀 통로가 없다 (§A4).
+    ref: Ref
+
+
+class ReadyForReviewInput(ToolInput):
+    submit_ref: Ref  # 사람이 승인하면 하네스가 누를 요소 (에이전트는 누르지 않는다)
+    notes: str = Field(default="", max_length=2000)
+
+
 class ToolError(StrEnum):
     INVALID_INPUT = "invalid_input"
     UNKNOWN_TOOL = "unknown_tool"
@@ -103,6 +114,11 @@ class ToolError(StrEnum):
     OPTION_NOT_FOUND = "option_not_found"
     NAVIGATION_FAILED = "navigation_failed"
     TIMEOUT = "timeout"
+    # §A4 — 이 동작 창에서 하네스가 제출로 보이는 요청·폼 제출을 막았다. 최종 제출인지
+    # 단계 이동인지는 가르지 않는다: 입력을 마쳤으면 ready_for_review 로 사람 승인을 받는다.
+    SUBMIT_BLOCKED = "submit_blocked"
+    INCIDENT = "incident"  # L5 — 제출이 뚫린 흔적. run 은 멈췄고 어떤 도구도 받지 않는다
+    GUARD_UNAVAILABLE = "guard_unavailable"  # 하네스를 못 켰다 — 동작하지 않았다
 
 
 class ToolResult(Frozen):
@@ -114,3 +130,5 @@ class ToolResult(Frozen):
     message: str = ""
     snapshot: PageSnapshot | None = None
     found: bool | None = None  # wait_for(text)
+    # 직전 결과 뒤로 하네스가 막은 것·처리한 대화상자 (창 사이에 사이트가 스스로 보낸 것 포함)
+    guard: GuardReport = GuardReport()

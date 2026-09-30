@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>GET 탐색 지원</title></head>
+<body>
+<h1>지원서</h1>
+<label>이름 <input id="name"></label>
+<button type="button" id="go">지원하기</button>
+<script>
+  // 입력값을 쿼리에 실어 문서 탐색으로 제출한다 — 비-GET 차단만으로는 못 막는 경로
+  document.getElementById("go").addEventListener("click", () => {
+    location.href = "/api/get_submit/apply?name=" + encodeURIComponent(document.getElementById("name").value);
+  });
+</script>
+</body></html>

@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from itertools import count
 
 from auto_apply.adapters.browser.fake import FakeBrowserHost
+from auto_apply.adapters.browser.fake_effects import Effect
+from auto_apply.contracts.click import ElementDescriptor
 from auto_apply.contracts.page import PageSnapshot, SnapshotNode, UploadFile
 from auto_apply.domain import page_elements as rules
 from auto_apply.domain.errors import PageActionFailed, PageFailure
@@ -34,6 +36,14 @@ class FakeElement:
     frame: int = 0
     level: int | None = None
     file: UploadFile | None = None
+    # 하네스(§A4) 흉내용 — 클릭 분류 기술자와 핸들러. fake_guard.FakeGuardedPageDriver 가 쓴다.
+    in_form: bool = False
+    default_button: bool = False
+    in_dialog: bool = False
+    href: str | None = None
+    ancestors: tuple[ElementDescriptor, ...] = ()
+    on_click: tuple[Effect, ...] = ()
+    on_change: tuple[Effect, ...] = ()
 
 
 @dataclass

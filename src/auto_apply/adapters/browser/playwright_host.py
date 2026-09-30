@@ -155,12 +155,14 @@ class PlaywrightBrowserHost:
     ) -> BrowserContext:
         # 신호 처리는 앱이 한다: Ctrl+C 에 Playwright 가 Chrome 을 바로 죽이면 lifespan 종료의
         # 정상 close 전에 쿠키가 디스크에 안 써질 수 있다. 창 크기는 사람이 조절한다(headful).
+        # 서비스 워커가 보내는 요청은 하네스 route 를 비껴갈 수 있어 막는다 (§A4 L3).
         return await pw.chromium.launch_persistent_context(
             profile,
             channel=channel,
             executable_path=str(executable) if executable is not None else None,
             headless=self._headless,
             no_viewport=True,
+            service_workers="block",
             handle_sigint=False,
             handle_sigterm=False,
             handle_sighup=False,

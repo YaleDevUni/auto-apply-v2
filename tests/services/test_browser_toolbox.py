@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from auto_apply.adapters.browser.fake import FakeBrowserHost
-from auto_apply.adapters.browser.fake_pages import FakeElement, FakePageDriver
+from auto_apply.adapters.browser.fake_guard import FakeGuardedPageDriver
+from auto_apply.adapters.browser.fake_pages import FakeElement
 from auto_apply.contracts.browser_tools import ToolError, ToolResult
 from auto_apply.contracts.fill_log import FillAction, FillSourceKind
 from auto_apply.services.browser_toolbox import BrowserToolbox
@@ -24,8 +25,8 @@ async def host(tmp_path: Path):
 
 
 @pytest.fixture
-def driver(host) -> FakePageDriver:
-    return FakePageDriver(host, fake_sites())
+def driver(host) -> FakeGuardedPageDriver:
+    return FakeGuardedPageDriver(host, fake_sites())
 
 
 @pytest.fixture
@@ -210,7 +211,7 @@ async def test_invalid_input_message_does_not_echo_values(toolbox):
 
 
 async def test_unknown_and_forbidden_tools(toolbox):
-    for tool in ("click", "evaluate", "press", "mouse_click", "type"):
+    for tool in ("evaluate", "press", "mouse_click", "type", "submit", "set_mode"):
         _err(await toolbox.call(tool, {}), ToolError.UNKNOWN_TOOL)
 
 

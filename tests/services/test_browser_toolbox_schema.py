@@ -26,19 +26,23 @@ EXPECTED = {
     "select",
     "check",
     "upload",
+    "click",
+    "ready_for_review",
     "report_failure",
 }
-# 이름에 이 조각이 들어간 도구는 없어야 한다 — 임의 JS·키 입력·좌표 클릭·파일 경로, 그리고
-# 하네스(T2.5) 없이 붙는 click·제출.
+# 이름에 이 조각이 들어간 도구는 없어야 한다 — 임의 JS·키 입력·좌표 클릭·파일 경로·제출·하네스 모드.
+# `click` 은 하네스(§A4 L2·L3)를 거치는 그 이름 하나만 허용한다(test_click_is_the_only_click).
 FORBIDDEN_TOOL_WORDS = (
-    "click", "eval", "script", "js", "execute", "press", "key", "type", "mouse", "tap",
-    "coord", "submit", "file_path", "path", "dialog", "cookie", "download", "tab",
+    "eval", "script", "js", "execute", "press", "key", "type", "mouse", "tap",
+    "coord", "submit", "mode", "guard", "force", "unsafe", "file_path", "path", "dialog",
+    "cookie", "download", "tab",
 )  # fmt: skip
 # 어느 도구 입력에도 이런 인자는 없어야 한다. `key` 는 키 입력 인자로서만 금지 — 도구 입력 최상위에
 # 없어야 하고, 중첩된 FillSource.key(근거 id)는 괜찮다.
 FORBIDDEN_ARGS = {
     "script", "js", "code", "expression", "function", "keys", "keyboard", "press", "x", "y",
     "selector", "css", "xpath", "path", "file", "file_path", "filename", "headers", "cookie",
+    "mode", "strict", "relaxed", "force", "guard", "unsafe", "live",
 }  # fmt: skip
 GOOD_SOURCE = {"kind": "profile", "key": "email"}
 
@@ -50,6 +54,16 @@ def test_tool_names_are_exactly_the_spec():
 @pytest.mark.parametrize("name", sorted(EXPECTED))
 def test_no_forbidden_tool(name):
     assert not [w for w in FORBIDDEN_TOOL_WORDS if w in name]
+
+
+def test_click_is_the_only_click():
+    assert [n for n in TOOLS if "click" in n] == ["click"]
+    # 클릭 인자는 ref 하나 — 모드·강제·좌표로 하네스를 바꿀 통로가 없다 (§A4)
+    assert set(TOOLS["click"].input_model.model_json_schema()["properties"]) == {"ref"}
+    assert set(TOOLS["ready_for_review"].input_model.model_json_schema()["properties"]) == {
+        "submit_ref",
+        "notes",
+    }
 
 
 def _properties(schema: dict) -> set[str]:

@@ -149,6 +149,14 @@ class PageActionFailed(AutoApplyError):
         self.reason = reason
 
 
+class SubmitGuardUnavailable(AutoApplyError):
+    """제출 차단 하네스(§A4 L3·L4)를 브라우저에 설치하지 못했다 — 그 동작은 하지 않았다.
+
+    하네스 없이 페이지를 건드리지 않는다(닫힌 쪽으로 실패). 브라우저가 닫히는 중이면 재시도로
+    풀린다.
+    """
+
+
 NON_RETRYABLE: tuple[str, ...] = (
     CaptchaEncountered.__name__,
     AuthRequired.__name__,

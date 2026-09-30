@@ -1,6 +1,6 @@
 # 테스트 짐(§A4) 사이트별 기대값. tests/gym/server.py 가 읽는다.
 #
-# final_submit: 이 요청이 서버에 닿으면 "제출됐다". 하네스 테스트(T2.5)는 FILL 단계에서 이게 0건임을 단언한다.
+# final_submit: 이 요청이 서버에 닿으면 "제출됐다". GET 은 GET 탐색으로 제출하는 사이트(get_submit)에만. 하네스 테스트(T2.5)는 FILL 단계에서 이게 0건임을 단언한다.
 # allowed:      FILL 단계에서도 통과돼야 하는 중간 요청(단계 저장·로그인). 막히면 relaxed 모드가 과하게 막은 것.
 # redirect:     브라우저 탐색(form 제출)으로 온 요청을 보낼 곳. 없으면 done_page. fetch/xhr/beacon 은 JSON 응답.
 # login:        이 접두사 아래 페이지는 cookie 가 없으면 page 로 리다이렉트된다(로그인 페이지 자체는 제외).
@@ -94,3 +94,34 @@ sites:
       - {method: POST, path: /api/login_wall/submit}
     allowed:
       - {method: POST, path: /api/login_wall/login}
+
+  # --- T2.5 하네스 설계 과제에서 더한 사이트 (§A4) ---
+  apply_link:
+    title: '"지원하기" 가 폼 페이지로 가는 링크(쿼리 없는 GET 탐색 — strict 창에서도 통과해야 함), 폼의 "제출" 이 최종'
+    entry: /sites/apply_link/
+    final_submit:
+      - {method: POST, path: /api/apply_link/submit}
+
+  get_submit:
+    title: '"지원하기" 가 location.href 로 입력값을 쿼리에 실어 GET 탐색 제출'
+    entry: /sites/get_submit/
+    final_submit:
+      - {method: GET, path: /api/get_submit/apply}
+
+  confirm_next:
+    title: 안전 어휘 "다음"(type=button) → confirm() 수락 뒤 fetch 최종 제출 (L4 만 막는 경로)
+    entry: /sites/confirm_next/
+    final_submit:
+      - {method: POST, path: /api/confirm_next/submit}
+
+  delayed_submit:
+    title: '"지원하기" 클릭 2.5초 뒤 setTimeout 으로 fetch 제출 (창 밖 지연 제출)'
+    entry: /sites/delayed_submit/
+    final_submit:
+      - {method: POST, path: /api/delayed_submit/submit}
+
+  consent_check:
+    title: 체크박스 onchange 가 곧바로 fetch 제출 (check 도구의 창 정책)
+    entry: /sites/consent_check/
+    final_submit:
+      - {method: POST, path: /api/consent_check/submit}

@@ -210,11 +210,15 @@
   `request_human`. 타임아웃이면 `NEEDS_LOGIN`/`NEEDS_INPUT` 결과로 종료(상태 전이는 M3/M4 가 ApplicationService 로).
 - T2.1 이관: 전용 프로필 Chrome 에서 Google 계정 로그인이 자동화 플래그(`--enable-automation`)로 막히는지 실측(사람 로그인 흐름에 치명적이면
   플래그 조정은 **우회가 아니라** 정상 브라우저로 보이게 하는 범위에서만 — CAPTCHA·봇 탐지 우회 금지). BrowserHost 탭 조작을 port 로 올릴지 결정(T2.4).
+- T2.5 이관: 사람 로그인 대기 중에는 가드 disarm(사람의 로그인·SSO 폼 제출을 막지 않게) 후 재개 시 re-arm. 가드가 꺼진 동안에도
+  dialog 처리기가 confirm 을 자동 거절한다 — 사람 핸드오프 중엔 사람에게 넘기도록. 파일 선택 버튼의 OS 대화상자(filechooser) 가로채기.
 - 수용 기준: native 로그인 벽 픽스처 — 감지 → 대기 → (테스트가 사람 대신 쿠키 설정) → 재개 → 폼 도달. password 필드 fill 거부 테스트,
   타임아웃 테스트, 로그인 휴리스틱 단위 테스트.
 
 ## M3 · 에이전트 런타임 · 채우기(fill) run
 목표: AgentRuntime 3구현, MCP(HTTP) 노출, fill run 이 픽스처 사이트에서 FillLog + `ready_for_review` 까지.
+T2.5 이관(§A4 "남는 위험"): **안전 라벨 버튼의 fetch 최종 제출**(relaxed 에서 통과, L5 사후 감지뿐), WebSocket 전송, 3초 넘게 미룬 제출,
+shadow DOM 폼 submit 이벤트, 가드 꺼진 동안 연 문서의 가드 이름 선점 — 실사이트 fill run 로그로 빈도를 보고 추가 층 결정.
 T2.4 이관: bootstrap 에서 BrowserHost 와 짝지은 PageDriver 조립, BrowserToolbox `forbidden_origins` 에 앱 자신의 주소 주입.
 shadow DOM 안 요소가 snapshot 에 안 나옴 — 실사이트 영향 확인 후 지원 여부 결정.
 이관: `domain/errors.py` 의 `NON_RETRYABLE`(Temporal 근거)을 §A9 JobRunner 재시도 정책으로 재정의하거나 삭제.

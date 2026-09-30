@@ -102,3 +102,29 @@ def test_allowed(url):
 
 def test_nothing_forbidden_by_default():
     assert not is_forbidden_url("http://127.0.0.1:8000/", [])
+
+
+@pytest.mark.parametrize(
+    ("tag", "type_", "value", "expected"),
+    [
+        # 한 줄 칸: 브라우저처럼 줄바꿈을 지운다(공백으로 바꾸지 않는다) — T2.4 이관
+        ("input", None, "홍길동\n", "홍길동"),
+        ("input", "text", "a\r\nb", "ab"),
+        ("input", "tel", " 010-1234\n-5678 ", " 010-1234-5678 "),
+        ("INPUT", "Search", "q\n", "q"),
+        # url·email 은 앞뒤 공백도 지운다
+        ("input", "email", "  hong@example.com\n", "hong@example.com"),
+        ("input", "url", "\thttps://x.dev ", "https://x.dev"),
+        # textarea 는 줄바꿈을 LF 로 모을 뿐 남긴다
+        ("textarea", None, "첫 줄\r\n둘째\r셋째", "첫 줄\n둘째\n셋째"),
+        # 그 밖의 type 은 브라우저·Playwright 가 판단한다
+        ("input", "number", " 3 ", " 3 "),
+        ("input", "date", "2026-09-30", "2026-09-30"),
+    ],
+)
+def test_normalize_fill_value(tag, type_, value, expected):
+    assert rules.normalize_fill_value(tag, type_, value) == expected
+
+
+def test_contenteditable_value_is_kept():
+    assert rules.normalize_fill_value("div", None, "a\nb", contenteditable=True) == "a\nb"

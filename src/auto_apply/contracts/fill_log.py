@@ -59,6 +59,9 @@ class FieldLabel(Frozen):
 
 class FillEntry(IdentifierFree):
     seq: int = Field(ge=1)
+    # 몇 번째 승인 단계에서 넣었나 — type=submit 다단계 사이트는 단계마다 승인을 받는다
+    # (§A4 L6 확장).
+    step: int = Field(default=1, ge=1)
     action: FillAction
     ref: str
     field: FieldLabel

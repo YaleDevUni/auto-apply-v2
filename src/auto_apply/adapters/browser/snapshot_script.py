@@ -8,8 +8,9 @@
 
 MAX_NODES = 1500
 
-COLLECT = r"""
-(maxNodes) => {
+# snapshot 과 클릭 분류(guard_script.DESCRIBE_CLICK)가 같은 role·접근 이름 규칙을 쓰도록 나눠 둔다 —
+# 에이전트가 snapshot 에서 본 이름과 분류기가 본 이름이 달라지지 않게.
+HELPERS = r"""
   const SECRET_AC = ["current-password", "new-password", "one-time-code"];
   const ROLE_OK = new Set(["button", "link", "checkbox", "radio", "textbox", "combobox", "listbox",
     "option", "switch", "tab", "menuitem", "menuitemcheckbox", "menuitemradio", "searchbox",
@@ -83,7 +84,12 @@ COLLECT = r"""
     return clean(el.getAttribute("placeholder") || el.getAttribute("title") ||
       el.getAttribute("alt"));
   }
+"""
 
+COLLECT = (
+    "(maxNodes) => {"
+    + HELPERS
+    + r"""
   const els = [], infos = [];
   let truncated = false;
   const textShown = new Set();
@@ -144,6 +150,7 @@ COLLECT = r"""
   return {els: els, infos: infos, truncated: truncated, title: document.title};
 }
 """
+)
 
 # 동작 직전에 대상의 **지금** 모양을 다시 읽는다 — snapshot 뒤 type 이 바뀐 칸을 잡는다.
 DESCRIBE = r"""

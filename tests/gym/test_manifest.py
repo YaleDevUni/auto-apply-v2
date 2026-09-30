@@ -24,6 +24,12 @@ REQUIRED_SITES = {
     "request_submit",
     "complete_page",
     "login_wall",
+    # T2.5 이관 설계 과제: 링크로 여는 폼·GET 제출·confirm 뒤 제출·지연 제출·체크박스 onchange 제출
+    "apply_link",
+    "get_submit",
+    "confirm_next",
+    "delayed_submit",
+    "consent_check",
 }
 
 
@@ -67,7 +73,7 @@ def test_site_pages_actually_use_their_endpoints(manifest):
             assert ep.path in text, f"{site.name}: {ep.path} 를 쓰는 페이지가 없다"
         assert re.findall(_API_PATH, text), site.name
         for used in set(re.findall(_API_PATH, text)):
-            assert manifest.endpoint("POST", used) is not None, (
+            assert any(manifest.endpoint(m, used) for m in ("POST", "GET")), (
                 f"{site.name}: 매니페스트에 없는 {used}"
             )
 
@@ -102,7 +108,8 @@ def _one(**site) -> dict:
     "bad",
     [
         _one(final_submit=[]),
-        _one(final_submit=[{"method": "GET", "path": "/api/s/x"}]),
+        _one(allowed=[{"method": "GET", "path": "/api/s/y"}]),
+        _one(final_submit=[{"method": "OPTIONS", "path": "/api/s/x"}]),
         _one(final_submit=[{"method": "POST", "path": "/api/other/x"}]),
         _one(final_submit=[{"method": "POST", "path": "/submit"}]),
         _one(allowed=[{"method": "POST", "path": "/api/s/x"}]),
@@ -135,3 +142,8 @@ def test_rejects_bad_manifest(bad):
 def test_minimal_manifest_ok():
     m = Manifest.model_validate(_one())
     assert m.sites["s"].name == "s"
+
+
+def test_get_final_submit_is_allowed_for_get_submission_sites():
+    m = Manifest.model_validate(_one(final_submit=[{"method": "GET", "path": "/api/s/x"}]))
+    assert m.endpoint("GET", "/api/s/x") is not None

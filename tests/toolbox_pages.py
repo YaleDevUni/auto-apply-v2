@@ -6,6 +6,7 @@
 
 from pathlib import Path
 
+from auto_apply.adapters.browser.fake_effects import Send, SubmitForm
 from auto_apply.adapters.browser.fake_pages import FakeDocument, FakeElement
 
 TOOLBOX_DIR = Path(__file__).resolve().parent / "fixtures" / "toolbox"
@@ -20,7 +21,7 @@ PASSWORD_VALUE = "prefilled-secret-pw"
 OTP_VALUE = "otp-778899"
 
 
-def _form() -> FakeDocument:
+def _form(base: str) -> FakeDocument:
     return FakeDocument(
         title="도구 테스트 지원서",
         elements=[
@@ -44,15 +45,29 @@ def _form() -> FakeDocument:
             FakeElement("textbox", "인증번호", autocomplete="one-time-code", value=OTP_VALUE),
             FakeElement("file", "이력서", type="file"),
             FakeElement("file", "포트폴리오", type="file", visible=False),
-            FakeElement("button", "지원하기", tag="button", type="submit"),
-            FakeElement("link", "다음 페이지", tag="a"),
+            FakeElement(
+                "button",
+                "지원하기",
+                tag="button",
+                type="submit",
+                in_form=True,
+                default_button=True,
+                on_click=(SubmitForm("POST", base + "/api/toolbox/submit"),),
+            ),
+            FakeElement(
+                "link",
+                "다음 페이지",
+                tag="a",
+                href="next.html",
+                on_click=(Send("GET", base + NEXT, navigation=True),),
+            ),
         ],
     )
 
 
 def fake_sites(base: str = FAKE_BASE) -> dict[str, FakeDocument]:
     return {
-        base + FORM: _form(),
+        base + FORM: _form(base),
         base + NEXT: FakeDocument(
             title="두 번째 페이지",
             elements=[

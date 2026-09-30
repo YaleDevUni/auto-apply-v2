@@ -1,0 +1,127 @@
+"""SubmitGuard 결정 규칙 (§A4 L3·L4·L5) — 요청 판정 표, 대화상자, 새로 나타난 완료 근거."""
+
+import pytest
+
+from auto_apply.domain.submit_guard_policy import (
+    BlockReason,
+    GuardMode,
+    carried_values,
+    carries_input,
+    completion_evidence,
+    dialog_verdict,
+    request_verdict,
+)
+from auto_apply.domain.url_policy import matches_origin
+
+S, R = GuardMode.STRICT, GuardMode.RELAXED
+APP = ("http://127.0.0.1:8000",)
+SITE = "https://jobs.example.com"
+
+
+def _v(mode, method, url, nav=False, carried=(), forbidden=APP):
+    return request_verdict(
+        mode=mode, method=method, url=url, navigation=nav, carried=carried,
+        forbidden_origins=forbidden,
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("mode", "method", "url", "nav", "expected"),
+    [
+        # 문서 POST(폼 제출)는 모드와 관계없이 막는다
+        (R, "POST", f"{SITE}/apply", True, BlockReason.DOCUMENT_POST),
+        (S, "POST", f"{SITE}/apply", True, BlockReason.DOCUMENT_POST),
+        (R, "put", f"{SITE}/apply", True, BlockReason.DOCUMENT_POST),
+        # relaxed: 단계 저장·업로드 fetch/xhr/beacon 은 통과
+        (R, "POST", f"{SITE}/api/save", False, None),
+        (R, "PATCH", f"{SITE}/api/save", False, None),
+        (R, "GET", f"{SITE}/apply?name=x", True, None),
+        # strict: 비-GET 전부, 알 수 없는 method 도 비-GET 으로
+        (S, "POST", f"{SITE}/api/save", False, BlockReason.STRICT_NON_GET),
+        (S, "OPTIONS", f"{SITE}/api/save", False, BlockReason.STRICT_NON_GET),
+        (S, "BREW", f"{SITE}/api/save", False, BlockReason.STRICT_NON_GET),
+        (S, "", f"{SITE}/api/save", False, BlockReason.STRICT_NON_GET),
+        # strict: 쿼리를 싣는 문서 탐색은 GET 제출이다 — 단순 페이지 이동은 통과
+        (S, "GET", f"{SITE}/apply?job=1", True, BlockReason.STRICT_GET_QUERY),
+        (S, "GET", f"{SITE}/apply/form.html", True, None),
+        (S, "GET", f"{SITE}/apply/form.html#top", True, None),
+        (S, "HEAD", f"{SITE}/x", False, None),
+        (S, "GET", f"{SITE}/api/config?lang=ko", False, None),  # 하위 자원 GET 은 통과
+        # 앱 출처는 가드가 꺼져 있어도(mode=None) 막는다 (T2.4 이관)
+        (None, "GET", "http://localhost:8000/api/session", False, BlockReason.FORBIDDEN_ORIGIN),
+        (None, "GET", "http://127.0.0.2:8000/", True, BlockReason.FORBIDDEN_ORIGIN),
+        (R, "GET", "http://[::1]:8000/", True, BlockReason.FORBIDDEN_ORIGIN),
+        (None, "POST", f"{SITE}/apply", True, None),  # run 밖(사람) — 앱 출처만
+        (None, "GET", "http://127.0.0.1:8001/", True, None),
+        (S, "GET", "data:text/html,<b>x</b>", True, None),
+    ],
+)
+def test_request_verdict_table(mode, method, url, nav, expected):
+    assert _v(mode, method, url, nav) is expected
+
+
+def test_strict_get_carrying_typed_values_is_blocked():
+    carried = carried_values(["홍길동", "hong@example.com", "예", "3"])
+    assert carried == ("hong@example.com", "홍길동")  # 짧은 값은 어디에나 있어 보지 않는다
+    url = f"{SITE}/api/check?n=%ED%99%8D%EA%B8%B8%EB%8F%99"
+    assert _v(S, "GET", url, carried=carried) is BlockReason.CARRIES_INPUT
+    assert _v(S, "GET", f"{SITE}/x/HONG@EXAMPLE.COM", carried=carried) is (
+        BlockReason.CARRIES_INPUT
+    )
+    assert _v(R, "GET", url, carried=carried) is None  # relaxed 요청(자동 완성)은 통과
+    assert _v(S, "GET", f"{SITE}/api/check?n=kim", carried=carried) is None
+
+
+def test_document_navigation_carrying_typed_values_is_blocked_in_every_mode():
+    # 입력값을 실은 문서 탐색 = GET 폼 제출 — 페이지 스크립트 층이 비껴가져도 네트워크 층이 막는다
+    carried = carried_values(["홍길동"])
+    url = f"{SITE}/apply?name=%ED%99%8D%EA%B8%B8%EB%8F%99"
+    assert _v(R, "GET", url, nav=True, carried=carried) is BlockReason.CARRIES_INPUT
+    assert _v(R, "GET", f"{SITE}/a?rrn=900101-1234567", nav=True) is BlockReason.CARRIES_INPUT
+    assert _v(R, "GET", f"{SITE}/apply?name=kim", nav=True, carried=carried) is None
+    assert _v(None, "GET", url, nav=True, carried=carried) is None  # run 밖(사람)
+
+
+def test_resident_number_in_url_counts_as_carried_input():
+    assert carries_input(f"{SITE}/a?rrn=900101-1234567", ())
+    assert carries_input(f"{SITE}/a?rrn=9001011234567", ())
+    assert not carries_input(f"{SITE}/a?id=12345", ())
+
+
+def test_matches_origin_ignores_non_web_urls():
+    assert matches_origin("http://LOCALHOST:8000/x", APP)
+    assert not matches_origin("blob:http://127.0.0.1:8000/x", APP)
+    assert not matches_origin("not a url", APP)
+
+
+@pytest.mark.parametrize(
+    ("kind", "verdict"),
+    [
+        ("alert", "accept"),
+        ("confirm", "dismiss"),
+        ("prompt", "dismiss"),
+        ("beforeunload", "dismiss"),
+        ("CONFIRM", "dismiss"),
+        ("unknown", "dismiss"),
+    ],
+)
+def test_dialogs_are_declined_except_alert(kind, verdict):
+    assert dialog_verdict(kind) == verdict
+
+
+def test_completion_only_counts_new_text():
+    before = ["지원서", "지원이 완료되었습니다"]  # 원래 있던 문구(예: 안내 배너)
+    assert completion_evidence([SITE], before, [SITE], [*before, "이름"]) is None
+    after = [*before, "지원해주셔서 감사합니다"]
+    assert completion_evidence([SITE], before, [SITE], after) is not None
+
+
+def test_completion_on_new_page_and_new_frame_url():
+    assert completion_evidence([SITE], ["지원서"], [SITE], ["지원이 완료되었습니다"])
+    urls = [SITE, f"{SITE}/ats/thanks"]
+    assert completion_evidence([SITE], [], urls, []) == "url:thanks"
+    assert completion_evidence(urls, [], urls, []) is None  # 원래 있던 프레임 URL
+
+
+def test_completion_across_line_break_is_caught():
+    assert completion_evidence([], [], [], ["지원이", "완료되었습니다"]) is not None

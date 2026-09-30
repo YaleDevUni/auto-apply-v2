@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from auto_apply.adapters.browser.playwright_guarded import PlaywrightGuardedPageDriver
 from auto_apply.adapters.browser.playwright_host import PlaywrightBrowserHost
-from auto_apply.adapters.browser.playwright_pages import PlaywrightPageDriver
 from auto_apply.contracts.browser_tools import ToolError
 from auto_apply.contracts.fill_log import FillAction
 from auto_apply.services.browser_toolbox import BrowserToolbox
@@ -35,7 +35,7 @@ def toolbox_site():
 def _toolbox(host: PlaywrightBrowserHost) -> BrowserToolbox:
     return BrowserToolbox(
         host,
-        PlaywrightPageDriver(host),
+        PlaywrightGuardedPageDriver(host),
         FakeDocuments({"doc_resume1": b"%PDF-1.7\n"}),
         user_id="local",
         application_id="app_native",

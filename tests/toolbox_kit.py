@@ -1,4 +1,5 @@
-"""PageDriver 두 구현(대역 · 실제=native)을 같은 모양으로 꺼내는 pytest 픽스처.
+"""GuardedPageDriver(= PageDriver + 하네스) 두 구현(대역 · 실제=native)을 같은 모양으로 꺼내는
+pytest 픽스처.
 
 실제 쪽은 짐 서버를 tests/fixtures/toolbox/ 루트로 띄워 127.0.0.1 에서 서빙한다. "페이지가 스스로
 바뀐다"·"사람이 탭을 닫았다" 는 구현마다 흉내 내는 방법이 달라 kit 이 함께 준다.
@@ -14,12 +15,12 @@ import pytest
 import pytest_asyncio
 
 from auto_apply.adapters.browser.fake import FakeBrowserHost
-from auto_apply.adapters.browser.fake_pages import FakePageDriver
+from auto_apply.adapters.browser.fake_guard import FakeGuardedPageDriver
+from auto_apply.adapters.browser.playwright_guarded import PlaywrightGuardedPageDriver
 from auto_apply.adapters.browser.playwright_host import PlaywrightBrowserHost
-from auto_apply.adapters.browser.playwright_pages import PlaywrightPageDriver
 from auto_apply.contracts.knowledge import DocumentMeta
 from auto_apply.domain.errors import NotFound
-from auto_apply.ports.browser import BrowserHost, PageDriver, PageHandle
+from auto_apply.ports.browser import BrowserHost, GuardedPageDriver, PageHandle
 from tests.browsers import close_tabs_like_human, real_host
 from tests.gym.server import GymServer
 from tests.toolbox_pages import FAKE_BASE, TOOLBOX_DIR, fake_sites
@@ -50,7 +51,7 @@ class FakeDocuments:
 class DriverKit:
     kind: str
     host: BrowserHost
-    driver: PageDriver
+    driver: GuardedPageDriver
     base: str
     # 라벨이 `name` 인 칸의 type 을 password 로 바꾼다 (snapshot 뒤 페이지 스스로의 변화)
     make_secret: Callable[[PageHandle, str], Awaitable[None]]
@@ -63,7 +64,7 @@ class DriverKit:
 
 def _fake_kit(profile: Path) -> DriverKit:
     host = FakeBrowserHost(profile)
-    driver = FakePageDriver(host, fake_sites())
+    driver = FakeGuardedPageDriver(host, fake_sites())
 
     async def make_secret(page: PageHandle, name: str) -> None:
         for el in driver.document(page).elements:
@@ -86,7 +87,13 @@ def _real_kit(profile: Path, gym: GymServer) -> DriverKit:
         await close_tabs_like_human(host, page)
 
     return DriverKit(
-        "playwright", host, PlaywrightPageDriver(host), gym.base_url, make_secret, close_tabs, gym
+        "playwright",
+        host,
+        PlaywrightGuardedPageDriver(host),
+        gym.base_url,
+        make_secret,
+        close_tabs,
+        gym,
     )
 
 

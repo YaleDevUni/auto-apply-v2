@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>체크하면 제출</title></head>
+<body>
+<h1>지원서</h1>
+<label>이름 <input id="name"></label>
+<label><input type="checkbox" id="agree"> 위 내용을 확인했고 지원에 동의합니다</label>
+<p id="result" role="status"></p>
+<script>
+  // 체크박스 onchange 가 곧바로 제출한다 — check 도구도 클릭 분류·창 정책을 거쳐야 막힌다
+  document.getElementById("agree").addEventListener("change", async (e) => {
+    if (!e.target.checked) return;
+    const res = await fetch("/api/consent_check/submit", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name: document.getElementById("name").value}),
+    });
+    if (res.ok) document.getElementById("result").textContent = "지원이 완료되었습니다";
+  });
+</script>
+</body></html>

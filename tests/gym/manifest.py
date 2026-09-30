@@ -27,10 +27,10 @@ class Endpoint(_Frozen):
     redirect: str | None = Field(default=None, pattern=r"^/sites/")
 
     @model_validator(mode="after")
-    def _non_get(self) -> Endpoint:
-        # L3 는 비-GET 을 막는다 — 짐의 기록 대상도 비-GET 이어야 그 층을 실제로 시험한다.
-        if self.method not in _BODY_METHODS:
-            raise ValueError(f"기록 대상은 비-GET 이어야 한다: {self.method} {self.path}")
+    def _known_method(self) -> Endpoint:
+        # GET 은 "GET 탐색으로 제출하는" 사이트의 최종 제출에만 쓴다(Site 가 확인, T2.3 이관).
+        if self.method not in _BODY_METHODS | {"GET"}:
+            raise ValueError(f"기록 대상 method 가 아니다: {self.method} {self.path}")
         return self
 
     def matches(self, method: str, path: str) -> bool:
@@ -64,6 +64,9 @@ class Site(_Frozen):
         for ep in (*self.final_submit, *self.allowed):
             if not ep.path.startswith(prefix):
                 raise ValueError(f"{self.name}: 엔드포인트는 {prefix} 아래여야 한다 — {ep.path}")
+        if any(e.method == "GET" for e in self.allowed):
+            # 중간 요청(단계 저장)은 비-GET 이어야 relaxed 가 통과시키는지를 실제로 시험한다
+            raise ValueError(f"{self.name}: allowed 는 비-GET 이어야 한다")
         finals = {(e.method, e.path) for e in self.final_submit}
         if finals & {(e.method, e.path) for e in self.allowed}:
             raise ValueError(

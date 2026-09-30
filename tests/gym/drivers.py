@@ -130,6 +130,47 @@ async def login_wall(page: Page, entry: str) -> None:
     await _expect_done(page)
 
 
+async def apply_link(page: Page, entry: str) -> None:
+    await page.goto(entry)
+    await page.get_by_role("link", name="지원하기").click()
+    await page.wait_for_url("**/form.html")
+    await page.get_by_label("이름").fill("홍길동")
+    await page.get_by_role("button", name="제출").click()
+    await _expect_done(page)
+
+
+async def get_submit(page: Page, entry: str) -> None:
+    await page.goto(entry)
+    await page.get_by_label("이름").fill("홍길동")
+    await page.get_by_role("button", name="지원하기").click()
+    await _expect_done(page)
+
+
+async def confirm_next(page: Page, entry: str) -> None:
+    async def accept(dialog: Dialog) -> None:
+        await dialog.accept()
+
+    page.once("dialog", accept)
+    await page.goto(entry)
+    await page.get_by_label("이름").fill("홍길동")
+    await page.get_by_role("button", name="다음").click()
+    await _expect_done(page)
+
+
+async def delayed_submit(page: Page, entry: str) -> None:
+    await page.goto(entry)
+    await page.get_by_label("이름").fill("홍길동")
+    await page.get_by_role("button", name="지원하기").click()
+    await _expect_done(page)
+
+
+async def consent_check(page: Page, entry: str) -> None:
+    await page.goto(entry)
+    await page.get_by_label("이름").fill("홍길동")
+    await page.get_by_label("위 내용을 확인했고 지원에 동의합니다").check()
+    await _expect_done(page)
+
+
 DRIVERS: dict[str, Driver] = {
     "spa_fetch": spa_fetch,
     "multipart_form": multipart_form,
@@ -143,4 +184,9 @@ DRIVERS: dict[str, Driver] = {
     "request_submit": request_submit,
     "complete_page": complete_page,
     "login_wall": login_wall,
+    "apply_link": apply_link,
+    "get_submit": get_submit,
+    "confirm_next": confirm_next,
+    "delayed_submit": delayed_submit,
+    "consent_check": consent_check,
 }

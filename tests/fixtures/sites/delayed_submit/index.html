@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>늦게 보내는 지원</title></head>
+<body>
+<h1>지원서</h1>
+<label>이름 <input id="name"></label>
+<button type="button" id="apply">지원하기</button>
+<button type="button" id="more">더보기</button>
+<p id="result" role="status"></p>
+<script>
+  // 클릭 창이 끝난 뒤(2.5초 뒤) 제출한다 — strict 모드가 창 밖에서도 유지돼야 막힌다
+  document.getElementById("apply").addEventListener("click", () => {
+    setTimeout(async () => {
+      const res = await fetch("/api/delayed_submit/submit", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name: document.getElementById("name").value}),
+      });
+      if (res.ok) document.getElementById("result").textContent = "지원이 완료되었습니다";
+    }, 2500);
+  });
+  document.getElementById("more").addEventListener("click", () => {
+    document.getElementById("result").textContent = "추가 정보 없음";
+  });
+</script>
+</body></html>
