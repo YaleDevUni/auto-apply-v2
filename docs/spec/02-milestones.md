@@ -2,7 +2,7 @@
 
 > 태스크 카드는 **서브에이전트 한 번에 끝낼 수 있는 크기**로 자른다 (파일 범위 명시, 수용 기준은 테스트로).
 > 상세 카드는 **마일스톤 시작 시점에** 쓴다 — 미리 써둔 세부는 앞 마일스톤 결과로 낡는다.
-> M0·M1(완료)은 상세, M2~M7 은 목표·수용 기준까지만 있다.
+> M0·M1(완료)·M2 는 상세, M3~M7 은 목표·수용 기준까지만 있다.
 
 카드 형식:
 ```
@@ -133,6 +133,71 @@
 ## M2 · 브라우저 호스트 · 제출 차단 하네스
 목표: 설치된 Chrome 을 전용 프로필로 띄우고(mac/win 경로 탐지), BrowserToolbox 도구와 §A4 L1~L5 를 구현.
 수용 기준: **테스트 짐 전 픽스처에서 FILL 단계 제출 0건**, 클릭 분류기 단위 테스트, 로그인 핸드오프 픽스처 테스트. (`native` 마커)
+병렬: T2.1 · T2.2 · T2.3 은 파일 범위가 겹치지 않아 worktree 병렬. T2.4 는 T2.1 뒤, T2.5 는 T2.2~T2.4 뒤, T2.6 은 T2.3·T2.4 뒤.
+공통: 브라우저가 필요한 테스트는 `native` 마커. CI·Chrome 없는 환경을 위해 테스트는 Playwright 번들 Chromium 으로도 돌 수 있게
+(`AUTO_APPLY_TEST_BROWSER=chromium`), 제품 기본은 설치된 Chrome(D6).
+
+### T2.1 BrowserHost — 설치 Chrome 탐지 · 전용 프로필 · 수명주기
+- 의존: M1
+- 범위: `src/auto_apply/{ports/browser.py,adapters/browser/,domain/errors.py,config.py,bootstrap.py,api/main.py}`, `tests/`, `pyproject.toml`
+- 할 일: `BrowserHost` port(벤더 타입 노출 금지 — 페이지 핸들은 불투명 타입). 실제 구현: Playwright 로 **설치된 Chrome**을
+  `DATA_DIR/chrome-profile` 전용 user-data-dir 로 headful 기동(`launch_persistent_context(channel="chrome")` 우선, 실패 시
+  mac/Windows 표준 설치 경로 탐지 → `executable_path`). 사용자 기본 프로필은 절대 쓰지 않는다(D6). 프로필 디렉터리 단일 인스턴스
+  잠금(두 번째 기동은 명확한 오류), 지연 기동(첫 사용 시)·앱 종료 시 정리, 브라우저를 사람이 닫아도 다음 사용 시 재기동.
+  테스트 대역(메모리 페이지 모델) + contract test. Chrome 미설치는 `ChromeNotFound`(첫 실행 마법사는 M7).
+- 수용 기준: 경로 탐지 단위 테스트(mac/Windows 경로를 가짜 파일시스템으로), contract test(실제=native + 대역),
+  native: 전용 프로필로 기동 → 쿠키 저장 → 재기동 후 쿠키 유지, 동시 두 번째 기동 거부.
+
+### T2.2 제출 클릭 분류기 (§A4 L2)
+- 의존: M1
+- 범위: `src/auto_apply/{domain/submit_classifier.py,contracts/}`, `tests/domain/`
+- 할 일: 순수 함수 `classify_click(ElementDescriptor) -> Safe | Risky(reason)`. 기술자 = tag·type·role·접근 이름·텍스트·
+  form 소속/기본 버튼 여부·dialog 안 여부·href. Risky: `type=submit`, 폼 기본 버튼, 제출 어휘(한·영: 제출/지원하기/지원 완료/최종/
+  Submit/Apply/Send/Finish/Confirm…), dialog 안의 확인/OK/예. **판단이 애매하면 Risky**(닫힌 쪽으로 실패). 어휘는 데이터로 분리.
+  완료 어휘(§A4 L5: "지원이 완료", "application received"…) 판정 함수도 여기.
+- 수용 기준: 픽스처 표 회귀 테스트(최소 40케이스, 한·영, 전각·공백 변형, "다음"/"저장 후 계속"/"파일 선택" 은 Safe), 완료 어휘 테스트.
+
+### T2.3 테스트 짐 — 로컬 픽스처 사이트 · 제출 기록 서버
+- 의존: M1
+- 범위: `tests/fixtures/sites/`, `tests/gym/`(pytest 픽스처·서버), `pyproject.toml`(테스트 의존성만)
+- 할 일: §A4 목록의 정적 사이트를 만든다 — SPA fetch 제출, multipart form 제출, confirm 대화상자 뒤 제출, "지원하기"가 폼을
+  여는 버튼, 다단계(중간 저장 POST 는 허용돼야 함), iframe 안 폼, 어휘 없는 "확인" 제출 버튼, sendBeacon 제출, 클릭 핸들러의
+  `form.requestSubmit()`, 제출 후 완료 페이지("지원이 완료되었습니다"), 로그인 벽 페이지(쿠키 없으면 로그인 폼으로 리다이렉트).
+  127.0.0.1 임의 포트 서버가 **최종 제출 엔드포인트 수신을 기록**해 테스트가 "제출 0건"을 단언할 수 있게. 사이트별 기대값
+  (최종 제출 요청, 허용되는 중간 요청)을 매니페스트로.
+- 수용 기준: 서버·매니페스트 단위 테스트, native: 각 사이트를 Playwright 로 **하네스 없이** 직접 조작하면 제출이 기록된다
+  (= 픽스처가 진짜 제출 경로를 가진다는 양성 대조).
+
+### T2.4 BrowserToolbox 기본 도구 · FillLog (§A5, §A4 L1)
+- 의존: T2.1
+- 범위: `src/auto_apply/{contracts/fill_log.py,contracts/,ports/,adapters/browser/,services/browser_toolbox*.py,domain/}`, `tests/`
+- 할 일: 도구를 **한 곳**에서 정의(런타임 중립, M3 가 CLI/API 로 노출): `snapshot()`(접근성 트리 + ref, 비밀번호 필드 값 가림),
+  `navigate`·`back`·`scroll`·`wait_for`, `fill`/`select`/`check`(`source` 필수 → FillLog 자동 기록), `upload(ref, document_id)`
+  (앱이 관리하는 문서만 — 임의 경로 불가), `report_failure`. L1: 임의 JS·키 입력(Enter)·좌표 클릭 도구는 **존재하지 않는다**.
+  `click` 은 T2.5 에서 하네스와 함께 붙이므로 여기선 정의하지 않는다. 도구 입력은 Pydantic 검증(ref 모양, source 종류).
+- 수용 기준: 도구 스키마 테스트(금지 도구 부재 단언 포함), FillLog 기록 테스트, native: 픽스처 폼에서 snapshot→fill→FillLog,
+  비밀번호 필드 값이 snapshot 에 안 나오는 테스트, 등록 안 된 파일 upload 거부.
+
+### T2.5 SubmitGuard — click · L3 격리 · L4 대화상자 · L5 사후 감지 · ready_for_review
+- 의존: T2.2, T2.3, T2.4
+- 범위: `src/auto_apply/{adapters/browser/,services/browser_toolbox*.py,services/submit_guard*.py,domain/,contracts/}`, `tests/`
+- 할 일: `click(ref)` = 분류(T2.2) → Safe 는 relaxed(단계 저장·업로드 POST 허용), Risky 는 **strict 창**: 클릭 전후 창 동안
+  비-GET(document/xhr/fetch/beacon) 전부 abort + init script 로 `form.submit/requestSubmit`·submit 이벤트 차단(iframe 포함).
+  차단 발생 → `SUBMIT_BLOCKED` 반환. L4: FILL 단계 `confirm()/beforeunload` 자동 거절. L5: 클릭 후 URL/본문 완료 어휘 →
+  run 즉시 중단 + `INCIDENT` 이벤트. `ready_for_review(submit_ref, notes)`: 제출 대상 기술자(선택자 후보·텍스트·위치) + FillLog 확정.
+  **하네스 설정은 가이드·프롬프트·도구 인자로 바꿀 수 없다**(모드 전환 API 없음). 실패하면 막는 쪽으로 닫힌다(라우팅 설치 실패 = 클릭 거부).
+- 수용 기준: native **짐 전 픽스처에서 FILL 단계 제출 0건** — 모든 버튼을 차례로 누르는 적대적 스크립트로(T2.3 기록 서버 단언),
+  다단계 중간 저장은 통과, 완료 페이지 도달 시 INCIDENT, confirm 거절 테스트, 하네스 층을 하나씩 끄면 테스트가 실패하는지 확인.
+
+### T2.6 로그인 벽 감지 · 사람 핸드오프
+- 의존: T2.3, T2.4
+- 범위: `src/auto_apply/{ports/human_gate.py,adapters/human_gate/,services/browser_toolbox*.py,domain/,contracts/}`, `tests/`
+- 할 일: `request_login(site)`·`request_human(reason)` 도구 + `HumanGate` port(실행이 사람 응답을 기다리는 통로 — asyncio Future,
+  최대 대기 설정). 구현 2개: 인메모리(테스트·단일 프로세스) — UI 연결은 M3/M4. 로그인 벽 휴리스틱(비밀번호 입력 필드·로그인 URL
+  패턴)은 domain 순수 함수, 도구는 **비밀번호를 입력하지 않는다**(절대 규칙 3 — fill 이 password 타입 필드를 거부). CAPTCHA 감지 시
+  `request_human`. 타임아웃이면 `NEEDS_LOGIN`/`NEEDS_INPUT` 결과로 종료(상태 전이는 M3/M4 가 ApplicationService 로).
+- 수용 기준: native 로그인 벽 픽스처 — 감지 → 대기 → (테스트가 사람 대신 쿠키 설정) → 재개 → 폼 도달. password 필드 fill 거부 테스트,
+  타임아웃 테스트, 로그인 휴리스틱 단위 테스트.
 
 ## M3 · 에이전트 런타임 · 채우기(fill) run
 목표: AgentRuntime 3구현, MCP(HTTP) 노출, fill run 이 픽스처 사이트에서 FillLog + `ready_for_review` 까지.
