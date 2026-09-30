@@ -54,6 +54,7 @@ from auto_apply.services.document import DocumentService
 from auto_apply.services.profile import DEFAULT_USER_ID, ProfileService
 from auto_apply.services.profile_drafts import ProfileDraftService
 from auto_apply.services.run_artifacts import RunArtifacts
+from auto_apply.services.run_tokens import RunTokens
 from auto_apply.services.uploads import UploadService
 
 
@@ -87,6 +88,8 @@ class Container:
     reentry: FillReentry
     # 변경 API 가 요구하는 설치별 토큰 (§A10). 웹은 `GET /api/session` 으로 받는다.
     session_token: str
+    # run 별 MCP 토큰 (§A5·§A10) — CLI 런타임이 run() 안에서 open 한다(T3.6), /mcp 가 resolve 한다
+    run_tokens: RunTokens
 
 
 class StartupError(RuntimeError):
@@ -261,4 +264,5 @@ def build_container(cfg: Settings) -> Container:
         human_gate=human_gate,
         reentry=FillReentry(uow, applications, artifacts, profiles, held, runner.enqueue),
         session_token=ensure_session_token(cfg.session_token_path),
+        run_tokens=RunTokens(),
     )

@@ -19,6 +19,7 @@ dependencies = [
     "platformdirs>=4.3",
     "python-multipart>=0.0.32",
     "pypdf>=6.0",
+    "mcp>=1.12,<2",
 ]
 
 [project.scripts]
@@ -107,7 +108,7 @@ source_modules = ["auto_apply.domain"]
 forbidden_modules = [
     "auto_apply.ports", "auto_apply.adapters", "auto_apply.services", "auto_apply.runner", "auto_apply.api", "auto_apply.bootstrap", "auto_apply.config",
     "auto_apply.__main__",
-    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright", "mcp",
 ]
 
 [[tool.importlinter.contracts]]
@@ -117,7 +118,7 @@ source_modules = ["auto_apply.contracts"]
 forbidden_modules = [
     "auto_apply.ports", "auto_apply.adapters", "auto_apply.services", "auto_apply.runner",
     "auto_apply.api", "auto_apply.bootstrap", "auto_apply.__main__",
-    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright", "mcp",
 ]
 
 [[tool.importlinter.contracts]]
@@ -127,7 +128,7 @@ source_modules = ["auto_apply.ports"]
 forbidden_modules = [
     "auto_apply.adapters", "auto_apply.services", "auto_apply.runner", "auto_apply.api",
     "auto_apply.bootstrap", "auto_apply.__main__",
-    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright", "mcp",
 ]
 
 [[tool.importlinter.contracts]]
@@ -137,7 +138,7 @@ source_modules = ["auto_apply.ai"]
 forbidden_modules = [
     "auto_apply.adapters", "auto_apply.ports", "auto_apply.services", "auto_apply.runner",
     "auto_apply.api", "auto_apply.bootstrap", "auto_apply.__main__",
-    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright", "mcp",
 ]
 
 [[tool.importlinter.contracts]]
@@ -147,7 +148,7 @@ source_modules = ["auto_apply.services"]
 forbidden_modules = [
     "auto_apply.adapters", "auto_apply.runner", "auto_apply.api", "auto_apply.bootstrap",
     "auto_apply.__main__",
-    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright", "mcp",
 ]
 
 [[tool.importlinter.contracts]]
@@ -156,7 +157,7 @@ type = "forbidden"
 source_modules = ["auto_apply.runner"]
 forbidden_modules = [
     "auto_apply.adapters", "auto_apply.api", "auto_apply.bootstrap", "auto_apply.__main__",
-    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright",
+    "sqlalchemy", "alembic", "fastapi", "uvicorn", "anthropic", "playwright", "mcp",
 ]
 
 [[tool.importlinter.contracts]]
@@ -172,7 +173,7 @@ forbidden_modules = [
 name = "bootstrap 은 api·진입점을 모른다"
 type = "forbidden"
 source_modules = ["auto_apply.bootstrap"]
-forbidden_modules = ["auto_apply.api", "auto_apply.__main__", "fastapi", "uvicorn"]
+forbidden_modules = ["auto_apply.api", "auto_apply.__main__", "fastapi", "uvicorn", "mcp"]
 
 [[tool.importlinter.contracts]]
 # "어댑터를 만드는 곳은 bootstrap 하나" (§A2). bootstrap 을 거쳐서 닿는 것은 정상이라 직접 import 만 막는다.

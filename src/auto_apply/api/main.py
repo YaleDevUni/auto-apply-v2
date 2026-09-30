@@ -10,11 +10,13 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.routing import Route
 
 from auto_apply import __version__
 from auto_apply.api import document_routes, draft_routes, profile_routes
 from auto_apply.api.deps import ContainerDep
 from auto_apply.api.errors import install_error_handlers
+from auto_apply.api.mcp import MCP_PATH, McpEndpoint
 from auto_apply.api.security import TOKEN_HEADER, LocalSecurityMiddleware, session_router
 from auto_apply.bootstrap import build_container, prepare_data_dir
 from auto_apply.config import Settings, load_settings
@@ -23,6 +25,7 @@ from auto_apply.config import Settings, load_settings
 def create_app(settings: Settings | None = None, *, prepare: bool = True) -> FastAPI:
     """`prepare=False` 는 호출자가 이미 `prepare_data_dir` 를 끝낸 경우(콘솔 스크립트)."""
     cfg = settings or load_settings()
+    mcp = McpEndpoint()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -32,7 +35,9 @@ def create_app(settings: Settings | None = None, *, prepare: bool = True) -> Fas
         app.state.container = container
         await container.runner.start()
         try:
-            yield
+            # MCP 요청이 먼저 끊겨야 러너 정지 뒤 도구 호출이 브라우저를 다시 건드리지 않는다
+            async with mcp.running():
+                yield
         finally:
             # 러너가 먼저 서야 브라우저를 쓰던 작업이 닫힌 브라우저를 다시 띄우지 않는다.
             await container.runner.stop()
@@ -51,7 +56,7 @@ def create_app(settings: Settings | None = None, *, prepare: bool = True) -> Fas
     install_error_handlers(app)
     # 나중에 추가한 미들웨어가 바깥이다: CORS(바깥) → 로컬 보안(안쪽). 프리플라이트는 CORS 가
     # 답하고, 보안 미들웨어의 403 에도 CORS 헤더가 붙어 웹이 에러 본문을 읽는다 (§A10).
-    app.add_middleware(LocalSecurityMiddleware, web_origin=cfg.web_cors_origin)
+    app.add_middleware(LocalSecurityMiddleware, web_origin=cfg.web_cors_origin, mcp_path=MCP_PATH)
     # 웹 콘솔 개발 서버(Vite)에서의 cross-origin 호출 — 설정된 origin 하나만 연다.
     if cfg.web_cors_origin is not None:
         app.add_middleware(
@@ -64,6 +69,8 @@ def create_app(settings: Settings | None = None, *, prepare: bool = True) -> Fas
     app.include_router(profile_routes.router)
     app.include_router(document_routes.router)
     app.include_router(draft_routes.router)
+    # CLI 런타임의 도구 통로(§A5) — run 토큰으로만 열린다. ASGI 앱 그대로라 메서드는 MCP 가 가린다
+    app.router.routes.append(Route(MCP_PATH, endpoint=mcp, include_in_schema=False))
 
     @app.get("/health")
     async def health(c: ContainerDep) -> dict[str, Any]:

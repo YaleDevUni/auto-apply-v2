@@ -252,6 +252,15 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   `ReviewRecord`(`contracts/submit_guard.py`, 고유식별정보 없어야 만들어짐)로 확정하고 run 을 끝낸다. 요소는 누르지 않는다.
   L2 판정은 그 순간 화면(`SubmitGuard.last_seen`)으로 해서 마지막 단계 신호도 기록된다. `click` 과 단계 이동 사후 확인은
   `browser_toolbox_click.py`(§A4 D17).
+- **MCP 노출(T3.5)**: `api/mcp.py` 가 `/mcp` 에 MCP streamable HTTP(SDK `mcp` 1.x, 상태 없음·JSON 응답)를 연다 — 앱과 같은
+  프로세스·포트. 도구 목록은 `agent_tools()`(= TOOLS) 그대로이고, 입력 검증은 SDK 가 아니라 도구 상자가 한다(잘못된 인자도
+  `ToolResult` 에러로 돌아가고 run 은 계속, §A6). 호출은 요청의 run 토큰(`Authorization: Bearer`)이 가리키는 그 run 의
+  `call_tool`(= `FillSession.call` → `BrowserToolbox.call`)로만 가서 한도 계수·FillLog 가 in-process 경로와 같다. 도구가 예외를
+  내면 에이전트에게는 일반 오류 문구만 간다(예외 문자열은 페이지·입력을 담을 수 있다).
+  run 토큰은 `services/run_tokens.RunTokens`(Container.run_tokens): 런타임이 `run()` 안에서 `open(call_tool)` 으로 받고
+  블록을 나가면(끝·예외·취소) 폐기 — AgentRuntime port 는 그대로다(CLI 런타임 T3.6 은 bootstrap 이 넘긴 `open` 을 쓴다).
+  토큰은 요청 입구와 도구 직전에 두 번 본다. `ToolReply.done` 은 MCP 로 보내지 않는다 — 런타임이 `open` 에 넘기는
+  `call_tool` 을 감싸서 보고 프로세스를 멈춘다. 토큰은 메모리에만 있어 재기동하면 전부 무효다. 경로는 정확히 `/mcp`(`/mcp/` 는 REST 로 보여 거부된다 — 닫힌 쪽).
 - ref 는 `e<N>` — snapshot 마다 새 번호(재사용 없음)라 옛 ref 가 다른 요소를 가리킬 수 없다. 드라이버가 요소 핸들을
   Python 쪽 표에 쥐고(DOM 에 표시 속성을 심지 않아 페이지가 ref 를 위조할 수 없다), 이동·새 snapshot 에 표를 버린다.
   snapshot 은 모든 프레임(iframe)을 훑고(`node.frame`), 숨긴 파일 입력도 싣는다. shadow DOM 은 아직 보지 않는다.
@@ -449,7 +458,7 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
 
 ## §A10 보안 · 설정
 
-- 서버는 `127.0.0.1` 만. MCP 엔드포인트는 run 별 일회성 토큰. HTTP 요청은 `api/security.py` 미들웨어가 세 겹으로 본다:
+- 서버는 `127.0.0.1` 만. MCP 엔드포인트(`/mcp`)는 run 별 일회성 토큰(§A5). HTTP 요청은 `api/security.py` 미들웨어가 세 겹으로 본다:
   1. `Host` 가 `127.0.0.1`·`localhost` 가 아니면 403 — DNS 리바인딩이면 공격 페이지가 "같은 출처"가 돼 CORS·Origin 이 못 막는다.
   2. `Origin` 이 **있으면** `WEB_CORS_ORIGIN` 이거나 이 서버와 같은 출처여야 한다(아니면 403, GET 포함). 브라우저는 변경 요청에
      Origin 을 항상 붙이므로 없는 요청은 브라우저 밖 로컬 프로세스다 — 그쪽은 3 이 막는다.
@@ -458,11 +467,15 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
      웹 콘솔은 `GET /api/session`(no-store) 으로 받는다 — 1·2 와 CORS 가 타 출처를 막는다.
      **한계**: 같은 PC 의 로컬 프로세스·다른 OS 계정도 `/api/session` 으로 토큰을 얻을 수 있다(파일 0600 으로는 못 막는다).
      D1 위협 모델(로컬 1인)상 허용하고, 막는 대상은 브라우저가 대신 보내는 타 사이트 요청이다 — 강화는 M7.
+  **MCP·REST 교차 거부(T3.5)**: `/mcp` 는 1·2 를 똑같이 거치고 3 대신 살아 있는 run 토큰(`Authorization: Bearer`, 모든 메서드)을
+  요구한다 — 설치 토큰은 어느 헤더로 와도 통하지 않는다(403 `invalid_token`, 401 이면 MCP 클라이언트가 OAuth 를 찾는다).
+  REST(`/mcp` 밖 전부)는 `Authorization` 헤더가 붙어 오면 거부하고, `X-Auto-Apply-Token` 이 붙어 왔는데 틀리면 GET 에도 거부한다
+  — run 토큰(에이전트 프로세스가 쥔 비밀)으로는 어떤 REST 도 열리지 않는다.
   보안 미들웨어는 CORS 안쪽이라 403 에도 CORS 헤더가 붙는다. CORS 허용 헤더는 `Content-Type`·토큰 헤더만.
 - API 에러는 한 모양: `{"error": {"code", "message", "details": [{"loc", "msg"}]}}`. 검증 실패 상세에 **입력값을 싣지 않는다**
   (FastAPI 기본 422 의 `input` 은 거부한 주민번호를 되돌려준다, 절대 규칙 5). 코드: `validation_error`·`unique_identifier_rejected`
   (422) · `extraction_failed`(422, 문서에서 글자를 못 뽑음) · `not_found`(404) · `conflict`(409) · `too_large`(413) ·
-  `unsupported_type`(415) · `host_not_allowed`·`origin_not_allowed`·`invalid_token`(403) ·
+  `unsupported_type`(415) · `host_not_allowed`·`origin_not_allowed`·`invalid_token`(403) · `unavailable`(503, MCP 가 lifespan 밖) ·
   `llm_invalid_output`·`llm_auth_required`·`llm_quota_exceeded`·`llm_error`(502, LLM 에러 문자열은 모델 출력 원문을 담을 수 있어
   응답에 싣지 않는다) · `internal_error`(500, 원인은 로그에만).
 - 설정(`settings` 테이블 + 최초 `.env` 없이도 동작): `llm_backend=cli|api`, API 키(파일 권한 0600), `submit_mode`, 대기 타임아웃, 언어.

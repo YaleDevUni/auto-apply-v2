@@ -8,6 +8,10 @@
    브라우저가 아닌 로컬 프로세스다 — 그쪽은 3 이 막는다.
 3. 변경 요청(POST·PUT·PATCH·DELETE)은 설치별 토큰 헤더가 맞아야 한다. 토큰은 데이터 디렉터리
    파일(0600)과 `GET /api/session` 으로만 얻는다 — 후자는 1·2 를 통과한 로컬 웹 콘솔만 부를 수 있다.
+
+MCP 엔드포인트(`mcp_path`)는 1·2 를 똑같이 거치고, 3 대신 run 토큰을 본다(`api/mcp.py`).
+통로는 교차하지 않는다 — REST 는 `Authorization` 헤더(run 토큰 자리)가 붙어 오면 거부하고,
+틀린 설치 토큰은 GET 에도 거부한다.
 """
 
 import secrets
@@ -33,9 +37,10 @@ def _hostname(host: str) -> str:
 class LocalSecurityMiddleware:
     """CORS 미들웨어 **안쪽**에 둔다 — 거부 응답에도 CORS 헤더가 붙어야 웹이 에러 본문을 읽는다."""
 
-    def __init__(self, app: ASGIApp, *, web_origin: str | None) -> None:
+    def __init__(self, app: ASGIApp, *, web_origin: str | None, mcp_path: str) -> None:
         self.app = app
         self._web_origin = web_origin
+        self._mcp_path = mcp_path
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -56,10 +61,14 @@ class LocalSecurityMiddleware:
         origin = headers.get("origin")
         if origin is not None and origin not in {self._web_origin, f"{scope['scheme']}://{host}"}:
             return "origin_not_allowed", "허용되지 않은 출처의 요청이다"
-        if scope["method"] in _MUTATING:
+        if scope["path"] == self._mcp_path:
+            return None  # 3 대신 run 토큰 — MCP 엔드포인트가 본다
+        if "authorization" in headers:
+            return "invalid_token", "run 토큰은 MCP 전용이다 — REST 는 열지 않는다"
+        given = headers.get(TOKEN_HEADER)
+        if given is not None or scope["method"] in _MUTATING:
             expected: str = scope["app"].state.container.session_token
-            given = headers.get(TOKEN_HEADER, "")
-            if not secrets.compare_digest(given.encode(), expected.encode()):
+            if not secrets.compare_digest((given or "").encode(), expected.encode()):
                 return "invalid_token", f"{TOKEN_HEADER} 헤더가 없거나 틀렸다"
         return None
 
