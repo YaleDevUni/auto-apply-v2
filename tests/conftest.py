@@ -18,8 +18,13 @@ Settings.model_config["env_file"] = None
 
 @pytest.fixture(autouse=True)
 def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """기본 data_dir 은 사용자의 실제 platformdirs 경로다 — 테스트가 거기에 DB 를 만들지 않게."""
+    """기본 data_dir 은 사용자의 실제 platformdirs 경로다 — 테스트가 거기에 DB 를 만들지 않게.
+
+    기본 LLM 은 claude_cli(D5)지만 게이트는 오프라인(stub)으로 돈다 — 실제 CLI 가 필요한 테스트는
+    인자로 고르고 `native` 를 붙인다.
+    """
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("LLM_PROVIDER", "stub")
 
 
 @pytest.fixture

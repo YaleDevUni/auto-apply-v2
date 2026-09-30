@@ -64,8 +64,8 @@ def test_shutdown_closes_browser_after_runner(tmp_path, monkeypatch):
     order: list[str] = []
     real_build = api_main.build_container
 
-    def build(cfg):
-        c = dataclasses.replace(real_build(cfg), browser=host)
+    def build(cfg, **kw):
+        c = dataclasses.replace(real_build(cfg, **kw), browser=host)
         stop_runner, close_browser = c.runner.stop, host.close
 
         async def runner_stop():

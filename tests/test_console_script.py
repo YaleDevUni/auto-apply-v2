@@ -82,6 +82,8 @@ def test_console_script_boots_and_serves_health(tmp_path):
         body = res.json()
         assert body["status"] == "ok"
         assert body["runner"] == {"running": True}
+        # 고른 포트가 앱 안까지 간다 — 금지 출처·MCP URL 이 이 값에서 나온다 (§A5·§A6)
+        assert body["server_origin"] == url
         assert Path(body["data_dir"]) == data_dir
         assert (data_dir / "db.sqlite3").is_file()
     finally:

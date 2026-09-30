@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
+from fastapi import FastAPI
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -24,6 +25,8 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from auto_apply.adapters.agent.claude_cli import ClaudeCliAgentRuntime
+from auto_apply.api.main import create_app
+from auto_apply.config import Settings
 from auto_apply.contracts.agent import AgentLimits, AgentOutcome, AgentTool
 from auto_apply.ports.agent import CallTool
 from auto_apply.services.run_tokens import RunTokens
@@ -31,12 +34,15 @@ from auto_apply.services.run_tokens import RunTokens
 MODEL = os.environ.get("AUTO_APPLY_TEST_CLAUDE_MODEL", "claude-haiku-4-5")
 
 
-@asynccontextmanager
-async def serving(app: ASGIApp) -> AsyncIterator[int]:
-    """앱을 lifespan 째 127.0.0.1 임의 포트에 띄우고 포트를 준다."""
+def _bind() -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("127.0.0.1", 0))
+    return sock
+
+
+@asynccontextmanager
+async def _serve(app: ASGIApp, sock: socket.socket) -> AsyncIterator[int]:
     server = uvicorn.Server(uvicorn.Config(app, lifespan="on", log_level="warning"))
     task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
@@ -49,6 +55,23 @@ async def serving(app: ASGIApp) -> AsyncIterator[int]:
         server.should_exit = True
         await task
         sock.close()
+
+
+@asynccontextmanager
+async def serving(app: ASGIApp) -> AsyncIterator[int]:
+    """앱을 lifespan 째 127.0.0.1 임의 포트에 띄우고 포트를 준다."""
+    async with _serve(app, _bind()) as port:
+        yield port
+
+
+@asynccontextmanager
+async def serving_app(cfg: Settings) -> AsyncIterator[FastAPI]:
+    """콘솔 스크립트처럼 포트를 먼저 잡고 그 포트로 앱을 만들어 띄운다 — bootstrap 이 조립한
+    런타임(`container.agent`)이 바로 이 앱의 /mcp 를 가리킨다 (T3.7)."""
+    sock = _bind()
+    app = create_app(cfg, port=sock.getsockname()[1])
+    async with _serve(app, sock):
+        yield app
 
 
 def echo_mcp_app(tokens: RunTokens, tools: Sequence[AgentTool]) -> Starlette:

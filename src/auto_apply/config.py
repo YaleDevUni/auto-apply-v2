@@ -6,7 +6,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from platformdirs import user_config_dir, user_data_dir
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 APP_NAME = "auto-apply"
@@ -56,7 +56,7 @@ def env_files(
 
 
 class Settings(BaseSettings):
-    """환경변수 → 어댑터 선택 (bootstrap.py, §A2). `.env` 없이도 돈다(§A10).
+    """환경변수 → 어댑터 선택 (bootstrap 패키지, §A2). `.env` 없이도 돈다(§A10).
 
     읽을 `.env` 는 프로세스 기동(import) 시점의 cwd·환경으로 정한다 — `env_files()` 참고.
     """
@@ -65,8 +65,10 @@ class Settings(BaseSettings):
 
     app_env: Literal["local", "prod"] = "local"
 
-    # 어댑터 선택
-    llm_provider: Literal["stub", "anthropic", "claude_cli"] = "stub"
+    # 어댑터 선택. 기본은 이 머신에 로그인된 Claude Code 구독(D5) — fill run 에이전트도 이것으로
+    # 고른다(bootstrap/agent.py). 테스트·오프라인 게이트는 `stub` 을 명시한다
+    # (브라우저를 띄우지 않는다).
+    llm_provider: Literal["stub", "anthropic", "claude_cli"] = "claude_cli"
     storage: Literal["local", "memory"] = "local"
     resume_engine: Literal["simple"] = "simple"
     # 프로필·경험·답변KB·문서 메타도 이 repository 에 있다 (§A7) — 따로 고르는 소스가 없다.
@@ -79,11 +81,11 @@ class Settings(BaseSettings):
 
     # 외부 서비스
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-5"
+    anthropic_model: str = "claude-sonnet-5-5"
     # LLM_PROVIDER=claude_cli 일 때만 — API 키 대신 이 머신에 로그인된 Claude Code 구독을 쓴다.
     # `claude login`(또는 `claude setup-token`)이 이미 돼 있어야 한다.
     claude_cli_binary: str = "claude"
-    claude_cli_model: str = "claude-sonnet-5"
+    claude_cli_model: str = "claude-sonnet-5-5"
     claude_cli_max_budget_usd: float = 0.5
 
     # 안전장치 (00-product 절대 규칙 2)
@@ -94,6 +96,11 @@ class Settings(BaseSettings):
     # run 이 사람(로그인·CAPTCHA·ask_user 질문)을 기다리는 최대 초 (§A5)
     # — 넘기면 NEEDS_LOGIN/NEEDS_INPUT 으로 끝나고, 늦은 답은 재진입 run 이 받는다
     human_wait_s: float = Field(default=600.0, ge=1, le=24 * 3600)
+    # fill run 한 번의 상한 (§A6 AgentLimits) — 넘기면 그 run 은 FAILED(재시도 없음).
+    # 시간은 사람 대기를 품어야 한다: 한 번의 대기보다 짧으면 ask_user 가 답을 받기 전에
+    # run 이 끊긴다.
+    agent_max_tool_calls: int = Field(default=200, ge=1)
+    agent_max_seconds: float = Field(default=1800.0, gt=0)
 
     # 이력서 블록 개수 안전 상한 (domain/resume_blocks.select_relevant_blocks). 몇 개를 보여줄지는
     # 가이드 + LLM 판단이 정하고, 이 값은 fact 가 비정상적으로 많을 때의 프롬프트 폭주 방지판이다.
@@ -132,6 +139,14 @@ class Settings(BaseSettings):
         _ = parts.port  # 포트가 숫자가 아니면 여기서 ValueError
         return v
 
+    @model_validator(mode="after")
+    def _run_outlasts_human_wait(self) -> "Settings":
+        if self.agent_max_seconds <= self.human_wait_s:
+            raise ValueError(
+                "AGENT_MAX_SECONDS 는 HUMAN_WAIT_S 보다 커야 한다 (사람 대기를 품어야 한다)"
+            )
+        return self
+
     @property
     def dev_mode(self) -> bool:
         """§A10 개발 모드. API 문서(/docs·/redoc·/openapi.json)는 이때만 연다."""
@@ -156,6 +171,11 @@ class Settings(BaseSettings):
     def chrome_profile_dir(self) -> Path:
         """앱 전용 Chrome user-data-dir (§A1, D6). 사용자 기본 프로필은 쓰지 않는다."""
         return self.data_dir / "chrome-profile"
+
+    @property
+    def runs_dir(self) -> Path:
+        """에이전트 run 작업 디렉터리 `runs/<run_id>/`(§A1·§A6) — CLI 의 cwd·mcp.json·transcript."""
+        return self.data_dir / "runs"
 
     @property
     def guide_dir(self) -> Path:

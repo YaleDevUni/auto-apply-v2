@@ -315,8 +315,10 @@
   모델 기본값 최신화, run 한도 설정 키(도구 호출 수·시간, T3.3 이관). 빈 Scripted 런타임을 `llm_provider` 에 따른 실제 런타임 선택으로 교체
   (stub 이면 Scripted — 브라우저 안 띄움). **앱의 실제 포트**를 BrowserToolbox `forbidden_origins`(T2.4·T3.3 이관 — 지금은 `cfg.web_cors_origin` 만)와
   CLI 런타임 MCP URL 에 같은 값으로 주입(`--port 0` 이면 고른 포트). BrowserHost 와 짝지은 PageDriver·SubmitGuard 조립 확인(T2.4 이관).
+  T3.6 이관: `runner/fill.py` 가 `runtime.run(..., run_id=run_id)` 를 넘기게(지금 CLI 작업 디렉터리가 `runs/agent_<hex>`), runs 디렉터리·human_wait_s·model 배선.
 - 수용 기준: `--port 0` 기동 → forbidden_origins·MCP URL 에 실제 포트가 들어감을 단언, 앱 기동 → fill job 투입 → Scripted 런타임으로 AWAITING_APPROVAL
   통합 테스트, llm_provider 별 런타임 선택 표 테스트, bootstrap 파일들 200줄 이하.
+  **ask_user 가 60초 넘게 기다려도 claude CLI 의 MCP 호출이 끊기지 않음**(T3.6 미검증 — native 1건, 느려도 됨; 끊기면 타임아웃 설정·재시도 방식 결정).
 
 ### T3.8 AnthropicApiAgentRuntime
 - 의존: T3.7

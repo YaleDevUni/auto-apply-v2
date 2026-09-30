@@ -1,7 +1,8 @@
 """`auto-apply` 콘솔 스크립트 — 한 프로세스에 API·JobRunner 를 띄운다 (§A1).
 
-소켓은 여기서 직접 바인드한다: `--port 0` 이면 OS 가 고른 실제 포트를 알아야 사용자·테스트에게
-주소를 알려줄 수 있는데, uvicorn 은 설정값(0)만 로그에 찍는다.
+소켓은 여기서 직접, 앱을 만들기 전에 바인드한다: `--port 0` 이면 OS 가 고른 실제 포트를
+사용자·테스트에게 알려야 하고, 앱도 그 포트를 금지 출처·MCP URL 에 넣어야 한다 — uvicorn 은
+설정값(0)만 안다.
 """
 
 import argparse
@@ -50,7 +51,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     except StartupError as e:
         log.error(str(e), application_id=None, run_id=None)
         raise SystemExit(1) from None
-    app = create_app(cfg, prepare=False)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     # 재기동 직후 TIME_WAIT 로 바인드가 막히지 않게. Windows 의 SO_REUSEADDR 는 남의 포트까지
     # 가로챌 수 있는 다른 의미라 켜지 않는다.
@@ -61,6 +61,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     except OSError as e:
         sock.close()
         raise SystemExit(f"auto-apply: {HOST}:{args.port} 에 바인드할 수 없다 — {e}") from e
+    # 바인드가 먼저다 — 앱은 실제 포트를 금지 출처·MCP URL 에 넣는다(§A5·§A6)
+    app = create_app(cfg, prepare=False, port=sock.getsockname()[1])
     config = uvicorn.Config(app, log_level="info", lifespan="on")
     server = _Server(config)
     try:

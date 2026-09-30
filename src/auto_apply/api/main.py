@@ -21,9 +21,21 @@ from auto_apply.api.security import TOKEN_HEADER, LocalSecurityMiddleware, sessi
 from auto_apply.bootstrap import build_container, prepare_data_dir
 from auto_apply.config import Settings, load_settings
 
+# `make api`(uvicorn --port 8000)의 포트. uvicorn 은 lifespan 을 끝낸 뒤에 바인드하고 고른 포트를
+# 앱에 알려주지 않는다 — 그래서 모듈 수준 앱은 이 값을 믿는다(다른 포트로 띄우면 MCP URL 이
+# 틀려 CLI 런타임은 MCP 연결 점검에서 run 을 멈춘다, 닫힌 쪽). 콘솔 스크립트는 바인드한 실제
+# 포트를 넘긴다.
+DEV_API_PORT = 8000
 
-def create_app(settings: Settings | None = None, *, prepare: bool = True) -> FastAPI:
-    """`prepare=False` 는 호출자가 이미 `prepare_data_dir` 를 끝낸 경우(콘솔 스크립트)."""
+
+def create_app(
+    settings: Settings | None = None, *, prepare: bool = True, port: int | None = None
+) -> FastAPI:
+    """`prepare=False` 는 호출자가 이미 `prepare_data_dir` 를 끝낸 경우(콘솔 스크립트).
+
+    `port` 는 앱이 실제로 받는 포트 — 금지 출처(§A5)와 MCP URL(§A6)에 같은 값으로 들어간다.
+    None 은 포트가 없는 테스트 전송(ASGI) 전용이다.
+    """
     cfg = settings or load_settings()
     mcp = McpEndpoint()
 
@@ -31,7 +43,7 @@ def create_app(settings: Settings | None = None, *, prepare: bool = True) -> Fas
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if prepare:
             prepare_data_dir(cfg)
-        container = build_container(cfg)
+        container = build_container(cfg, port=port)
         app.state.container = container
         await container.runner.start()
         try:
@@ -88,10 +100,12 @@ def create_app(settings: Settings | None = None, *, prepare: bool = True) -> Fas
             },
             "runner": {"running": c.runner.running},
             "dry_run_only": c.settings.dry_run_only,
+            # 금지 출처·MCP URL 이 이 값에서 나온다 — `--port 0` 이면 고른 포트
+            "server_origin": c.server_origin,
         }
 
     return app
 
 
 # `uvicorn auto_apply.api.main:app` (make api) 용. 콘솔 스크립트는 create_app 을 직접 부른다.
-app = create_app()
+app = create_app(port=DEV_API_PORT)

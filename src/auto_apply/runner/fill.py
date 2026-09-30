@@ -86,7 +86,7 @@ class FillRunHandler:
             )
             held = self._held.get(record.application_id)
             toolbox = self._toolbox(record, run_id, held)
-            session, outcome = await self._drive(record, toolbox, resume, held)
+            session, outcome = await self._drive(record, run_id, toolbox, resume, held)
         except Exception as exc:
             await self._finish_run(run_id, RunStatus.FAILED, error=describe_error(exc))
             raise
@@ -128,6 +128,7 @@ class FillRunHandler:
     async def _drive(
         self,
         record: ApplicationRecord,
+        run_id: str,
         toolbox: BrowserToolbox,
         resume: tuple[str, FillSource] | None,
         held: Mapping[str, str],
@@ -147,8 +148,9 @@ class FillRunHandler:
         )  # fmt: skip
         try:
             async with asyncio.timeout(self._limits.max_seconds + HARD_TIMEOUT_GRACE_S):
+                # run_id: CLI 런타임의 작업 디렉터리·transcript 가 runs/<run_id>/ 에 붙는다(§A6)
                 outcome = await self._runtime.run(
-                    prompt, agent_tools(), session.call, limits=self._limits
+                    prompt, agent_tools(), session.call, limits=self._limits, run_id=run_id
                 )
         except TimeoutError:
             outcome = AgentOutcome(ended=AgentEnd.TIME_LIMIT, tool_calls=session.calls)

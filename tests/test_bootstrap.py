@@ -39,7 +39,7 @@ def test_resume_llm_keeps_slash_commands_locked():
     """외부 공고 텍스트가 프롬프트에 들어가는 인스턴스는 슬래시커맨드 표면을 열지 않는다
 
     (adapters/llm/claude_code_cli.py "turn()" 절)."""
-    c = build_container(Settings(storage="memory", llm_provider="claude_cli"))
+    c = build_container(Settings(storage="memory", llm_provider="claude_cli"), port=8765)
     assert isinstance(c.llm, ClaudeCodeCliLLM)
     assert c.llm._allow_slash_commands is False
 
@@ -154,7 +154,7 @@ async def test_resume_pipeline_reads_profile_and_facts_from_repository():
 
 
 async def test_fill_handler_is_registered_and_fails_closed_without_runtime():
-    """T3.6 전까지 실제 런타임이 없다 — fill job 은 브라우저를 띄우지 않고 FAILED 로 닫힌다."""
+    """stub(오프라인) 조합은 빈 스크립트 런타임 — fill job 은 브라우저를 띄우지 않고 FAILED."""
     c = build_container(Settings(storage="memory", repository="memory", llm_provider="stub"))
     fill = c.runner._handlers[JobKind.FILL]
     app = await c.applications.create("https://jobs.example.com/p/1")

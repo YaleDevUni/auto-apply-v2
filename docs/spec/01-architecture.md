@@ -33,6 +33,11 @@
   `uvicorn auto_apply.api.main:app` 으로 띄워도 같다 — ① 데이터 디렉터리 생성 ② Alembic head 자동 적용
   ③ 컨테이너 조립 ④ JobRunner 기동. 종료 시 JobRunner 를 먼저 세우고 브라우저를 닫는다. 바인드는 `127.0.0.1` 고정(옵션 없음),
   `--port 0` 이면 빈 포트를 골라 `auto-apply ready: http://127.0.0.1:<port>` 한 줄을 찍는다. 상태 확인은 `GET /health`.
+- **앱의 실제 출처**(T3.7): 콘솔 스크립트는 소켓을 먼저 바인드하고 그 포트로 `create_app(port=)` 한다 — 컨테이너가
+  `http://127.0.0.1:<port>` 를 BrowserToolbox 금지 출처(§A5)와 CLI 런타임 MCP URL(§A6)에 **같은 값으로** 넣는다
+  (`/health` 의 `server_origin`). uvicorn 은 lifespan 뒤에 바인드하고 포트를 앱에 알려주지 않아서 `uvicorn
+  auto_apply.api.main:app`(`make api`)은 `DEV_API_PORT`(8000)를 믿는다 — 다른 포트로 띄우면 MCP 연결 점검에서 run 이
+  멈춘다(닫힌 쪽). 포트 없는 조립(ASGI 테스트 전송)에서 `LLM_PROVIDER=claude_cli` 는 `StartupError`.
 - BrowserHost(`ports/browser.py`, D6): 기동 시 띄우지 않고 **첫 사용 때** 설치된 Chrome 을 `chrome-profile/` 로 headful
   기동한다 — `channel="chrome"` 우선, 실패하면 mac/Windows 표준 설치 경로를 찾아 `executable_path`, 둘 다 없으면
   `ChromeNotFound`. 사용자 기본 Chrome 프로필(또는 그 안)을 가리키면 기동을 거부한다(`PolicyViolation`).
@@ -52,7 +57,7 @@ adapters    port 구현 (llm/, agent/, browser/, pdf/, storage/, repository/)
 services    유스케이스 (ApplicationService, ProfileService, GuideService, DocumentService) — port 만 안다
 runner      JobRunner + run 핸들러 (fill/revise/submit/generate)
 api         라우터 (컨테이너에서 서비스 꺼내 씀)
-bootstrap   ★ 어댑터를 생성하는 유일한 파일
+bootstrap   ★ 어댑터를 생성하는 유일한 패키지 (data·adapters·agent·container)
 ```
 
 `make arch` = import-linter(`pyproject.toml` `[tool.importlinter]`). 의존 방향은
@@ -272,6 +277,7 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   있어 `click` 몫), `upload` = 파일 입력에 문서 **바이트**(`DocumentReader.read_document(user_id, id)` — 경로 인자 없음).
 - `navigate` 는 http(s) 만(`javascript:`·`data:`·`file:` 는 L1 우회 통로) + `forbidden_origins` 거부 — 앱 자신의 콘솔을
   자동화 브라우저에서 열면 같은 출처가 되어 승인 API 를 부를 수 있다. 루프백 별칭(127/8·localhost·::1)은 포트로 묶는다.
+  금지 출처 = 앱의 실제 출처(§A1, `--port 0` 이면 고른 포트) + `WEB_CORS_ORIGIN`.
 - FillLog(`contracts/fill_log.py`): 성공한 fill/select/check/upload 만 `(seq, step, action, ref, field{role, name, 프레임 URL},
   source, value|checked|document_id)` 로 쌓는다(fill 값은 정규화한 값, §A4). `source={kind, key}` — profile·fact·answer_kb 는 key 필수,
   generated·user 는 선택, upload 는 문서가 근거라 없다. 값에 주민등록번호 꼴이 있으면 사이트엔 넣되 기록하지 않고
@@ -370,7 +376,13 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   run 을 failed 로 닫고 다시 던져 §A9 재시도 정책에 맡긴다. 끝 전이가 그 사이 취소 등에 밀리면(`InvalidTransition`)
   run 을 failed 로 닫고 러너가 CONFLICT 로 둔다. 정지(취소)면 run 을 닫지 않고 가드도 내리지 않는다 — 크래시 복구가
   INTERRUPTED·QUEUED 로 되돌린다.
-- 한도(`AgentLimits`, 기본 도구 200회·1800초): 런타임이 지키고, `FillSession` 이 한 번 더 센다 — 넘친 호출은 도구에 닿지
+- 런타임 선택(T3.7, `bootstrap/agent.py`): `LLM_PROVIDER` 로 — `claude_cli`(기본, D5) → CLI 런타임(앱 출처 §A1·
+  `DATA_DIR/runs`·`HUMAN_WAIT_S`·`CLAUDE_CLI_MODEL`), `stub`(테스트·오프라인 게이트) → 빈 `ScriptedAgentRuntime`(도구 0회로
+  FAILED, 브라우저 안 띄움), `anthropic` → API 런타임 전까지(T3.8) 빈 Scripted. fill 핸들러는 `run_id` 를 넘겨 CLI 작업
+  디렉터리가 `runs/<run_id>/` 가 된다. 실측(native, 2.1.285): ask_user 70초 대기도 끊기지 않는다 — `HUMAN_WAIT_S=5`
+  (도구 타임아웃 65초)로 돌리면 `tool "ask_user" timed out after 65s` 로 끊기므로 `MCP_TOOL_TIMEOUT` 이 지배하는 값이다.
+- 한도(`AgentLimits`, 설정 `AGENT_MAX_TOOL_CALLS`·`AGENT_MAX_SECONDS`, 기본 도구 200회·1800초 — 시간은 `HUMAN_WAIT_S`
+  보다 커야 설정이 로드된다): 런타임이 지키고, `FillSession` 이 한 번 더 센다 — 넘친 호출은 도구에 닿지
   않고 `run_limit`(done) 로 돌아간다. 런타임이 멈춰 버리면 호출자가 한도+30초에 끊는다.
 - 기록(`services/run_artifacts.py`): BlobStore `runs/<run_id>/review.json`(ReviewRecord) · `fill_log.json`(끝난 모양과 상관없이
   FillLog 부분 기록 — 재진입 run 이 읽는다). 저장 직전에 고유식별정보를 한 번 더 본다.
@@ -497,7 +509,8 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   `unsupported_type`(415) · `host_not_allowed`·`origin_not_allowed`·`invalid_token`(403) · `unavailable`(503, MCP 가 lifespan 밖) ·
   `llm_invalid_output`·`llm_auth_required`·`llm_quota_exceeded`·`llm_error`(502, LLM 에러 문자열은 모델 출력 원문을 담을 수 있어
   응답에 싣지 않는다) · `internal_error`(500, 원인은 로그에만).
-- 설정(`settings` 테이블 + 최초 `.env` 없이도 동작): `llm_backend=cli|api`, API 키(파일 권한 0600), `submit_mode`, 대기 타임아웃, 언어.
+- 설정(`settings` 테이블 + 최초 `.env` 없이도 동작): `LLM_PROVIDER=claude_cli(기본)|anthropic|stub`, API 키(파일 권한 0600),
+  `submit_mode`, 대기 타임아웃(`HUMAN_WAIT_S`)·run 한도(`AGENT_MAX_*`), 언어.
   `settings` 테이블 전까지의 우선순위: 환경변수 > (개발 모드일 때만) `./.env` > 사용자 설정 디렉터리 `.env`
   (`platformdirs.user_config_dir("auto-apply")`, `AUTO_APPLY_CONFIG_DIR` 로 이동 가능). 개발 모드 = `AUTO_APPLY_DEV=1`
   이거나 cwd 에 `name = "auto-apply"` 인 `pyproject.toml` 이 있을 때. 설치본을 아무 폴더에서 실행해도 그 폴더의 `.env` 가

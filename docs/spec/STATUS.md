@@ -4,7 +4,7 @@
 
 ## 현재
 - 마일스톤: **M3 · 에이전트 런타임 · 채우기(fill) run** (M2 완료)
-- 다음 태스크: **T3.6** ClaudeCliAgentRuntime → T3.7 bootstrap 정리·배선 → T3.8 API 런타임
+- 다음 태스크: **T3.7** bootstrap 정리·실제 런타임 배선 → T3.8 API 런타임 → M3 완료
 - **병렬 실행 금지**(사용자 지시 2026-09-30, 메모리 부족) — 서브에이전트는 한 번에 하나.
 - 차단 요소: 없음
 - 결정: `.env.v2.bak` 보존(사용자 지시, 손대지 않음). `main` 은 M1 완료 시 push.
@@ -16,16 +16,8 @@
   v2 문서 삭제. 로컬 v2 데이터 삭제, `.env` 는 `.env.v2.bak` 백업 후 재생성. 세부는 각 커밋.
 - **M1 완료**(T1.1~T1.5): 프로필·경험·답변KB·문서 SQLite, ProfileService·REST·로컬 보안(설치 토큰·Host/Origin), 이력서 초안 추출·v2 임포터,
   웹 콘솔(TanStack Router) 전 화면 + make check 웹 게이트. 주민번호 우회(전각·구분자)·multipart·XSS 결함은 자체 검증에서 수정.
-- T2.2 제출 클릭 분류기(허용 목록·애매하면 Risky)·완료 어휘. type=submit "다음" 다단계 문제는 T2.5 설계 과제로 이관.
-- T2.1 BrowserHost — 설치 Chrome 탐지·전용 프로필 잠금·기본 프로필 거부(D6)·지연 기동. Windows 잠금 분기 실측은 M7.
-- T2.3 테스트 짐 — 픽스처 12종·제출 기록 서버·매니페스트, 하네스 없이는 12종 모두 제출됨(양성 대조). GET 탐색 제출 빈틈은 T2.5 설계 과제.
-- T2.4 BrowserToolbox 기본 도구·PageDriver·FillLog — 금지 도구 부재 단언, 비밀 칸 두 겹 거부. native contract 모듈 스코프(18→6초).
-- T2.5 SubmitGuard(L2~L5·ready_for_review) — 짐 17종 적대 스크립트 FILL 제출 0건. 첫 에이전트 44만 토큰 → 핸드오프 교대,
-  새 에이전트의 적대 리뷰가 fail-open 3건(strict 꼬리 누락·route abort 누락·relaxed GET 폼 제출) 발견·수정. 남는 위험은 §A4·M3 카드.
-- T2.6 로그인 벽·사람 핸드오프(HumanGate, 대기 중 가드 disarm→재개 re-arm, filechooser 가로채기) — 한도로 중단 → 핸드오프 교대.
-  Google 로그인 진입은 정상(navigator.webdriver=true, 봇탐지 우회 안 함). 범위 밖 adapters/browser 수정은 T2.5 이관 이행상 정당. bootstrap·UI 배선은 M3/M4.
-- T2.7 단계 이동 자동 통과(D17) — 분류기 STEP/LAST_STEP, type=submit 3단계 승인 없이 통과 후 최종 SUBMIT_BLOCKED. 카드 대비 변경 2건
-  (사후 확인 '입력칸·폼 제출 버튼 있으면 계속'으로 넓힘 — 최종 버튼은 분류기가 여전히 막음 / 신호 있으면 type=button 단계 버튼도 Risky) 수용. **M2 완료.**
+- **M2 완료**(T2.1~T2.7): 전용 프로필 Chrome·클릭 분류기·테스트 짐 17종+·BrowserToolbox·SubmitGuard L2~L5·로그인 핸드오프·D17 단계 이동 자동 통과.
+  짐 전 픽스처 FILL 제출 0건(D17 받아들인 위험 1종 제외). 남는 위험은 §A4·M3 끝 '실사용 점검'.
 - T3.1 v3 상태기계(+INCIDENT)·ApplicationService.transition 유일 통로(AST 봉인 테스트)·조건부 UPDATE 동시 전이 방어·Alembic 0003.
   지적: 크래시 복구 SUBMITTING→FAILED 는 '제출됐을 수 있음'을 숨김 → T3.2 에서 INCIDENT 로. 16만 토큰·62회(교대 기준 근처).
 - T3.2 JobRunner(jobs 0004·run_after 백오프·브라우저 슬롯 1)·재시도 분류(모르는 예외 FATAL, submit 은 절대 재시도 안 함)·크래시 복구
@@ -35,6 +27,8 @@
 - T3.4 ask_user·답변 KB·재진입 run — 민감 답은 에이전트에 값을 주지 않고(`source={user,key}` 로 앱이 채움) 프로세스 메모리에만.
   snapshot 으로 새던 구멍·재시작 뒤 빈 값 덮어쓰기를 자체 검증에서 수정. 범위 밖 수정(ai·config·bootstrap)은 카드 범위를 좁게 쓴 내 탓 — 정당.
 - T3.5 MCP(streamable HTTP, `/mcp`) — run 토큰만(설치 토큰·만료·다른 run 거부, run 토큰으로 REST 거부), 보안 장치 6곳 끄기 실측. mcp SDK `<2` 고정.
+- T3.6 ClaudeCliAgentRuntime — init 도구 목록이 우리 MCP 뿐임을 실행 중에도 강제, run 토큰은 env 로만, 프로세스 그룹째 정리.
+  실제 claude+Chrome 짐 e2e AWAITING_APPROVAL·제출 0건. CLAUDE.md·auto-memory 끼어듦을 env 로 차단(6.5k→583 토큰).
 
 ## 열린 질문 (다음 마일스톤 시작 전에 사용자에게)
 - (백로그) 부하 시 `tests/api/test_profile_api.py::test_experience_crud[memory]` 1회 실패(재현 안 됨) — 플레이키 여부 조사.
