@@ -127,6 +127,26 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
 | `report_failure(reason)` | 진행 불가 |
 | `commit_submit()` | **SUBMITTING run 에서만 노출.** 실제 클릭은 하네스가 (§A4 L6) |
 
+- 구조(T2.4): 도구 목록은 `services/browser_toolbox_specs.TOOLS` 한 곳(이름·설명·입력 모델), 입력 모델은
+  `contracts/browser_tools.py`(`extra=forbid`, 에러에 입력값 없음), 실행은 `BrowserToolbox.call(name, args)` 하나 —
+  검증 실패·거부도 예외가 아니라 `ToolResult(ok=false, error)` 로 돌려준다. DOM 동작은 `PageDriver` port
+  (`ports/browser.py`, 실제 `adapters/browser/playwright_pages.py` · 대역 `fake_pages.py`). 탭 조작(새 탭·팝업·닫기)은
+  port 에 올리지 않는다 — run 은 BrowserHost 작업 탭 하나만 쓴다. `click` 은 T2.5 에서 하네스와 함께 붙는다.
+- ref 는 `e<N>` — snapshot 마다 새 번호(재사용 없음)라 옛 ref 가 다른 요소를 가리킬 수 없다. 드라이버가 요소 핸들을
+  Python 쪽 표에 쥐고(DOM 에 표시 속성을 심지 않아 페이지가 ref 를 위조할 수 없다), 이동·새 snapshot 에 표를 버린다.
+  snapshot 은 모든 프레임(iframe)을 훑고(`node.frame`), 숨긴 파일 입력도 싣는다. shadow DOM 은 아직 보지 않는다.
+- 비밀 칸 = `type=password` 또는 autocomplete `current-password`·`new-password`·`one-time-code`(절대 규칙 3).
+  snapshot 은 값을 읽지 않고 DTO(`SnapshotNode`)가 한 번 더 버린다. `fill` 은 toolbox(snapshot 기준)와 드라이버(동작 순간의
+  DOM 재확인) 두 겹에서 거부한다. 규칙은 `domain/page_elements.py`.
+- 동작 범위: `fill` = 텍스트 input·textarea·contenteditable(값 설정이지 키 입력이 아니라 Enter 암묵 제출이 없다),
+  `select` = 네이티브 select(라벨, 없으면 value), `check` = 네이티브 checkbox·radio 만(role=checkbox 요소는 클릭 핸들러가
+  있어 `click` 몫), `upload` = 파일 입력에 문서 **바이트**(`DocumentReader.read_document(user_id, id)` — 경로 인자 없음).
+- `navigate` 는 http(s) 만(`javascript:`·`data:`·`file:` 는 L1 우회 통로) + `forbidden_origins` 거부 — 앱 자신의 콘솔을
+  자동화 브라우저에서 열면 같은 출처가 되어 승인 API 를 부를 수 있다. 루프백 별칭(127/8·localhost·::1)은 포트로 묶는다.
+- FillLog(`contracts/fill_log.py`): 성공한 fill/select/check/upload 만 `(seq, action, ref, field{role, name, 프레임 URL},
+  source, value|checked|document_id)` 로 쌓는다. `source={kind, key}` — profile·fact·answer_kb 는 key 필수,
+  generated·user 는 선택, upload 는 문서가 근거라 없다. 값에 주민등록번호 꼴이 있으면 사이트엔 넣되 기록하지 않고
+  `withheld=true`(재입력 때 다시 묻는다, 절대 규칙 5). snapshot·`report_failure` 이유도 에이전트·기록에 넘기기 전에 같은 꼴을 가린다.
 - `ask_user`/`request_login` 은 도구 호출이 UI 응답(asyncio Future)을 **최대 N분**(설정) 기다린다. 넘기면 run 을 `NEEDS_INPUT` 으로
   종료하고, 답이 오면 **재진입 run** 이 FillLog 부분 기록부터 이어간다 (D8 과 같은 메커니즘).
 

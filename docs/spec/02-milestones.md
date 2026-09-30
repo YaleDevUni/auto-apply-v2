@@ -195,6 +195,9 @@
   Risky 클릭 창에서의 문서 탐색 처리 규칙을 §A4 에 정하고(예: 쿼리/본문을 싣는 GET 탐색은 차단, 단순 페이지 이동은 허용 — "지원하기"가 폼 페이지로
   이동하는 픽스처는 통과해야 함), 짐에 GET 제출 픽스처를 추가해 0건 단언. 짐 헬퍼는 `tests/gym/fixtures.py`(gym·gym_browser,
   `GymServer.final_submissions()`·`intermediate_requests()`·`wait_for()`). native 가 느리면(Chrome 기준 ~28초) module 스코프 검토.
+- T2.4 이관: 사이트가 스스로 **앱 출처(127.0.0.1:앱포트·localhost 별칭)로 리다이렉트/요청**하는 경우는 navigate 검사로 못 막음 →
+  브라우저 context 수준 route 로 앱 출처 요청 차단. `check` 가 체크박스를 클릭하므로 onchange 핸들러 발신도 relaxed/strict 창 정책에 포함.
+  한 줄 입력칸의 줄바꿈을 Chrome 이 지워 FillLog 값과 DOM 값이 다를 수 있음 → 입력 정규화 규칙을 정해 FillLog 에 정규화 값 기록(L6 대조 대비).
 - 수용 기준: native **짐 전 픽스처에서 FILL 단계 제출 0건** — 모든 버튼을 차례로 누르는 적대적 스크립트로(T2.3 기록 서버 단언),
   다단계 중간 저장은 통과, 완료 페이지 도달 시 INCIDENT, confirm 거절 테스트, 하네스 층을 하나씩 끄면 테스트가 실패하는지 확인.
 
@@ -212,6 +215,8 @@
 
 ## M3 · 에이전트 런타임 · 채우기(fill) run
 목표: AgentRuntime 3구현, MCP(HTTP) 노출, fill run 이 픽스처 사이트에서 FillLog + `ready_for_review` 까지.
+T2.4 이관: bootstrap 에서 BrowserHost 와 짝지은 PageDriver 조립, BrowserToolbox `forbidden_origins` 에 앱 자신의 주소 주입.
+shadow DOM 안 요소가 snapshot 에 안 나옴 — 실사이트 영향 확인 후 지원 여부 결정.
 이관: `domain/errors.py` 의 `NON_RETRYABLE`(Temporal 근거)을 §A9 JobRunner 재시도 정책으로 재정의하거나 삭제.
 `config.llm_provider` 기본값이 `stub` — D5(기본 Claude Code CLI)에 맞추되 테스트·오프라인 게이트는 stub 유지.
 수용 기준: Scripted 런타임으로 상태기계 전 경로 테스트, CLI 런타임은 `native` 마커 e2e 1건(짐 사이트), ask_user 일시정지/재개 테스트.

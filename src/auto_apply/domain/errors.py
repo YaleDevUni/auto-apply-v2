@@ -4,6 +4,8 @@ Temporal RetryPolicy 는 예외 '이름'으로 재시도 여부를 판단한다.
 그래서 재시도 금지 에러는 반드시 NON_RETRYABLE 에 등록해야 한다.
 """
 
+from enum import StrEnum
+
 
 class AutoApplyError(Exception):
     """모든 도메인 에러의 뿌리."""
@@ -122,6 +124,29 @@ class BrowserLaunchFailed(AutoApplyError):
 
     인프라성 실패라 재시도 대상이다 (§A9).
     """
+
+
+class PageFailure(StrEnum):
+    STALE_REF = (
+        "stale_ref"  # 최신 snapshot 의 ref 가 아니거나 요소가 사라졌다 — snapshot 을 다시 떠야 한다
+    )
+    UNSUPPORTED_ELEMENT = "unsupported_element"  # 이 동작을 할 수 없는 요소 (예: 버튼에 fill)
+    SECRET_FIELD = "secret_field"  # 비밀번호·인증 코드 칸 — 앱은 입력하지 않는다 (절대 규칙 3)
+    OPTION_NOT_FOUND = "option_not_found"
+    NAVIGATION_FAILED = "navigation_failed"
+    TIMEOUT = "timeout"  # 요소가 조작 가능한 상태가 되지 않았다 (가려짐·비활성 등)
+
+
+class PageActionFailed(AutoApplyError):
+    """PageDriver 계약: 요청한 페이지 동작을 하지 않았다(§A5). 사이트에는 아무 변화도 없다.
+
+    run 을 끝낼 일이 아니라 에이전트가 다른 방법을 고를 일이라 도구 결과로 돌려준다.
+    메시지에 입력값을 싣지 않는다.
+    """
+
+    def __init__(self, reason: PageFailure, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 NON_RETRYABLE: tuple[str, ...] = (

@@ -30,9 +30,11 @@
 - T2.2 제출 클릭 분류기(허용 목록·애매하면 Risky)·완료 어휘. type=submit "다음" 다단계 문제는 T2.5 설계 과제로 이관.
 - T2.1 BrowserHost — 설치 Chrome 탐지·전용 프로필 잠금·기본 프로필 거부(D6)·지연 기동. Windows 잠금 분기 실측은 M7.
 - T2.3 테스트 짐 — 픽스처 12종·제출 기록 서버·매니페스트, 하네스 없이는 12종 모두 제출됨(양성 대조). GET 탐색 제출 빈틈은 T2.5 설계 과제.
+- T2.4 BrowserToolbox 기본 도구·PageDriver·FillLog — 금지 도구 부재 단언, 비밀 칸 두 겹 거부. native contract 모듈 스코프(18→6초).
 
 ## 열린 질문 (다음 마일스톤 시작 전에 사용자에게)
-- (백로그) `make check` 단독 ~22초(94초는 병렬 메모리 압박 탓) — 최대 원인 `tests/api/test_profile_api.py::test_upload_memory_peak_is_about_one_file[a.pdf]` 18초,
+- (백로그) 부하 시 `tests/api/test_profile_api.py::test_experience_crud[memory]` 1회 실패(재현 안 됨) — 플레이키 여부 조사.
+- (백로그) `make check` 는 머신 부하에 민감(유휴 ~17초, 부하 시 60~75초) — 최대 원인 `tests/api/test_profile_api.py::test_upload_memory_peak_is_about_one_file[a.pdf]` 18초,
   콘솔 스크립트 스모크 2개 ~12초. 크기 축소 또는 `test-all` 로 이동 검토(다음 백엔드 카드에서).
 - M5: 직군 템플릿 디자인 톤(1안 여러 개 vs 직군당 1안)
 

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>도구 테스트 지원서</title></head>
+<body>
+<h1>지원서</h1>
+<p>모든 항목을 입력하세요.</p>
+<form action="/api/toolbox/submit" method="post">
+  <label>이름 <input name="name"></label>
+  <label for="email">이메일</label> <input id="email" name="email" type="email">
+  <label>자기소개 <textarea name="intro"></textarea></label>
+  <label>경력 <select name="years">
+    <option value="">선택</option><option value="1">1년 미만</option><option value="3">1~3년</option>
+  </select></label>
+  <label><input type="checkbox" name="agree"> 개인정보 수집 동의</label>
+  <fieldset><legend>근무 형태</legend>
+    <label><input type="radio" name="kind" value="full"> 정규직</label>
+    <label><input type="radio" name="kind" value="contract"> 계약직</label>
+  </fieldset>
+  <label>비밀번호 <input type="password" name="pw" value="prefilled-secret-pw"></label>
+  <label>인증번호 <input name="otp" autocomplete="one-time-code" value="otp-778899"></label>
+  <label>이력서 <input type="file" name="resume"></label>
+  <label>포트폴리오 <input type="file" name="portfolio" style="display:none"></label>
+  <button type="submit">지원하기</button>
+</form>
+<a href="next.html">다음 페이지</a>
+</body></html>

@@ -54,6 +54,13 @@ class FakeBrowserHost:
         self._current = None
         self._lock.release()
 
+    def fake_page(self, handle: PageHandle) -> FakePage:
+        """핸들 → 열린 가짜 탭 (FakePageDriver 용). 닫힌 탭·재기동 전 핸들이면 LookupError."""
+        for p in [] if self._session is None else self._session.pages:
+            if p.handle == handle and not p.closed:
+                return p
+        raise LookupError(f"열린 탭이 아니다: {handle.id}")
+
     def simulate_human_close(self) -> None:
         """사람이 브라우저를 종료했다 — 잠금은 호스트가 쥔 채로 남는다(실제 구현과 같다)."""
         self._session = None
