@@ -7,6 +7,7 @@ CLI 런타임의 MCP URL.
 
 from dataclasses import dataclass
 
+from auto_apply.adapters.agent.anthropic_api import AnthropicApiAgentRuntime
 from auto_apply.adapters.agent.claude_cli import ClaudeCliAgentRuntime
 from auto_apply.adapters.agent.scripted import ScriptedAgentRuntime
 from auto_apply.adapters.browser.playwright_guarded import PlaywrightGuardedPageDriver
@@ -57,10 +58,15 @@ def agent_limits(cfg: Settings) -> AgentLimits:
 
 def build_agent_runtime(cfg: Settings, run_tokens: RunTokens, origin: str | None) -> AgentRuntime:
     match cfg.llm_provider:
-        case "stub" | "anthropic":
-            # stub: 오프라인 조합이라 브라우저를 띄우지 않는다 — 빈 스크립트라 fill run 은 도구를
-            # 하나도 부르지 않고 FAILED 로 닫힌다. anthropic(API 런타임)은 T3.8 이 여기에 붙인다.
+        case "stub":
+            # 오프라인 조합이라 브라우저를 띄우지 않는다 — 빈 스크립트라 fill run 은 도구를
+            # 하나도 부르지 않고 FAILED 로 닫힌다.
             return ScriptedAgentRuntime()
+        case "anthropic":
+            # 도구를 같은 프로세스에서 부른다 — MCP·앱 포트가 필요 없다
+            return AnthropicApiAgentRuntime(
+                cfg.anthropic_api_key, model=cfg.anthropic_model, runs_dir=cfg.runs_dir
+            )
         case "claude_cli":
             if origin is None:
                 raise StartupError(

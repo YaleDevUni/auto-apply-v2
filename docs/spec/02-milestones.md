@@ -337,6 +337,7 @@ M3 이후 실사용 점검(사용자와, 카드 아님): T2.5 "남는 위험"(�
 T2.6 이관: HumanGate `pending()`·`answer()` 를 승인 큐 UI 에 연결, NEEDS_LOGIN/NEEDS_INPUT 전이는 ApplicationService 로.
 T3.4 이관: `Container.reentry.answer(run_id, answer)`·`runs/<run_id>/human_task.json` 을 UI 에 연결, sensitive=false 질문도 사람이 "저장 안 함" 선택 가능,
 NEEDS_LOGIN·request_human 뒤 재진입 트리거(지금은 HumanTask 저장까지).
+T3.7 이관: run 기록 위치 통일(transcript 는 `DATA_DIR/runs/`, review·fill_log 는 `files/runs/`).
 T2.7 이관: 단계 이동 후 도착 화면이 UNCLEAR 일 때 하네스가 여는 사람 넘김도 같은 UI 로. L6 값 대조는 FillLog 중 `step == ReviewRecord.step` 칸만 DOM 재독.
 dry_run→live 전환은 settings 테이블 + UI 확인으로만(설정 파일로 조용히 뒤집히지 않게, 절대 규칙 2).
 수용 기준: SUBMIT_MISMATCH 경로 테스트, dry_run 에서 **최종 제출** 클릭 0회 검증(D17 — 단계 이동 클릭은 dry_run 에서도 함), 중복 지원 경고 테스트.

@@ -4,7 +4,7 @@
 
 ## 현재
 - 마일스톤: **M3 · 에이전트 런타임 · 채우기(fill) run** (M2 완료)
-- 다음 태스크: **T3.7** bootstrap 정리·실제 런타임 배선 → T3.8 API 런타임 → M3 완료
+- 다음 태스크: **T3.8** AnthropicApiAgentRuntime → M3 완료 → 사용자와 실사용 점검 → M4 카드
 - **병렬 실행 금지**(사용자 지시 2026-09-30, 메모리 부족) — 서브에이전트는 한 번에 하나.
 - 차단 요소: 없음
 - 결정: `.env.v2.bak` 보존(사용자 지시, 손대지 않음). `main` 은 M1 완료 시 push.
@@ -29,11 +29,14 @@
 - T3.5 MCP(streamable HTTP, `/mcp`) — run 토큰만(설치 토큰·만료·다른 run 거부, run 토큰으로 REST 거부), 보안 장치 6곳 끄기 실측. mcp SDK `<2` 고정.
 - T3.6 ClaudeCliAgentRuntime — init 도구 목록이 우리 MCP 뿐임을 실행 중에도 강제, run 토큰은 env 로만, 프로세스 그룹째 정리.
   실제 claude+Chrome 짐 e2e AWAITING_APPROVAL·제출 0건. CLAUDE.md·auto-memory 끼어듦을 env 로 차단(6.5k→583 토큰).
+- T3.7 bootstrap 패키지 분리·실제 포트를 금지 출처·MCP URL 에 주입·llm_provider 기본 claude_cli·run 한도 설정 키.
+  ask_user 70초 대기가 실제 claude CLI MCP 에서 안 끊김 확인(MCP_TOOL_TIMEOUT 이 결정).
 
 ## 열린 질문 (다음 마일스톤 시작 전에 사용자에게)
 - (백로그) 부하 시 `tests/api/test_profile_api.py::test_experience_crud[memory]` 1회 실패(재현 안 됨) — 플레이키 여부 조사.
 - (백로그) `make check` 는 머신 부하에 민감(유휴 ~17초, 부하 시 60~75초) — 최대 원인 `tests/api/test_profile_api.py::test_upload_memory_peak_is_about_one_file[a.pdf]` 18초,
   콘솔 스크립트 스모크 2개 ~12초. 크기 축소 또는 `test-all` 로 이동 검토(다음 백엔드 카드에서).
+- M4 전: fill run 에 비용 상한(`--max-budget-usd`)도 둘지 — 지금은 도구 수·시간 한도만(구독 CLI 기본이라 보류 중).
 - M5: 직군 템플릿 디자인 톤(1안 여러 개 vs 직군당 1안)
 
 ## 세션 운영 프로토콜

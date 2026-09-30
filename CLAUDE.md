@@ -27,7 +27,7 @@ make test-fast # 빠른 반복용: -x --ff (게이트 아님)
 make test-all  # native 포함 전체 (Chrome·claude CLI 필요)
 make fmt       # ruff format + fix
 make api       # FastAPI 개발 서버 (--reload, :8000)
-make web       # 웹 콘솔 dev 서버 (make api 먼저) — M1 전까지 동작 안 함
+make web       # 웹 콘솔 dev 서버 (make api 먼저)
 uv run auto-apply [--port N]   # 앱 진입점 (§A1, 127.0.0.1 고정)
 ```
 
@@ -47,7 +47,7 @@ uv run auto-apply [--port N]   # 앱 진입점 (§A1, 127.0.0.1 고정)
 `bootstrap`(★ 어댑터 생성 유일 지점).
 
 새 외부 의존성: `ports/` Protocol(벤더 타입 노출 금지) → 예외 계약(`domain/errors.py`) → **구현 2개**(실제 + 테스트 대역)
-→ `tests/ports/` contract test params 추가 → `bootstrap.py`·`config.py` 선택지 추가.
+→ `tests/ports/` contract test params 추가 → `bootstrap/`(패키지)·`config.py` 선택지 추가.
 
 ## 개발 프로세스
 

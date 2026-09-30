@@ -2,7 +2,7 @@
 
 구현마다 "에이전트가 이 순서로 도구를 부르고 싶어 한다"를 만드는 방법이 다르다: Scripted 는
 스크립트 그대로, CLI 는 그 순서를 지시한 프롬프트로 실제 `claude`(native)에, API 구현(T3.8)은
-가짜 모델로.
+그 순서로 tool_use 를 돌려주는 가짜 Messages API(httpx 전송 대역)로.
 CLI 는 목록에 없는 도구 이름을 MCP 로 보내기 전에 스스로 거부한다 — 그래서 "없는 이름도 call_tool 로
 넘긴다" 는 이름을 그대로 넘기는 구현(in-process)에만 건다.
 """
@@ -43,10 +43,29 @@ async def cli_maker(tmp_path) -> AsyncIterator[Callable[[Intent], AgentRuntime]]
         yield lambda intent: Directed(cli_runtime(tokens, port, tmp_path / "runs"), intent)
 
 
-@pytest.fixture(params=[*sorted(MAKERS), pytest.param("cli", marks=pytest.mark.native)])
+@pytest.fixture
+def api_maker(tmp_path) -> Callable[[Intent], AgentRuntime]:
+    from tests.adapters.anthropic_kit import FakeMessagesApi, api_runtime, one_call_per_turn
+
+    return lambda intent: api_runtime(FakeMessagesApi(one_call_per_turn(intent)), tmp_path / "runs")
+
+
+FIXTURE_MAKERS = ("api", "cli")
+
+
+@pytest.fixture(params=[*sorted(MAKERS), "api", pytest.param("cli", marks=pytest.mark.native)])
 def make(request: pytest.FixtureRequest) -> Callable[[Intent], AgentRuntime]:
-    if request.param == "cli":
-        maker: Callable[[Intent], AgentRuntime] = request.getfixturevalue("cli_maker")
+    if request.param in FIXTURE_MAKERS:
+        maker: Callable[[Intent], AgentRuntime] = request.getfixturevalue(f"{request.param}_maker")
+        return maker
+    return MAKERS[request.param]
+
+
+@pytest.fixture(params=[*sorted(MAKERS), "api"])
+def make_in_process(request: pytest.FixtureRequest) -> Callable[[Intent], AgentRuntime]:
+    """도구 이름을 그대로 call_tool 에 넘기는 구현 — CLI 는 목록 밖 이름을 스스로 거부한다."""
+    if request.param == "api":
+        maker: Callable[[Intent], AgentRuntime] = request.getfixturevalue("api_maker")
         return maker
     return MAKERS[request.param]
 
@@ -83,10 +102,10 @@ async def test_rejected_calls_do_not_stop_the_run(make):
     assert out.ended is AgentEnd.COMPLETED and out.tool_calls == 2
 
 
-async def test_unknown_tool_names_go_to_call_tool_too():
+async def test_unknown_tool_names_go_to_call_tool_too(make_in_process):
     tools = Tools()
     intent = [("no_such_tool", {}), ("echo", {"x": 3})]
-    out = await _scripted(intent).run("sys", TOOLS, tools, limits=AgentLimits())
+    out = await make_in_process(intent).run("sys", TOOLS, tools, limits=AgentLimits())
     assert [c[0] for c in tools.calls] == ["no_such_tool", "echo"]
     assert out.ended is AgentEnd.COMPLETED and out.tool_calls == 2
 

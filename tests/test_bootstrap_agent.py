@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 import auto_apply.bootstrap as bootstrap_pkg
+from auto_apply.adapters.agent.anthropic_api import AnthropicApiAgentRuntime
 from auto_apply.adapters.agent.claude_cli import ClaudeCliAgentRuntime
 from auto_apply.adapters.agent.scripted import ScriptedAgentRuntime
 from auto_apply.adapters.browser.fake import FakeBrowserHost
@@ -32,7 +33,7 @@ def _cfg(tmp_path: Path, **kw) -> Settings:
     ("provider", "runtime"),
     [
         ("stub", ScriptedAgentRuntime),  # 오프라인 — 브라우저를 띄우지 않는다
-        ("anthropic", ScriptedAgentRuntime),  # API 런타임은 T3.8
+        ("anthropic", AnthropicApiAgentRuntime),  # 도구를 같은 프로세스에서(T3.8)
         ("claude_cli", ClaudeCliAgentRuntime),  # 기본(D5)
     ],
 )
@@ -54,6 +55,16 @@ def test_cli_runtime_gets_app_port_runs_dir_model_and_human_wait(tmp_path):
     assert rt._command == ("my-claude",) and rt._model == "claude-haiku-4-5"
     assert rt._tool_timeout_ms == (90 + 60) * 1000  # ask_user 대기보다 길게
     assert rt._open_token.__self__ is c.run_tokens  # /mcp 가 resolve 하는 그 토큰표
+
+
+def test_api_runtime_gets_key_model_and_runs_dir_without_a_port(tmp_path):
+    """API 런타임은 MCP 를 거치지 않는다 — 앱 포트를 몰라도 조립된다."""
+    cfg = _cfg(tmp_path, llm_provider="anthropic", anthropic_api_key="sk-x",
+               anthropic_model="claude-opus-5-5")  # fmt: skip
+    rt = build_container(cfg).agent
+    assert isinstance(rt, AnthropicApiAgentRuntime)
+    assert rt._api_key == "sk-x" and rt._model == "claude-opus-5-5"
+    assert rt._runs_dir == cfg.runs_dir and rt._transport is None
 
 
 def test_cli_runtime_without_port_refuses_to_build(tmp_path):

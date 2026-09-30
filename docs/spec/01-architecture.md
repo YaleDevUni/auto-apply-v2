@@ -332,7 +332,7 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
 | 구현 | 용도 |
 |---|---|
 | `ClaudeCliAgentRuntime` (기본, D5) | `claude -p --output-format stream-json --mcp-config <run별 설정> --strict-mcp-config`, 내장 도구 전부 비활성, 우리 MCP 도구만 allow. v2 `ClaudeCodeCliLLM` 의 프로세스 관리·장애 시그니처(로그인 풀림/한도초과) 재사용 |
-| `AnthropicApiAgentRuntime` | Messages API tool-use 루프, 같은 BrowserToolbox 를 in-process 로 |
+| `AnthropicApiAgentRuntime` (T3.8) | Messages API tool-use 루프, 같은 BrowserToolbox 를 in-process 로 (MCP·run 토큰 없음) |
 | `ScriptedAgentRuntime` | 테스트 대역 — 미리 정한 도구 호출 시퀀스 재생 (gym 테스트·상태기계 테스트용) |
 
 - 시스템 프롬프트 = 역할/규칙 + 전역 가이드 + 도메인 가이드(§A8) + run 종류별 지시 + (재진입이면) FillLog/피드백.
@@ -341,8 +341,9 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   ToolReply{ok, content(JSON), done}` 로만 부르고, 없는 이름·잘못된 인자도 그대로 넘겨 에러 답을 받고 이어간다. `done` 을
   받으면 멈춘다. 도구 목록은 `browser_toolbox_specs.agent_tools()`(TOOLS 의 입력 모델 JSON Schema). `run_id` 는
   기록(transcript)을 둘 이름일 뿐 도구 통로와 상관없다(없으면 구현이 정한다). 계약 테스트
-  `tests/ports/test_agent_runtime_contract.py`(CLI 는 실제 `claude` 로 native params, API 는 T3.8). CLI 는 목록에 없는
-  도구 이름을 MCP 로 보내기 전에 스스로 거부하므로 "없는 이름도 call_tool 로" 는 in-process 구현에만 건다.
+  `tests/ports/test_agent_runtime_contract.py`(CLI 는 실제 `claude` 로 native params, API 는 가짜 Messages API 전송으로
+  기본 params). CLI 는 목록에 없는 도구 이름을 MCP 로 보내기 전에 스스로 거부하므로 "없는 이름도 call_tool 로" 는
+  in-process 구현(Scripted·API)에만 건다.
 - CLI 런타임(T3.6, `adapters/agent/claude_cli*.py`): 생성자로 `run_tokens.open`·MCP URL(`http://127.0.0.1:<포트>/mcp`)·
   runs 디렉터리·`human_wait_s` 를 받는다. `run()` 안에서 run 토큰을 열고 끝나면(끝·예외·취소) 폐기된다(§A5).
   - 격리: `claude -p <시작 문장> --output-format stream-json --system-prompt-file <run>/system_prompt.md --tools ""
@@ -360,6 +361,19 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   - 장애: 결과 줄의 로그인 풀림·한도초과 시그니처는 v2 `ClaudeCodeCliLLM._classify_error` 그대로 →
     `LLMAuthRequired`·`LLMQuotaExceeded`(§A9 FATAL), 결과 없이 끝나면 `LLMExecutionError`(stderr 끝부분, TRANSIENT).
   - transcript: `runs/<run_id>/transcript.jsonl` 에 stream-json 줄을 주민등록번호 꼴·run 토큰을 가려 쓴다.
+- API 런타임(T3.8, `adapters/agent/anthropic_api.py`): 생성자로 API 키·모델·runs 디렉터리를 받는다. `messages.create`
+  (비스트리밍, `max_tokens` 16000, 최상위 `cache_control` 로 자라는 대화까지 캐시, `tool_choice` 강제 없음 — 현행 모델은 400)
+  → `stop_reason=tool_use` 일 때만 그 응답의 tool_use 를 **순서대로 하나씩** `call_tool` 에 넘기고 결과를 한 user 메시지의
+  `tool_result`(`is_error = not ok`)로 되돌린다. assistant 내용은 받은 그대로 되돌린다(thinking 블록 보존). `end_turn`·
+  `max_tokens`(잘린 tool_use 는 실행 안 함)·`refusal` 은 에이전트가 스스로 멈춘 것(`COMPLETED`). 한도는 호출 직전에 세어
+  넘친 호출은 도구에 닿지 않고 `TOOL_LIMIT`, `done` 이면 그 자리에서(같은 응답의 나머지 호출도 안 부르고) `COMPLETED`,
+  `max_seconds` 는 진행 중인 요청·도구째 끊어 `TIME_LIMIT`(도구 안에서 난 `TimeoutError` 는 한도로 읽지 않는다).
+  SDK 클라이언트는 run 마다 열고 끝·예외·취소 어느 쪽이든 닫는다. transcript 는 `runs/<run_id>/transcript.jsonl`
+  (응답·도구 결과 줄, 주민등록번호 꼴·API 키 가림).
+  - 장애(`adapters/llm/anthropic.py` `api_errors` — 텍스트 `AnthropicLLM` 도 같은 번역): 키 없음(요청 전)·401·403 →
+    `LLMAuthRequired`, 잔액·지출 한도(400 `credit balance`·`usage limits`) → `LLMQuotaExceeded`(둘 다 FATAL), 429(SDK 가
+    retry-after 로 2회 재시도한 뒤)·5xx·529·연결·타임아웃 → `LLMExecutionError`(TRANSIENT). 문구에는 상태 코드·에러
+    종류만 — 응답 본문(요청 일부를 되풀이할 수 있다)은 옮기지 않는다.
 - fill run(`runner/fill.py` `FillRunHandler`, JobRunner 의 `fill` 핸들러): run 기록 시작 → QUEUED→FILLING → 프롬프트
   (`ai/fill_prompt.py` 순수 빌더 — 프로필 요약 줄의 키가 FillLog source key) → 런타임 → **도구 결과로만** 전이
   (`runner/fill_session.decide`, 위에서부터 첫 일치). 에이전트 출력 텍스트는 상태에 영향이 없다.
@@ -378,7 +392,7 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   INTERRUPTED·QUEUED 로 되돌린다.
 - 런타임 선택(T3.7, `bootstrap/agent.py`): `LLM_PROVIDER` 로 — `claude_cli`(기본, D5) → CLI 런타임(앱 출처 §A1·
   `DATA_DIR/runs`·`HUMAN_WAIT_S`·`CLAUDE_CLI_MODEL`), `stub`(테스트·오프라인 게이트) → 빈 `ScriptedAgentRuntime`(도구 0회로
-  FAILED, 브라우저 안 띄움), `anthropic` → API 런타임 전까지(T3.8) 빈 Scripted. fill 핸들러는 `run_id` 를 넘겨 CLI 작업
+  FAILED, 브라우저 안 띄움), `anthropic` → API 런타임(`ANTHROPIC_API_KEY`·`ANTHROPIC_MODEL`·`DATA_DIR/runs`, 앱 포트 불필요). fill 핸들러는 `run_id` 를 넘겨 CLI 작업
   디렉터리가 `runs/<run_id>/` 가 된다. 실측(native, 2.1.285): ask_user 70초 대기도 끊기지 않는다 — `HUMAN_WAIT_S=5`
   (도구 타임아웃 65초)로 돌리면 `tool "ask_user" timed out after 65s` 로 끊기므로 `MCP_TOOL_TIMEOUT` 이 지배하는 값이다.
 - 한도(`AgentLimits`, 설정 `AGENT_MAX_TOOL_CALLS`·`AGENT_MAX_SECONDS`, 기본 도구 200회·1800초 — 시간은 `HUMAN_WAIT_S`

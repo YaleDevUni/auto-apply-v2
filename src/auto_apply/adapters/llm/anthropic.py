@@ -1,12 +1,57 @@
-from contextlib import AbstractAsyncContextManager, nullcontext
+from collections.abc import Iterator
+from contextlib import AbstractAsyncContextManager, contextmanager, nullcontext
 
+import anthropic
 from anthropic import AsyncAnthropic
 from anthropic.types import TextBlockParam
 from pydantic import BaseModel, ValidationError
 
-from auto_apply.domain.errors import LLMSchemaViolation
+from auto_apply.domain.errors import (
+    LLMAuthRequired,
+    LLMExecutionError,
+    LLMQuotaExceeded,
+    LLMSchemaViolation,
+)
 
 _TOOL_NAME = "emit"
+# 잔액 부족·지출 한도는 400 으로 온다 — 사람이 결제·한도를 고쳐야 풀린다(§A9 FATAL)
+_QUOTA_SIGNS = ("credit balance", "usage limits", "spend limit")
+
+
+def translate_api_error(exc: anthropic.AnthropicError) -> LLMExecutionError:
+    """SDK 예외 → §A9 분류가 아는 예외. 메시지에는 상태 코드·에러 종류만 싣는다 — 응답 본문은
+    요청 일부를 되풀이할 수 있어(프로필 요약이 담긴 시스템 프롬프트) 옮기지 않는다.
+
+    키 거부(401·403)·잔액/지출 한도 → FATAL. 429(분당 한도 — SDK 가 이미 retry-after 로
+    재시도한 뒤)·5xx·연결·타임아웃·그 밖 → TRANSIENT(`LLMExecutionError`).
+    """
+    if isinstance(exc, anthropic.APIStatusError):
+        kind = _error_type(exc.body)
+        what = f"Anthropic API {exc.status_code} {kind}".rstrip()
+        if isinstance(exc, anthropic.AuthenticationError | anthropic.PermissionDeniedError):
+            return LLMAuthRequired(f"{what} — ANTHROPIC_API_KEY 를 확인하라")
+        if exc.status_code == 400 and any(s in str(exc).lower() for s in _QUOTA_SIGNS):
+            return LLMQuotaExceeded(f"{what} — API 잔액·지출 한도")
+        return LLMExecutionError(what)
+    if isinstance(exc, anthropic.APITimeoutError):
+        return LLMExecutionError("Anthropic API 시간 초과")
+    if isinstance(exc, anthropic.APIConnectionError):
+        return LLMExecutionError("Anthropic API 연결 실패")
+    return LLMExecutionError(f"Anthropic API 오류 {type(exc).__name__}")
+
+
+def _error_type(body: object) -> str:
+    error = body.get("error") if isinstance(body, dict) else None
+    kind = error.get("type") if isinstance(error, dict) else None
+    return kind if isinstance(kind, str) and kind.isidentifier() else ""
+
+
+@contextmanager
+def api_errors() -> Iterator[None]:
+    try:
+        yield
+    except anthropic.AnthropicError as e:
+        raise translate_api_error(e) from e
 
 
 def _content_blocks(prompt: str, cache_prefix: str) -> list[TextBlockParam]:
@@ -37,32 +82,34 @@ class AnthropicLLM:
         self._model = model
 
     async def complete(self, prompt: str, *, max_tokens: int = 2048, cache_prefix: str = "") -> str:
-        resp = await self._client.messages.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": _content_blocks(prompt, cache_prefix)}],
-        )
+        with api_errors():
+            resp = await self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": _content_blocks(prompt, cache_prefix)}],
+            )
         return "".join(block.text for block in resp.content if block.type == "text")
 
     async def structured[T: BaseModel](
         self, prompt: str, schema: type[T], *, max_tokens: int = 2048, cache_prefix: str = ""
     ) -> T:
         # tool_choice 로 강제한다 — free-form 텍스트를 파싱해서 스키마에 맞추려 하면 실패
-        # 모드가 늘어난다. 스키마 위반은 ValidationError 만 감싼다 — RateLimitError 같은
-        # API 레벨 에러까지 여기서 삼키면 "일시적 → 재시도" 분류(§A9)가 깨진다.
-        resp = await self._client.messages.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            tools=[
-                {
-                    "name": _TOOL_NAME,
-                    "description": "구조화된 결과를 반환한다.",
-                    "input_schema": schema.model_json_schema(),
-                }
-            ],
-            tool_choice={"type": "tool", "name": _TOOL_NAME},
-            messages=[{"role": "user", "content": _content_blocks(prompt, cache_prefix)}],
-        )
+        # 모드가 늘어난다. 스키마 위반은 ValidationError 만 감싼다 — API 레벨 에러는
+        # api_errors() 가 §A9 분류(일시적 → 재시도, 키·잔액 → 사람)로 옮긴다.
+        with api_errors():
+            resp = await self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                tools=[
+                    {
+                        "name": _TOOL_NAME,
+                        "description": "구조화된 결과를 반환한다.",
+                        "input_schema": schema.model_json_schema(),
+                    }
+                ],
+                tool_choice={"type": "tool", "name": _TOOL_NAME},
+                messages=[{"role": "user", "content": _content_blocks(prompt, cache_prefix)}],
+            )
         for block in resp.content:
             if block.type == "tool_use":
                 try:
