@@ -1,11 +1,14 @@
 """AgentRuntime contract test (ports/agent.py) — 모든 구현에 같은 기대를 건다.
 
 구현마다 "에이전트가 이 순서로 도구를 부르고 싶어 한다"를 만드는 방법이 다르다: Scripted 는
-스크립트 그대로, CLI·API 구현(T3.6~)은 그 순서를 지시한 프롬프트·가짜 모델로 붙인다(MAKERS 에 추가).
+스크립트 그대로, CLI 는 그 순서를 지시한 프롬프트로 실제 `claude`(native)에, API 구현(T3.8)은
+가짜 모델로.
+CLI 는 목록에 없는 도구 이름을 MCP 로 보내기 전에 스스로 거부한다 — 그래서 "없는 이름도 call_tool 로
+넘긴다" 는 이름을 그대로 넘기는 구현(in-process)에만 건다.
 """
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 
 import pytest
 
@@ -21,11 +24,30 @@ def _scripted(intent: Intent) -> AgentRuntime:
 
 
 MAKERS: dict[str, Callable[[Intent], AgentRuntime]] = {"scripted": _scripted}
-TOOLS = (AgentTool(name="echo", description="되돌려 준다", input_schema={"type": "object"}),)
+# 모델이 인자 타입을 짐작하지 않게 x 를 적어 둔다. 다른 키도 받는다(잘못된 인자 거부는 call_tool)
+ECHO_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {"x": {"type": "integer"}},
+    "additionalProperties": True,
+}
+TOOLS = (AgentTool(name="echo", description="되돌려 준다", input_schema=ECHO_SCHEMA),)
 
 
-@pytest.fixture(params=sorted(MAKERS))
+@pytest.fixture
+async def cli_maker(tmp_path) -> AsyncIterator[Callable[[Intent], AgentRuntime]]:
+    from auto_apply.services.run_tokens import RunTokens
+    from tests.adapters.agent_cli.kit import Directed, cli_runtime, echo_mcp_app, serving
+
+    tokens = RunTokens()
+    async with serving(echo_mcp_app(tokens, TOOLS)) as port:
+        yield lambda intent: Directed(cli_runtime(tokens, port, tmp_path / "runs"), intent)
+
+
+@pytest.fixture(params=[*sorted(MAKERS), pytest.param("cli", marks=pytest.mark.native)])
 def make(request: pytest.FixtureRequest) -> Callable[[Intent], AgentRuntime]:
+    if request.param == "cli":
+        maker: Callable[[Intent], AgentRuntime] = request.getfixturevalue("cli_maker")
+        return maker
     return MAKERS[request.param]
 
 
@@ -55,10 +77,18 @@ async def test_calls_go_through_call_tool_in_order(make):
 
 async def test_rejected_calls_do_not_stop_the_run(make):
     tools = Tools()
-    intent = [("no_such_tool", {}), ("echo", {"bad": True}), ("echo", {"x": 3})]
+    intent = [("echo", {"bad": "yes"}), ("echo", {"x": 3})]
     out = await make(intent).run("sys", TOOLS, tools, limits=AgentLimits())
-    assert [c[0] for c in tools.calls] == ["no_such_tool", "echo", "echo"]
-    assert out.ended is AgentEnd.COMPLETED and out.tool_calls == 3
+    assert tools.calls == [("echo", {"bad": "yes"}), ("echo", {"x": 3})]
+    assert out.ended is AgentEnd.COMPLETED and out.tool_calls == 2
+
+
+async def test_unknown_tool_names_go_to_call_tool_too():
+    tools = Tools()
+    intent = [("no_such_tool", {}), ("echo", {"x": 3})]
+    out = await _scripted(intent).run("sys", TOOLS, tools, limits=AgentLimits())
+    assert [c[0] for c in tools.calls] == ["no_such_tool", "echo"]
+    assert out.ended is AgentEnd.COMPLETED and out.tool_calls == 2
 
 
 async def test_stops_after_done(make):

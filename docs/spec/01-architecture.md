@@ -330,11 +330,30 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
 | `ScriptedAgentRuntime` | 테스트 대역 — 미리 정한 도구 호출 시퀀스 재생 (gym 테스트·상태기계 테스트용) |
 
 - 시스템 프롬프트 = 역할/규칙 + 전역 가이드 + 도메인 가이드(§A8) + run 종류별 지시 + (재진입이면) FillLog/피드백.
-- port(T3.3, `ports/agent.py`): `run(system_prompt, tools: [AgentTool], call_tool, *, limits) -> AgentOutcome`
+- port(T3.3, `ports/agent.py`): `run(system_prompt, tools: [AgentTool], call_tool, *, limits, run_id=None) -> AgentOutcome`
   (DTO `contracts/agent.py`). 런타임은 브라우저를 직접 만지지 않는다 — 도구는 호출자가 넘긴 `call_tool(name, args) ->
   ToolReply{ok, content(JSON), done}` 로만 부르고, 없는 이름·잘못된 인자도 그대로 넘겨 에러 답을 받고 이어간다. `done` 을
-  받으면 멈춘다. 도구 목록은 `browser_toolbox_specs.agent_tools()`(TOOLS 의 입력 모델 JSON Schema). 계약 테스트
-  `tests/ports/test_agent_runtime_contract.py`(CLI·API 구현이 params 로 붙는다).
+  받으면 멈춘다. 도구 목록은 `browser_toolbox_specs.agent_tools()`(TOOLS 의 입력 모델 JSON Schema). `run_id` 는
+  기록(transcript)을 둘 이름일 뿐 도구 통로와 상관없다(없으면 구현이 정한다). 계약 테스트
+  `tests/ports/test_agent_runtime_contract.py`(CLI 는 실제 `claude` 로 native params, API 는 T3.8). CLI 는 목록에 없는
+  도구 이름을 MCP 로 보내기 전에 스스로 거부하므로 "없는 이름도 call_tool 로" 는 in-process 구현에만 건다.
+- CLI 런타임(T3.6, `adapters/agent/claude_cli*.py`): 생성자로 `run_tokens.open`·MCP URL(`http://127.0.0.1:<포트>/mcp`)·
+  runs 디렉터리·`human_wait_s` 를 받는다. `run()` 안에서 run 토큰을 열고 끝나면(끝·예외·취소) 폐기된다(§A5).
+  - 격리: `claude -p <시작 문장> --output-format stream-json --system-prompt-file <run>/system_prompt.md --tools ""
+    --mcp-config <run>/mcp.json --strict-mcp-config --allowedTools mcp__auto_apply__<도구…> --permission-mode dontAsk
+    --disable-slash-commands --setting-sources "" --no-session-persistence`, cwd = `runs/<run_id>/`, env
+    `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`·`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`(실측 2.1.285: 저장소 안 cwd 면 auto-memory·
+    CLAUDE.md 가 6.5k 토큰 끼어든다). 시스템 프롬프트 파일은 끝나면 지운다(프로필 요약 — argv 로 넘기면 `ps` 에 보인다).
+  - 토큰은 `mcp.json` 에 `Bearer ${AUTO_APPLY_RUN_TOKEN}` 로만 적고 값은 자식 env 로(디스크·argv·transcript 에 없음).
+  - 닫힌 쪽 점검: stream-json init 이벤트의 `tools` 가 허용 목록 밖(내장 도구 등)이거나 MCP 서버가 우리 것 하나로
+    `connected` 가 아니면 run 을 멈추고 `LLMExecutionError`. 점검 전에 MCP 로 온 호출은 도구에 닿지 않는다.
+  - `done`·한도: MCP 로 온 호출을 감싼 관문이 센다 — `done` 을 받거나 한도를 넘으면(넘친 호출은 도구에 안 닿고
+    `tool_limit`) 프로세스를 멈추고 `COMPLETED`/`TOOL_LIMIT`, 시간 초과는 `TIME_LIMIT`.
+  - 종료: 새 프로세스 그룹(POSIX 세션·Windows 새 그룹)으로 띄워 그룹째 SIGTERM→SIGKILL(Windows `taskkill /T`) —
+    끝·예외·취소 어느 쪽이든 자식이 남지 않는다. MCP 도구 타임아웃 `MCP_TOOL_TIMEOUT` = `human_wait_s`+60초(ask_user 대기).
+  - 장애: 결과 줄의 로그인 풀림·한도초과 시그니처는 v2 `ClaudeCodeCliLLM._classify_error` 그대로 →
+    `LLMAuthRequired`·`LLMQuotaExceeded`(§A9 FATAL), 결과 없이 끝나면 `LLMExecutionError`(stderr 끝부분, TRANSIENT).
+  - transcript: `runs/<run_id>/transcript.jsonl` 에 stream-json 줄을 주민등록번호 꼴·run 토큰을 가려 쓴다.
 - fill run(`runner/fill.py` `FillRunHandler`, JobRunner 의 `fill` 핸들러): run 기록 시작 → QUEUED→FILLING → 프롬프트
   (`ai/fill_prompt.py` 순수 빌더 — 프로필 요약 줄의 키가 FillLog source key) → 런타임 → **도구 결과로만** 전이
   (`runner/fill_session.decide`, 위에서부터 첫 일치). 에이전트 출력 텍스트는 상태에 영향이 없다.

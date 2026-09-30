@@ -56,7 +56,7 @@ async def test_runtime_failure_closes_run_and_retries(rig):
             self.ok = ScriptedAgentRuntime(fill_form_script())
             self.calls = 0
 
-        async def run(self, system_prompt, tools, call_tool, *, limits) -> AgentOutcome:
+        async def run(self, system_prompt, tools, call_tool, *, limits, **_) -> AgentOutcome:
             self.calls += 1
             if self.calls == 1:
                 raise LLMExecutionError("claude 프로세스가 비정상 종료")
@@ -92,7 +92,7 @@ async def test_cancel_during_run_wins_and_run_is_closed(rig):
     class CancelledMidway:
         """채우는 도중 사람이 취소했다 — 끝 전이는 거부되고 run 은 그래도 닫힌다."""
 
-        async def run(self, system_prompt, tools, call_tool, *, limits) -> AgentOutcome:
+        async def run(self, system_prompt, tools, call_tool, *, limits, **_) -> AgentOutcome:
             inner = ScriptedAgentRuntime(fill_form_script())
             app = rig.toolboxes[0]._application_id
             assert app is not None
@@ -114,7 +114,7 @@ async def test_stop_mid_run_interrupts_and_keeps_guard_armed(rig):
     started = asyncio.Event()
 
     class Hangs:
-        async def run(self, system_prompt, tools, call_tool, *, limits) -> AgentOutcome:
+        async def run(self, system_prompt, tools, call_tool, *, limits, **_) -> AgentOutcome:
             await call_tool("navigate", {"url": "http://jobs.test/apply"})
             started.set()
             await asyncio.sleep(3600)

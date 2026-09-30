@@ -4,7 +4,7 @@
 
 ## 현재
 - 마일스톤: **M3 · 에이전트 런타임 · 채우기(fill) run** (M2 완료)
-- 다음 태스크: **T3.5** BrowserToolbox MCP(HTTP) 노출 → T3.6 → T3.7
+- 다음 태스크: **T3.6** ClaudeCliAgentRuntime → T3.7 bootstrap 정리·배선 → T3.8 API 런타임
 - **병렬 실행 금지**(사용자 지시 2026-09-30, 메모리 부족) — 서브에이전트는 한 번에 하나.
 - 차단 요소: 없음
 - 결정: `.env.v2.bak` 보존(사용자 지시, 손대지 않음). `main` 은 M1 완료 시 push.
@@ -34,6 +34,7 @@
   FillSource 패턴과 어긋나던 버그를 자체 검증에서 발견·수정. job/run DTO contracts/ 이동·errors.py 분리 완료.
 - T3.4 ask_user·답변 KB·재진입 run — 민감 답은 에이전트에 값을 주지 않고(`source={user,key}` 로 앱이 채움) 프로세스 메모리에만.
   snapshot 으로 새던 구멍·재시작 뒤 빈 값 덮어쓰기를 자체 검증에서 수정. 범위 밖 수정(ai·config·bootstrap)은 카드 범위를 좁게 쓴 내 탓 — 정당.
+- T3.5 MCP(streamable HTTP, `/mcp`) — run 토큰만(설치 토큰·만료·다른 run 거부, run 토큰으로 REST 거부), 보안 장치 6곳 끄기 실측. mcp SDK `<2` 고정.
 
 ## 열린 질문 (다음 마일스톤 시작 전에 사용자에게)
 - (백로그) 부하 시 `tests/api/test_profile_api.py::test_experience_crud[memory]` 1회 실패(재현 안 됨) — 플레이키 여부 조사.

@@ -98,6 +98,7 @@ class OverMcp:
         call_tool: CallTool,
         *,
         limits: AgentLimits,
+        run_id: str | None = None,
     ) -> AgentOutcome:
         done = False
 

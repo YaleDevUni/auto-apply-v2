@@ -140,7 +140,7 @@ async def test_limit_holds_even_if_runtime_ignores_it(rig):
     class Greedy:
         """한도도 done 도 무시하는 런타임 — CLI 프로세스가 말을 안 듣는 경우."""
 
-        async def run(self, system_prompt, tools, call_tool, *, limits):
+        async def run(self, system_prompt, tools, call_tool, *, limits, run_id=None):
             from auto_apply.contracts.agent import AgentEnd, AgentOutcome
 
             self.replies = [await call_tool("snapshot", {}) for _ in range(6)]

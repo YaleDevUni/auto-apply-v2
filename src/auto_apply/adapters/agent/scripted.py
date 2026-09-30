@@ -37,6 +37,7 @@ class ScriptedAgentRuntime:
         call_tool: CallTool,
         *,
         limits: AgentLimits,
+        run_id: str | None = None,
     ) -> AgentOutcome:
         self.seen_prompt, self.seen_tools = system_prompt, tuple(tools)
         loop = asyncio.get_running_loop()

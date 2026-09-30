@@ -232,7 +232,7 @@
 ## M3 · 에이전트 런타임 · 채우기(fill) run
 목표: AgentRuntime 3구현, MCP(HTTP) 노출, fill run 이 픽스처 사이트에서 FillLog + `ready_for_review` 까지.
 수용 기준: Scripted 런타임으로 상태기계 전 경로 테스트, CLI 런타임은 `native` 마커 e2e 1건(짐 사이트), ask_user 일시정지/재개 테스트.
-순서: T3.1 → T3.2 → T3.3 → T3.4 → T3.5 → T3.6 → T3.7 (병렬 금지 중이라 직렬). 카드는 에이전트 1회(~15만 토큰) 크기로 잘랐다.
+순서: T3.1 → T3.2 → T3.3 → T3.4 → T3.5 → T3.6 → T3.7 → T3.8(T3.6 을 T3.5 이관 때문에 셋으로 쪼갬) (병렬 금지 중이라 직렬). 카드는 에이전트 1회(~15만 토큰) 크기로 잘랐다.
 공통: 실제 외부 사이트 접속 금지(짐 픽스처만). `claude` CLI·Chrome 이 필요한 테스트는 `native`.
 
 ### T3.1 v3 상태기계 · ApplicationService.transition (§A3)
@@ -296,25 +296,34 @@
 
 ### T3.6 ClaudeCliAgentRuntime (기본, D5)
 - 의존: T3.5
-- 범위: `src/auto_apply/{adapters/agent/claude_cli*.py,adapters/llm/,config.py,bootstrap.py}`, `tests/`, §A6
+- 범위: `src/auto_apply/{adapters/agent/claude_cli*.py,adapters/llm/,ports/agent.py,contracts/agent.py}`, `tests/`, §A6
 - 할 일: `claude -p --output-format stream-json --mcp-config <run별 파일> --strict-mcp-config`, **내장 도구 전부 비활성**(Bash·Read·WebFetch 등 —
   에이전트가 승인 API 를 부르거나 파일을 읽는 통로 차단), 우리 MCP 도구만 allow. 작업 디렉터리는 `DATA_DIR/runs/<run_id>/`(저장소의 CLAUDE.md·
   사용자 설정 훅이 끼지 않게 설정 원천 격리). v2 `ClaudeCodeCliLLM` 의 프로세스 관리·장애 시그니처(로그인 풀림/한도초과) 재사용.
-  transcript 는 run 디렉터리에(고유식별정보 가림). 프로세스 종료·타임아웃·취소 시 자식 프로세스 정리. `config.llm_provider` 기본을
-  `claude_cli` 로(D5 — 테스트·오프라인 게이트는 stub 유지), 모델 기본값 최신화.
-  T3.3 이관: run 한도 설정 키(도구 호출 수·시간, 지금 AgentLimits 기본 200회·1800초), bootstrap 의 빈 Scripted 런타임을 실제 런타임 선택으로 교체,
-  `bootstrap.py`(252줄) 조립 함수 분리.
+  transcript 는 run 디렉터리에(고유식별정보 가림). 프로세스 종료·타임아웃·취소 시 자식 프로세스 정리.
+  T3.5 이관: 런타임이 생성자로 받은 `run_tokens.open` 으로 run() 안에서 토큰을 열고(AgentRuntime port 는 그대로), MCP URL 은
+  `http://127.0.0.1:<포트>/mcp`(포트는 생성자 인자 — 실제 포트 배선은 T3.7). `ToolReply.done` 은 MCP 로 안 가므로 open 에 넘기는 call_tool 을
+  감싸 done 을 보고 claude 프로세스를 멈춘다(`tests/api/mcp_kit.OverMcp` 참고). ask_user 가 최대 HUMAN_WAIT_S 열려 있으니 CLI MCP 도구 타임아웃을 맞춘다.
+  bootstrap 배선은 하지 않는다(T3.7) — 테스트는 앱을 직접 조립하는 테스트 키트로.
 - 수용 기준: stream-json init 이벤트의 도구 목록이 **우리 MCP 도구뿐**임을 단언(native), 짐 사이트 e2e 1건 → AWAITING_APPROVAL·제출 0건(native),
-  한도초과·로그인 풀림 시그니처 → 인프라 실패 분류(대역 stdout), 취소 시 잔여 프로세스 0.
+  한도초과·로그인 풀림 시그니처 → 인프라 실패 분류(대역 stdout), 취소 시 잔여 프로세스 0. AgentRuntime contract test 에 CLI params(native).
 
-### T3.7 AnthropicApiAgentRuntime · bootstrap 배선
+### T3.7 bootstrap 정리 · 실제 런타임 배선
 - 의존: T3.6
-- 범위: `src/auto_apply/{adapters/agent/anthropic*.py,bootstrap.py,config.py,runner/}`, `tests/`, §A6·§A10
-- 할 일: Messages API tool-use 루프(같은 TOOLS 를 in-process 로), 가짜 HTTP 전송으로 테스트. AgentRuntime contract test 에 CLI·API params 추가.
-  bootstrap: BrowserHost 와 짝지은 PageDriver·SubmitGuard·BrowserToolbox 조립(T2.4 이관), `forbidden_origins` 에 앱 자신의 주소(실제 포트)
-  주입(T3.3 이관 — 지금은 `cfg.web_cors_origin` 만 넘김), HumanGate·fill 핸들러 등록은 T3.3 에서 끝남.
-- 수용 기준: API 런타임 contract test(가짜 전송), 앱 기동 → fill job 투입 → Scripted 런타임으로 AWAITING_APPROVAL 까지 통합 테스트,
-  forbidden_origins 에 실제 포트가 들어감을 단언.
+- 범위: `src/auto_apply/{bootstrap*.py,config.py,api/main.py,__main__.py,runner/}`, `.env.example`, `tests/`, §A1·§A10
+- 할 일: `bootstrap.py`(268줄) 조립 함수를 책임별로 분리. `config.llm_provider` 기본을 `claude_cli` 로(D5 — 테스트·오프라인 게이트는 stub 유지),
+  모델 기본값 최신화, run 한도 설정 키(도구 호출 수·시간, T3.3 이관). 빈 Scripted 런타임을 `llm_provider` 에 따른 실제 런타임 선택으로 교체
+  (stub 이면 Scripted — 브라우저 안 띄움). **앱의 실제 포트**를 BrowserToolbox `forbidden_origins`(T2.4·T3.3 이관 — 지금은 `cfg.web_cors_origin` 만)와
+  CLI 런타임 MCP URL 에 같은 값으로 주입(`--port 0` 이면 고른 포트). BrowserHost 와 짝지은 PageDriver·SubmitGuard 조립 확인(T2.4 이관).
+- 수용 기준: `--port 0` 기동 → forbidden_origins·MCP URL 에 실제 포트가 들어감을 단언, 앱 기동 → fill job 투입 → Scripted 런타임으로 AWAITING_APPROVAL
+  통합 테스트, llm_provider 별 런타임 선택 표 테스트, bootstrap 파일들 200줄 이하.
+
+### T3.8 AnthropicApiAgentRuntime
+- 의존: T3.7
+- 범위: `src/auto_apply/{adapters/agent/anthropic*.py,adapters/llm/anthropic.py,bootstrap*.py,config.py}`, `tests/`, §A6
+- 할 일: Messages API tool-use 루프(같은 TOOLS 를 in-process 로 — MCP 거치지 않음), 한도·취소·done 처리는 CLI 와 같은 계약. 벤더 타입은 어댑터 안에만.
+  가짜 HTTP 전송으로 테스트. bootstrap 선택지(`llm_provider=anthropic`) 추가.
+- 수용 기준: AgentRuntime contract test 에 API params(가짜 전송), 도구 결과·에러·done·한도 경로, API 키 없음/401/429 → 인프라 실패 분류.
 
 M3 이후 실사용 점검(사용자와, 카드 아님): T2.5 "남는 위험"(안전 라벨 fetch 최종 제출·WebSocket·3초 넘게 미룬 제출·shadow DOM submit·
 가드 이름 선점), T2.7 단계 어휘·마지막 단계 신호 오탐·미탐, shadow DOM snapshot 누락, T2.6 Google 로그인 webdriver 차단 여부 —
