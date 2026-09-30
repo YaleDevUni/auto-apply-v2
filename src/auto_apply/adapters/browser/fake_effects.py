@@ -20,11 +20,13 @@ class Send:
 class SubmitForm:
     """submit 이벤트·form.submit()·requestSubmit().
 
-    가드가 켜져 있으면 스크립트 층이 먼저 막는다.
+    가드가 켜져 있으면 스크립트 층이 먼저 막는다. `by_click` = 이 요소를 누른 기본 동작의 폼 제출
+    (submitter 가 이 요소) — STEP 창(D17)에서 그것 하나만 통과한다.
     """
 
     method: str
     url: str
+    by_click: bool = False
 
 
 @dataclass(frozen=True)

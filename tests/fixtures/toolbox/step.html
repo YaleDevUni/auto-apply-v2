@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>단계 이동 테스트</title></head>
+<body>
+<h1>2단계 — 경력</h1>
+<ol><li>인적사항</li><li aria-current="step">경력</li><li>확인</li></ol>
+<form action="/api/toolbox/step" method="post">
+  <label>경력 요약 <input name="career"></label>
+  <label><input type="checkbox" name="agree"> 동의</label>
+  <input type="hidden" name="token" value="t">
+  <label>첨부 <input type="file" name="doc" style="display:none"></label>
+  <button type="submit">다음</button>
+</form>
+<form id="other" action="/api/toolbox/submit" method="post"><button type="submit" hidden>숨은 제출</button></form>
+<button type="button" id="sneak">다른 폼 제출</button>
+<script>
+  // 핸들러가 다른 폼의 제출 버튼을 누른다(submit 이벤트, submitter = 그 버튼) — step 창이라도
+  // 허용은 클릭한 버튼 자신의 제출뿐이라 막혀야 한다
+  document.getElementById("sneak").addEventListener("click", () => {
+    document.querySelector("#other button").click();
+  });
+</script>
+</body></html>

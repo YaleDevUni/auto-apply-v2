@@ -14,7 +14,6 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from auto_apply.contracts.browser_tools import (
-    ClickInput,
     NavigateInput,
     ReadyForReviewInput,
     ReportFailureInput,
@@ -28,7 +27,7 @@ from auto_apply.domain.errors import PageActionFailed, SubmitGuardUnavailable
 from auto_apply.domain.submit_guard_policy import GuardMode, carries_input
 from auto_apply.domain.url_policy import is_forbidden_url
 from auto_apply.services.browser_toolbox_base import DocumentReader, Refused
-from auto_apply.services.browser_toolbox_handoff import HandoffTools
+from auto_apply.services.browser_toolbox_click import ClickTools
 from auto_apply.services.browser_toolbox_inputs import InputTools
 from auto_apply.services.browser_toolbox_record import (
     HANDOFF_HINTS,
@@ -52,11 +51,11 @@ _HANDLERS = {
 assert _HANDLERS.keys() == TOOLS.keys()  # 정의와 실행이 어긋나면 import 부터 실패
 
 
-class BrowserToolbox(InputTools, HandoffTools):
+class BrowserToolbox(InputTools, ClickTools):
     """run 하나의 도구 상자. 탭은 BrowserHost 의 작업 탭 하나다(새 탭·팝업 조작은 없다).
 
-    `step` 은 다단계 사이트에서 몇 번째 승인 단계의 FILL 인지 — FillLog 항목과
-    ready_for_review 에 붙는다. run 이 끝나면 `close()` 로 가드를 내린다.
+    `step` 은 시작 페이지 단계 — 단계 이동(D17)으로 새 입력 화면에 닿을 때마다 +1 되고 FillLog
+    항목과 ready_for_review 에 붙는다. run 이 끝나면 `close()` 로 가드를 내린다.
     """
 
     async def call(self, tool: str, args: Mapping[str, object] | None = None) -> ToolResult:
@@ -146,12 +145,6 @@ class BrowserToolbox(InputTools, HandoffTools):
             return self._stop("wait_for", evidence, report)
         return ToolResult(tool="wait_for", ok=True, found=found, guard=report)
 
-    async def _click(self, data: ClickInput) -> ToolResult:
-        self._touchable(data.ref)
-        page = await self._page()
-        mode, _ = await self._guard.click_mode(page, data.ref)  # L2 → 창 모드 (L3)
-        return await self._guarded("click", page, mode, partial(self._pages.click, page, data.ref))
-
     # ------------------------------------------------------------------ 끝내기
     async def _ready_for_review(self, data: ReadyForReviewInput) -> ToolResult:
         self._node(data.submit_ref)
@@ -162,7 +155,7 @@ class BrowserToolbox(InputTools, HandoffTools):
         target = redact_target(await self._pages.submit_target(page, data.submit_ref))
         self._review = ReviewRecord(
             target=target,
-            verdict=classify_target((target.element, *target.ancestors)),
+            verdict=classify_target((target.element, *target.ancestors), self._guard.last_seen),
             notes=redact_text(data.notes),
             step=self._step,
             fill_log=self._fill_log,

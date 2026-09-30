@@ -13,7 +13,13 @@ from typing import Any
 from playwright.async_api import BrowserContext
 from playwright.async_api import Error as PlaywrightError
 
-from auto_apply.adapters.browser.guard_script import DESCRIBE_CLICK, READ_TEXT, TARGET
+from auto_apply.adapters.browser.guard_script import (
+    ALLOW_STEP,
+    DESCRIBE_CLICK,
+    GUARD_KEY,
+    READ_PAGE,
+    TARGET,
+)
 from auto_apply.adapters.browser.playwright_guard import ContextGuard
 from auto_apply.adapters.browser.playwright_host import PlaywrightBrowserHost
 from auto_apply.adapters.browser.playwright_pages import (
@@ -97,24 +103,35 @@ class PlaywrightGuardedPageDriver(PlaywrightPageDriver):
         return tuple(ElementDescriptor.model_validate(i) for i in infos)
 
     async def click(self, page: PageHandle, ref: str) -> None:
-        self._ready_guard(page)  # 하네스 없는 클릭은 없다
+        guard = self._ready_guard(page)  # 하네스 없는 클릭은 없다
         element, desc = await self._element(page, ref)
         if rules.is_file_input(desc["tag"], desc["type"]):
             raise PageActionFailed(PageFailure.UNSUPPORTED_ELEMENT, "파일 입력은 upload 로 넣는다")
+        if guard.mode is GuardMode.STEP:  # 이 버튼의 폼 제출 한 번만 스크립트 층을 지난다 (D17)
+            with contextlib.suppress(PlaywrightError):
+                await element.evaluate(ALLOW_STEP, [GUARD_KEY, self._token])
         await _act(element.click(timeout=_ACTION_TIMEOUT_MS))
 
     async def read_text(self, page: PageHandle) -> PageText:
         p = self._page(page)
         urls: list[str] = []
         lines: list[str] = []
+        inputs = submitters = 0
+        progress: list[tuple[int, int]] = []
         for frame in p.frames:
             if frame.is_detached():
                 continue
             urls.append(frame.url)
-            with contextlib.suppress(PlaywrightError, TimeoutError):
-                text = await asyncio.wait_for(frame.evaluate(READ_TEXT), _READ_TIMEOUT_S)
-                lines.extend(s for line in str(text).splitlines() if (s := line.strip()))
-        return PageText(urls=tuple(urls), lines=tuple(lines))
+            with contextlib.suppress(PlaywrightError, TimeoutError, TypeError, ValueError):
+                seen = await asyncio.wait_for(frame.evaluate(READ_PAGE), _READ_TIMEOUT_S)
+                lines.extend(s for line in str(seen["text"]).splitlines() if (s := line.strip()))
+                inputs += int(seen["inputs"])
+                submitters += int(seen["submitters"])
+                progress.extend((int(c), int(t)) for c, t in seen["progress"])
+        return PageText(
+            urls=tuple(urls), lines=tuple(lines), inputs=inputs, submitters=submitters,
+            progress=tuple(progress),
+        )  # fmt: skip
 
     async def submit_target(self, page: PageHandle, ref: str) -> SubmitTarget:
         p = self._page(page)

@@ -60,9 +60,9 @@ _SPECS = (
     ),
     ToolSpec(
         "click",
-        "ref 요소를 누른다. 제출처럼 보이는 요소는 하네스가 제출 요청을 막는다 —"
-        " 막히면 submit_blocked 가 오고, 그때는 ready_for_review 로 넘긴다"
-        "(최종 제출이든 단계 이동이든 같다)."
+        "ref 요소를 누른다. '다음'·Next 같은 단계 이동 버튼은 하네스가 확인하고 통과시킨다."
+        " 제출처럼 보이는 요소는 하네스가 제출 요청을 막는다 —"
+        " 막히면 submit_blocked 가 오고, 그때는 ready_for_review 로 넘긴다."
         " 지원 완료 화면이 나타나면 run 이 멈춘다.",
         ClickInput,
     ),
@@ -97,7 +97,7 @@ _SPECS = (
     ),
     ToolSpec(
         "ready_for_review",
-        "입력을 마쳤다. submit_ref 는 사람이 승인하면 하네스가 누를 제출(또는 다음 단계) 버튼이다."
+        "입력을 마쳤다. submit_ref 는 사람이 승인하면 하네스가 누를 최종 제출 버튼이다."
         " 지금까지의 입력 기록과 함께 승인 대기로 넘기고 run 을 끝낸다."
         " 에이전트는 제출하지 않는다.",
         ReadyForReviewInput,

@@ -21,6 +21,7 @@ _GUARD_TEMPLATE = r"""
   if (Object.prototype.hasOwnProperty.call(window, KEY)) return;
   const TOKEN = __TOKEN__;
   let armed = true;
+  let step = null;  // 단계 이동(D17)으로 허용한 버튼 — 그 버튼이 낸 submit 한 번만 통과한다
   const events = [];
   const note = (what) => { if (events.length < 100) events.push(what); };
   const F = window.HTMLFormElement && window.HTMLFormElement.prototype;
@@ -39,13 +40,16 @@ _GUARD_TEMPLATE = r"""
   }
   window.addEventListener("submit", (e) => {
     if (!armed) return;
+    if (step !== null && e.submitter === step && e.target === step.form) { step = null; return; }
     e.preventDefault();
     e.stopImmediatePropagation();
     note("submit");
   }, true);
   Object.defineProperty(window, KEY, {configurable: false, enumerable: false, writable: false,
-    value: (token, on) => {
+    value: (token, on, allow) => {
       if (token !== TOKEN) return null;
+      if (allow !== undefined) { step = allow; return []; }
+      step = null;  // 허용은 그 창 안에서만 — 창을 닫는 수거(on=null)·켜고 끄기가 지운다
       if (typeof on === "boolean") armed = on;
       return events.splice(0, events.length);
     }});
@@ -58,6 +62,15 @@ def guard_script(token: str) -> str:
         "__TOKEN__", json.dumps(token)
     )
 
+
+# STEP 창(D17): 클릭할 요소가 속한 제출 버튼의 submit 한 번을 허용한다. 요소의 프레임에서 돈다.
+# 허용하지 못했으면(가드 없는 프레임) 그 submit 은 막힌다 — 닫힌 쪽.
+ALLOW_STEP = """(el, [key, token]) => {
+  let b = el;
+  while (b && b.tagName !== "BUTTON" && b.tagName !== "INPUT") b = b.parentElement;
+  const f = window[key];
+  return typeof f === "function" && !!b && Array.isArray(f(token, null, b));
+}"""
 
 # 프레임의 가드를 켜고/끄고(`on`=true/false) 막은 기록을 수거한다(`on`=null).
 # 가드가 없는 프레임은 null.
@@ -109,7 +122,33 @@ DESCRIBE_CLICK = (
 }"""
 )
 
-READ_TEXT = "() => (document.body ? document.body.innerText : '')"
+# L5·D17 관찰 — 보이는 글자, 편집 가능한 입력칸 수(체크박스 제외, 파일 입력은 숨겨도 센다),
+# 보이는 폼 제출 버튼 수, `aria-current="step"` 이 진행 목록의 몇 번째인가.
+READ_PAGE = r"""() => {
+  const SKIP = new Set(["hidden", "checkbox", "submit", "button", "reset", "image"]);
+  const shown = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden";
+  let inputs = 0, submitters = 0;
+  for (const e of document.querySelectorAll("button, input[type=submit], input[type=image]")) {
+    if (e.type === "submit" || e.type === "image") {
+      if (e.form && !e.disabled && shown(e)) submitters++;
+    }
+  }
+  const fields = "input, textarea, select, [contenteditable=''], [contenteditable=true]";
+  for (const e of document.querySelectorAll(fields)) {
+    if (e.disabled || e.readOnly) continue;
+    const type = e.tagName === "INPUT" ? e.type : "";
+    if (SKIP.has(type)) continue;
+    if (type === "file" || shown(e)) inputs++;
+  }
+  const progress = [];
+  for (const e of [...document.querySelectorAll('[aria-current="step"]')].slice(0, 10)) {
+    const item = e.closest("li") || e;
+    const items = item.parentElement ? [...item.parentElement.children] : [item];
+    progress.push([items.indexOf(item) + 1, items.length]);
+  }
+  return {text: document.body ? document.body.innerText : "", inputs: inputs,
+    submitters: submitters, progress: progress};
+}"""
 
 # ready_for_review — 승인 뒤(§A4 L6) 같은 요소인지 다시 찾을 선택자 후보와 문서 좌표.
 TARGET = r"""(el) => {

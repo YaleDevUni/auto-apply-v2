@@ -56,6 +56,8 @@ class InputTools(ToolboxBase):
         node = self._input_node(data.ref)
         page = await self._page()
         mode, _ = await self._guard.click_mode(page, data.ref)
+        if mode is GuardMode.STEP:  # 단계 이동 창은 click 만 연다(사후 확인이 거기 있다) — D17
+            mode = GuardMode.STRICT
 
         def done(_: object) -> ToolResult:
             self._record(FillAction.CHECK, node, data.source, checked=data.on)

@@ -1,9 +1,13 @@
-"""제출 클릭 분류(§A4 L2)와 완료 감지(§A4 L5) — 순수 함수. 어휘는 `submit_vocabulary.py`.
+"""제출 클릭 분류(§A4 L2, D17)와 완료 감지(§A4 L5) — 순수 함수. 어휘는 `submit_vocabulary.py`.
 
 분류는 허용 목록 방식이다: 위험 신호(제출 컨트롤·기본 버튼·dialog 긍정·제출 어휘)가 하나라도 있으면
 Risky, 없어도 **안전하다고 볼 근거**(입력 요소·실제 href 링크·안전 어휘)가 있어야만 Safe. 나머지는
 전부 Risky(UNRECOGNIZED) — 판단이 애매하면 닫힌 쪽으로 실패한다. Risky 는 막히는 게 아니라 strict
 창(L3)에서 실행될 뿐이라 과잉 판정의 비용은 작고, 과소 판정은 제출 사고다.
+
+예외 하나(D17): 제출 컨트롤이라도 라벨 전체가 단계 어휘("다음"·Next)이고 같은 페이지에 마지막 단계
+신호가 없으면 Step — 그 버튼의 폼 제출만 통과시키고 결과 화면을 사후 확인한다. 페이지 관찰이
+없으면 신호가 없다고 볼 수 없어 Step 은 없다(T2.2 판정 그대로).
 """
 
 import re
@@ -13,9 +17,11 @@ from urllib.parse import unquote
 from auto_apply.contracts.click import (
     ClickRisk,
     ElementDescriptor,
+    PageText,
     RiskyClick,
     SafeBasis,
     SafeClick,
+    StepClick,
 )
 from auto_apply.domain import submit_vocabulary as vocab
 
@@ -88,17 +94,59 @@ def _safe_word(folded: str) -> str | None:
     return ko or next((t for t in _ASCII_TOKEN.findall(folded) if t in vocab.SAFE_EN_TOKENS), None)
 
 
-def classify_click(element: ElementDescriptor) -> SafeClick | RiskyClick:
+def _step_word(parts: list[str], in_dialog: bool) -> str | None:
+    """라벨 조각(접근 이름·텍스트)이 **모두** 단계 어휘와 정확히 같으면 그 어휘 (D17)."""
+    if in_dialog or not parts:  # dialog 안의 "계속" 은 확인 응답이다
+        return None
+    compact = {_compact(p) for p in parts}
+    return compact.pop() if len(compact) == 1 and compact <= vocab.STEP_PHRASES else None
+
+
+def last_step_signal(page: PageText) -> str | None:
+    """같은 페이지에 마지막 단계라는 신호가 있으면 근거, 없으면 None (D17).
+
+    진행 표시가 마지막(DOM `aria-current=step`·"단계 3/3"), 최종 동의·"제출 전 확인" 문구,
+    편집 가능한 입력칸이 하나도 없는 화면(검토·요약 페이지). 오탐은 단계 이동이 strict 로 막힐
+    뿐이다.
+    """
+    if any(total >= 2 and cur >= total for cur, total in page.progress):
+        return "progress:dom"
+    for line in page.lines:
+        folded = " ".join(_fold(line).split())
+        for pattern in vocab.PROGRESS_TEXT:
+            for m in pattern.finditer(folded):
+                if int(m["total"]) >= 2 and int(m["cur"]) >= int(m["total"]):
+                    return f"progress:{m.group(0)}"
+        compact = _compact(folded)
+        notice = next((w for w in vocab.LAST_STEP_KO if w in compact), None)
+        if notice is None and (en := vocab.LAST_STEP_EN.search(folded)):
+            notice = en.group(0)
+        if notice:
+            return f"notice:{notice}"
+    return "no_inputs" if page.inputs == 0 else None
+
+
+def classify_click(
+    element: ElementDescriptor, page: PageText | None = None
+) -> SafeClick | RiskyClick | StepClick:
+    """`page` 는 클릭 직전 페이지 관찰 — 단계 어휘 버튼의 마지막 단계 신호를 본다."""
     tag = _ascii_lower(element.tag).strip()
     type_ = None if element.type is None else _ascii_lower(element.type)
     role = (_ascii_lower(element.role).split() or [""])[0]
+    parts = [_fold(p) for p in dict.fromkeys((element.name, element.text)) if p.strip()]
+    step = None if page is None else _step_word(parts, element.in_dialog)
+    signal = last_step_signal(page) if step is not None and page is not None else None
 
-    if _is_submit_control(tag, type_, element.in_form):
-        return RiskyClick(reason=ClickRisk.SUBMIT_TYPE, detail=f"{tag}[type={element.type}]")
-    if element.is_form_default_button:
+    submit_control = _is_submit_control(tag, type_, element.in_form)
+    if submit_control or element.is_form_default_button:
+        if step is not None and type_ != "image":
+            if signal is None:
+                return StepClick(detail=step)
+            return RiskyClick(reason=ClickRisk.LAST_STEP, detail=signal)
+        if submit_control:
+            return RiskyClick(reason=ClickRisk.SUBMIT_TYPE, detail=f"{tag}[type={element.type}]")
         return RiskyClick(reason=ClickRisk.FORM_DEFAULT_BUTTON)
 
-    parts = [_fold(p) for p in dict.fromkeys((element.name, element.text)) if p.strip()]
     if element.in_dialog:
         hit = next((c for c in map(_compact, parts) if c in vocab.DIALOG_AFFIRMATIVE), None)
         if hit:
@@ -115,6 +163,9 @@ def classify_click(element: ElementDescriptor) -> SafeClick | RiskyClick:
     if _is_navigation_link(tag, role, element.href):
         return SafeClick(basis=SafeBasis.NAVIGATION_LINK)
     safe = _safe_word(label)
+    if safe and step is not None and signal is not None:
+        # type=button "다음" 이 fetch 로 최종 제출하는 마지막 단계 — strict 로 (D17)
+        return RiskyClick(reason=ClickRisk.LAST_STEP, detail=signal)
     if safe:
         return SafeClick(basis=SafeBasis.SAFE_WORD, detail=safe)
     return RiskyClick(reason=ClickRisk.UNRECOGNIZED)

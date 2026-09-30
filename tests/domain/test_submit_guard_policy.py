@@ -1,19 +1,22 @@
-"""SubmitGuard 결정 규칙 (§A4 L3·L4·L5) — 요청 판정 표, 대화상자, 새로 나타난 완료 근거."""
+"""SubmitGuard 결정 규칙 (§A4 L3·L4·L5, D17) — 요청 판정 표, 대화상자, 새로 나타난 완료 근거."""
 
 import pytest
 
+from auto_apply.contracts.click import PageText
 from auto_apply.domain.submit_guard_policy import (
     BlockReason,
     GuardMode,
+    StepLanding,
     carried_values,
     carries_input,
     completion_evidence,
     dialog_verdict,
     request_verdict,
+    step_landing,
 )
 from auto_apply.domain.url_policy import matches_origin
 
-S, R = GuardMode.STRICT, GuardMode.RELAXED
+S, R, P = GuardMode.STRICT, GuardMode.RELAXED, GuardMode.STEP
 APP = ("http://127.0.0.1:8000",)
 SITE = "https://jobs.example.com"
 
@@ -58,6 +61,34 @@ def _v(mode, method, url, nav=False, carried=(), forbidden=APP):
 )
 def test_request_verdict_table(mode, method, url, nav, expected):
     assert _v(mode, method, url, nav) is expected
+
+
+def test_document_navigation_carrying_typed_values_is_blocked_in_every_mode_but_step():
+    # 입력값을 실은 문서 탐색 = GET 폼 제출. step 창은 단계 이동 버튼의 폼 제출(GET 폼 포함)을
+    # 통과시키는 창이라 예외다 — 결과 화면은 SubmitGuard.after_step 이 본다 (D17)
+    carried = carried_values(["홍길동"])
+    url = f"{SITE}/apply?name=%ED%99%8D%EA%B8%B8%EB%8F%99"
+    assert _v(S, "GET", url, nav=True, carried=carried) is BlockReason.STRICT_GET_QUERY
+    assert _v(P, "GET", url, nav=True, carried=carried) is None
+
+
+@pytest.mark.parametrize(
+    ("method", "url", "nav", "expected"),
+    [
+        # 단계 이동 버튼의 폼 제출 — 문서 탐색은 method 와 관계없이 통과
+        ("POST", f"{SITE}/apply/step1", True, None),
+        ("PUT", f"{SITE}/apply/step1", True, None),
+        ("GET", f"{SITE}/apply?step=2", True, None),
+        # 그 밖은 relaxed 와 같다
+        ("POST", f"{SITE}/api/save", False, None),
+        ("GET", f"{SITE}/api/config?lang=ko", False, None),
+        # 앱 출처는 step 창에서도 막는다
+        ("POST", "http://127.0.0.1:8000/api/approve", True, BlockReason.FORBIDDEN_ORIGIN),
+        ("POST", "http://localhost:8000/api/approve", False, BlockReason.FORBIDDEN_ORIGIN),
+    ],
+)
+def test_step_window_passes_document_navigation_only(method, url, nav, expected):
+    assert _v(P, method, url, nav) is expected
 
 
 def test_strict_get_carrying_typed_values_is_blocked():
@@ -125,3 +156,32 @@ def test_completion_on_new_page_and_new_frame_url():
 
 def test_completion_across_line_break_is_caught():
     assert completion_evidence([], [], [], ["지원이", "완료되었습니다"]) is not None
+
+
+_FORM = PageText(urls=(f"{SITE}/apply",), lines=("지원서", "이름", "경력", "자기소개"), inputs=3)
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        # 새 주소의 입력 화면 — 다음 단계
+        (PageText(urls=(f"{SITE}/apply/2",), lines=("2단계",), inputs=1), StepLanding.NEXT_STEP),
+        # 같은 주소(폼 POST 가 같은 URL 에 2단계를 그린다)라도 전 화면 글자가 절반 넘게 사라졌다
+        (_FORM.model_copy(update={"lines": ("지원서", "학력", "어학")}), StepLanding.NEXT_STEP),
+        # 입력칸 없는 검토 페이지 — 제출 버튼이 남아 있으면 아직 제출 전
+        (PageText(urls=(f"{SITE}/review",), lines=("이름: 홍길동",), submitters=1),
+         StepLanding.NEXT_STEP),
+        # 검증 오류 한 줄이 더해졌을 뿐 — 같은 화면
+        (_FORM.model_copy(update={"lines": (*_FORM.lines, "이름을 입력하세요")}),
+         StepLanding.SAME_PAGE),
+        # 입력칸도 제출 버튼도 없다 — 제출됐는지 모른다
+        (PageText(urls=(f"{SITE}/receipt",), lines=("접수 번호 1234",)), StepLanding.UNCLEAR),
+        (PageText(urls=(f"{SITE}/apply",), lines=_FORM.lines), StepLanding.UNCLEAR),
+    ],
+)  # fmt: skip
+def test_step_landing(now, expected):
+    assert step_landing(_FORM, now) is expected
+
+
+def test_step_landing_without_a_prior_observation_counts_as_moved():
+    assert step_landing(None, _FORM) is StepLanding.NEXT_STEP

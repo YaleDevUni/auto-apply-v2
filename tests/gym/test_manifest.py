@@ -30,6 +30,10 @@ REQUIRED_SITES = {
     "confirm_next",
     "delayed_submit",
     "consent_check",
+    # T2.7(D17): 마지막 "다음" 이 최종 제출(신호 있음·없음), 검토 페이지형
+    "next_final_signal",
+    "next_final_nosignal",
+    "review_page",
 }
 
 
@@ -115,6 +119,7 @@ def _one(**site) -> dict:
         _one(allowed=[{"method": "POST", "path": "/api/s/x"}]),
         _one(entry="/sites/other/"),
         _one(unknown_key=1),
+        _one(accepted_risk="daring"),  # 받아들인 위험은 결정 번호(D…)로만
         _one(
             login={
                 "cookie": "c",
@@ -147,3 +152,9 @@ def test_minimal_manifest_ok():
 def test_get_final_submit_is_allowed_for_get_submission_sites():
     m = Manifest.model_validate(_one(final_submit=[{"method": "GET", "path": "/api/s/x"}]))
     assert m.endpoint("GET", "/api/s/x") is not None
+
+
+def test_accepted_risk_sites_are_only_the_d17_no_signal_site(manifest):
+    # 하네스가 있어도 제출이 나가는 사이트는 설계 결정으로만 — 늘어나면 리뷰에서 보이게
+    risky = {n: s.accepted_risk for n, s in manifest.sites.items() if s.accepted_risk}
+    assert risky == {"next_final_nosignal": "D17"}

@@ -93,13 +93,13 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
 | 층 | 무엇을 | 어떻게 |
 |---|---|---|
 | L1 도구 표면 | 에이전트가 쓸 수 있는 동작 제한 | 임의 JS 실행·Enter 키·좌표 클릭 도구 없음. CLI 경로는 우리 MCP 도구만 허용(`--strict-mcp-config`, 내장 도구 전부 차단) |
-| L2 클릭 분류 | 모든 `click(ref)` 전에 대상 분류 | `domain/submit_classifier.py`: `type=submit`, 폼 기본 버튼, 제출 어휘(제출/지원하기/지원 완료/최종/Submit/Apply/Send…), dialog 안의 확인/OK/예 → **risky**. 순수 함수, 픽스처로 회귀 테스트 |
-| L3 risky 클릭 격리 | risky 클릭은 **strict 네트워크 모드**에서만 실행 | 클릭 창(window) 동안 비-GET 요청(document/xhr/fetch/beacon) 전부 abort + 쿼리·입력값을 싣는 GET 탐색 abort + 페이지 내 `form.submit/requestSubmit`·submit 이벤트 차단(모든 모드). 차단이 발생하면 "이 클릭은 제출 동작이었다"로 판정해 에이전트에게 `SUBMIT_BLOCKED` 반환 → `ready_for_review` 로 유도 |
+| L2 클릭 분류 | 모든 `click(ref)` 전에 대상 분류 | `domain/submit_classifier.py`: `type=submit`, 폼 기본 버튼, 제출 어휘(제출/지원하기/지원 완료/최종/Submit/Apply/Send…), dialog 안의 확인/OK/예 → **risky**. 단, 라벨 전체가 단계 어휘("다음"·Next)인 제출 컨트롤은 마지막 단계 신호가 없으면 **step**(D17). 순수 함수, 픽스처로 회귀 테스트 |
+| L3 risky 클릭 격리 | risky 클릭은 **strict 네트워크 모드**에서만 실행 (step 은 step 창 — 아래 D17) | 클릭 창(window) 동안 비-GET 요청(document/xhr/fetch/beacon) 전부 abort + 쿼리·입력값을 싣는 GET 탐색 abort + 페이지 내 `form.submit/requestSubmit`·submit 이벤트 차단(모든 모드). 차단이 발생하면 "이 클릭은 제출 동작이었다"로 판정해 에이전트에게 `SUBMIT_BLOCKED` 반환 → `ready_for_review` 로 유도 |
 | L4 네이티브 대화상자 | `confirm()/prompt()/beforeunload` | FILL 단계에선 자동 dismiss(거절). `alert` 만 확인(선택지가 없다). 처리한 대화상자는 도구 결과로 알린다 |
 | L5 사후 감지 | 뚫렸는지 확인 | 도구 호출마다 URL/본문에 **새로** 완료 어휘("지원이 완료", "application received"…)가 나타나면 run 즉시 중단 + `INCIDENT` 이벤트 + UI 경고 |
 | L6 제출 실행 | 승인 후에만 | SUBMITTING 단계에서도 에이전트는 제출 버튼을 못 누른다. `commit_submit()` 을 부르면 **하네스가** (a) FillLog 필드 값 DOM 재판독·대조 (b) 기록된 제출 대상과 동일 요소인지 확인 (c) `submit_mode=live` 확인 후 직접 클릭. dry_run 이면 클릭 없이 증거만 남김 |
 
-- 비-risky 클릭(다음/Next/저장 후 계속, 파일 업로드 등)은 relaxed 모드 — 단계 저장·업로드 POST 허용.
+- 비-risky 클릭(`type=button` 다음/Next/저장 후 계속, 파일 업로드 등)은 relaxed 모드 — 단계 저장·업로드 POST 허용.
 - L2 는 **허용 목록**이다(T2.2): 위험 신호가 없어도 Safe 근거(입력 요소 · 실제 href 링크 · 안전 어휘 — 한글 음절·ASCII 만인
   라벨)가 있어야 Safe, 나머지는 `UNRECOGNIZED` 로 risky. `type=submit` 은 라벨("다음")보다 우선하고, type 값은 HTML 처럼
   ASCII 대소문자만 무시한다(알 수 없는 button type = submit). 어휘는 `domain/submit_vocabulary.py` 데이터로 분리.
@@ -112,8 +112,9 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬─
 describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard.py` + `fake_effects.py`(핸들러를 데이터로).
 
 - **창 모델**: 페이지를 건드리는 도구 호출 하나가 창 하나다(click·check·fill·select·upload·navigate·back·scroll). click·check 는
-  L2 분류로 모드를 정하고(요소 + 클릭이 닿는 조작 가능한 조상·라벨의 컨트롤까지 — 하나라도 risky 면 strict), 나머지는 relaxed.
-  창이 끝나도 모드는 **다음 창이 열릴 때까지 유지**되고, strict 창 뒤 3초(`STRICT_TAIL_S`) 안에는 relaxed 창을 열지 않고
+  L2 분류로 모드를 정하고(요소 + 클릭이 닿는 조작 가능한 조상·라벨의 컨트롤까지 — 하나라도 risky 면 strict, 아니면 하나라도
+  step 이면 step), 나머지는 relaxed. 창이 끝나도 모드는 **다음 창이 열릴 때까지 유지**되고(step 창만은 끝나면 relaxed 로
+  되돌린다), strict 창 뒤 3초(`STRICT_TAIL_S`) 안에는 strict 가 아닌 창(relaxed·step)을 열지 않고
   기다린다 — risky 클릭 핸들러가 `setTimeout` 으로 미룬 제출이 창 밖이나 이어지는 안전한 동작의 창에 섞여 새지 않게.
   동작이 뜻밖의 예외로 끝나도 꼬리는 걸린다(핸들러는 이미 돌았을 수 있다).
   run 을 끝내며 가드를 끄는 것(`close`)도 꼬리가 지난 뒤다. 동작 뒤에는 최소 0.4초, 그 창에서 시작된 요청이 끝날 때까지
@@ -123,11 +124,15 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   (폼 POST)와 입력한 값(3자 이상)이나 주민번호 꼴을 URL 에 싣는 문서 탐색(GET 폼 제출) → 모든 모드에서 차단. relaxed → 그 밖은
   통과(단계 저장·업로드 fetch/xhr/beacon, 입력값을 싣는 자동 완성 요청). strict → 비-GET 전부(알 수 없는 method 포함), 쿼리를
   싣는 문서 탐색(`location.href="/apply?…"`, method=get 폼), 입력값·주민번호 꼴을 URL 에 싣는 GET 요청을 차단. 쿼리 없는 단순
-  페이지 이동("지원하기" 링크 → 폼 페이지)은 통과(T2.3 이관). 판정·기록 중 예외가 나도 그 요청은 abort 한다(닫힌 쪽).
+  페이지 이동("지원하기" 링크 → 폼 페이지)은 통과(T2.3 이관). step(D17) → 문서 탐색은 method 와 관계없이 통과(그 버튼의 폼
+  POST·GET 제출), 그 밖은 relaxed 와 같다. 판정·기록 중 예외가 나도 그 요청은 abort 한다(닫힌 쪽).
   막힌 기록은 출처만 싣는다(경로·쿼리에 입력값이 실릴 수 있다). 문서 탐색은 `aborted` 로 끊어 채우던 화면이 오류 페이지로
   바뀌지 않게 한다.
 - **페이지 스크립트 층**: init script 가 모든 문서·프레임에서 submit 이벤트(캡처 맨 앞)·`form.submit()`·`requestSubmit()` 을
-  **모드와 관계없이** 막는다 — 안전한 라벨의 `type=button` 이 핸들러로 폼을 제출해도 막힌다(→ `SUBMIT_BLOCKED`). 상태·기록은
+  **모드와 관계없이** 막는다 — 안전한 라벨의 `type=button` 이 핸들러로 폼을 제출해도 막힌다(→ `SUBMIT_BLOCKED`). 예외는 step
+  창의 클릭 하나: 드라이버가 누르기 직전 그 제출 버튼을 토큰으로 등록하면(`guard_script.ALLOW_STEP`) submitter 가 그 버튼이고
+  대상이 그 버튼의 폼인 submit 이벤트 **한 번만** 지나간다. 다른 폼·다른 버튼의 제출, `form.submit()`·`requestSubmit()` 은 step
+  창에서도 막히고, 등록은 창을 닫는 수거(drain)가 지운다. 상태·기록은
   설치별 무작위 토큰으로만 바뀌고 수거된다. 이 층을 페이지가 비껴가도 네트워크 층이 문서 POST 를 막고, 반대도 같다(겹방어 —
   각자 혼자서 폼 제출을 막는지 테스트가 본다).
 - **켜고 끄기**: 도구가 페이지를 처음 건드릴 때 켠다(`arm`, 못 켜면 `GUARD_UNAVAILABLE` 이고 동작하지 않는다 — 클릭은 가드가
@@ -148,28 +153,46 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   새 줄이라, 완료 문구가 있는 페이지를 `navigate` 로 열어도 INCIDENT 다. 근거가 나오면 그 run 은 어떤 도구도 받지 않는다.
   차단된 beacon 뒤에 페이지가 스스로 완료 문구를 띄우는 사이트도 INCIDENT 다 — 막았다는 것과 다른 통로로 새지 않았다는
   것을 하네스가 구분할 수 없어서다(닫힌 쪽).
-- **다단계 사이트(T2.2 이관)**: 분류기는 `type=submit` "다음" 도 risky 라 폼 POST 로 단계를 넘기는 사이트는 FILL 에서 1단계를
-  넘지 못한다. 하네스는 막힌 클릭이 최종 제출인지 단계 이동인지 **구분하지 않고** 그대로 `SUBMIT_BLOCKED` 로 알리며, 에이전트는
-  `ready_for_review(그 ref)` 로 넘긴다. FillLog 항목과 ReviewRecord 에 승인 단계 번호(`step`)가 붙는다. L6 확장: 승인 뒤
-  SUBMITTING 에서 하네스가 기록된 대상을 누른 결과가 완료 근거가 아니라 새 입력 화면이면 지원 건은 `step+1` 의 FILL 로
-  돌아가고, 다음 `ready_for_review` 가 다시 승인을 받는다 — 단계마다 사람이 승인한다. dry_run 은 클릭하지 않으므로 이런
-  사이트는 1단계까지만 채운다(M4 에서 UI 로 알린다). fetch 로 단계를 저장하는 사이트(`type=button` "다음")는 relaxed 로 통과한다.
+- **다단계 사이트 — 단계 이동 자동 통과(D17, T2.7)**: 사람 승인은 **최종 제출 1회**다. `type=submit` 이라도 라벨 전체가 단계
+  어휘(`submit_vocabulary.STEP_PHRASES` — 다음·다음 단계·계속·저장 후 계속·Next·Continue·Save and continue…, 정확 일치라
+  "다음에 제출"·"Continue to review" 는 아니다)이고 dialog 밖이면 분류기가 **step** 을 준다. 단 같은 페이지에 **마지막 단계
+  신호**가 있으면 risky(`LAST_STEP`) — `last_step_signal`: 진행 표시가 마지막(DOM `aria-current="step"` 이 목록 마지막 칸,
+  글자 "단계 3/3"·"Step 3 of 3"·"총 3단계 중 3단계"), 최종 동의·제출 전 확인 문구(제출 전·최종 제출·제출 후에는·위 내용이
+  사실…/before you submit·I certify…), 편집 가능한 입력칸이 없는 화면(검토·요약 페이지). `type=button` 단계 어휘 버튼도
+  신호가 있으면 risky 다(fetch 로 최종 제출하는 마지막 "다음"). 신호 재료는 클릭 직전에 새로 읽은 `PageText`(입력칸 수 —
+  체크박스 제외·숨은 파일 입력 포함, 폼 제출 버튼 수, 진행 표시)이고, 관찰이 없으면 step 은 없다. 제출 어휘·애매한 라벨은
+  지금처럼 strict 다. step 창도 strict 꼬리 뒤에 열고, 꼬리를 기다렸으면 그 뒤 화면으로 다시 판정한다. `check` 는 step 창을
+  열지 않는다(step 판정이면 strict — 사후 확인은 click 에만 있다). step 창은 그 버튼의 폼 제출만 통과시키고(위 스크립트 층·요청
+  판정) 결과를 **사후 확인**한다(`SubmitGuard.after_step` → `step_landing`): 완료 근거 → INCIDENT(L5), 입력칸이나 폼 제출
+  버튼이 있는 화면 → 계속(입력칸
+  없는 검토 페이지도 제출 버튼이 남아 있으면 아직 제출 전 화면이다), 둘 다 없으면 2초(`STEP_LANDING_S`) 더 지켜본 뒤 run 을
+  멈추고 `request_human` 과 같은 핸드오프로 사람에게 넘긴다(애매하면 닫힌 쪽). 화면이 바뀌었으면(주 URL 이 바뀌었거나 전
+  화면 글자 줄의 절반 이상이 사라짐) 페이지 단계 `step` 이 +1 되고, 검증 오류 한 줄이 더해진 것은 같은 화면이다. FillLog
+  항목과 ReviewRecord 의 `step` 은 이 페이지 단계다 — 승인 뒤 값 대조(L6 a)는 마지막 단계의 칸만 DOM 에서 다시 읽을 수 있다.
+  단계마다 승인하던 설계(L6 확장)는 없앴다. dry_run 에서도 step 은 누른다 — dry_run 은 "사이트에 아무것도 안 보냄"이 아니라
+  "최종 제출을 하지 않음"이다(D17). fetch 로 단계를 저장하는 사이트(`type=button` "다음")는 지금처럼 relaxed 로 통과한다.
 - **입력 정규화(T2.4 이관)**: 브라우저가 한 줄 칸의 줄바꿈을 지우므로 `fill` 은 `normalize_fill_value`(한 줄 칸은 CR·LF 제거,
   url·email 은 앞뒤 ASCII 공백도 제거, textarea 는 CR LF→LF) 로 정리한 값을 넣고 **그 값을** FillLog 에 기록한다 — L6 대조가
   DOM 값과 같은 문자열을 본다.
-- **남는 위험**(L5 가 뒤를 받친다): 안전한 라벨의 버튼이 fetch 로 최종 제출하는 사이트(relaxed 가 통과시킨다 — L2 허용
-  목록의 한계), 입력값을 싣지 않는 GET 하위 요청·`navigate` 로 여는 GET 제출 주소(입력값을 실으면 `navigate` 가 거부),
-  3초보다 늦게 미룬 제출, 이미 열린 WebSocket 으로 보내는 제출, 리다이렉트로 앱 출처에 닿는 요청(Playwright route 는 첫 URL 만
+- **남는 위험**(L5 가 뒤를 받친다): **마지막 단계 신호 없이 "다음" 라벨로 최종 제출하는 사이트**(D17 이 받아들인 위험 — step
+  창이 통과시키고 완료 문구가 있으면 L5 가 곧바로 멈춘다, 짐 `next_final_nosignal`), step 창에서 그 버튼의 핸들러가 여는 다른
+  문서 탐색(`location.href` — 문서 탐색은 통과시키므로 사후 확인만 본다), 완료 문구도 입력칸도 없이 폼 하나가 남는 완료 화면,
+  안전한 라벨의 버튼이 fetch 로 최종 제출하는 사이트(relaxed 가 통과시킨다 — L2 허용 목록의 한계. 마지막 단계 신호가
+  있으면 단계 어휘 버튼은 strict 다), 입력값을 싣지 않는 GET 하위 요청·`navigate` 로 여는 GET 제출 주소(입력값을 실으면
+  `navigate` 가 거부), 3초보다 늦게 미룬 제출, 이미 열린 WebSocket 으로 보내는 제출, 리다이렉트로 앱 출처에 닿는 요청(Playwright route 는 첫 URL 만
   본다 — §A10 Host·Origin·토큰 검사가 막는다). shadow DOM 안 폼의 submit 이벤트(composed 가 아니라 window 캡처에 닿지
   않는다)는 페이지 스크립트 층이 못 봐 네트워크 층만 남는다(문서 POST·입력값을 싣는 탐색은 여전히 막힌다). 사람 핸드오프로
   가드가 꺼진 동안에는 그 전에 페이지가 3초 넘게 미뤄 둔 제출이 나갈 수 있다 — 끄기 전 strict 꼬리는 기다리고, 재개 때
   넘기기 직전 화면과 비교하는 L5 가 본다.
 - **테스트 짐(gym)**: `tests/fixtures/sites/` 에 로컬 정적 사이트 — SPA fetch 제출, multipart 제출, confirm 대화상자 제출,
   "지원하기"가 폼 여는 버튼인 경우, 다단계 저장(fetch·`type=submit` 폼 POST 두 종류), iframe 폼, 제출 어휘가 없는 버튼(`확인`),
-  링크로 여는 폼 페이지, GET 탐색 제출, confirm 수락 뒤 제출하는 "다음", 지연(setTimeout) 제출, 체크박스 onchange 제출 등.
+  링크로 여는 폼 페이지, GET 탐색 제출, confirm 수락 뒤 제출하는 "다음", 지연(setTimeout) 제출, 체크박스 onchange 제출,
+  마지막 "다음"이 최종 제출인 사이트(진행 표시 신호 있음·신호 없음), 검토 페이지의 "계속"이 최종 제출인 사이트 등.
   **모든 픽스처에서 FILL 단계 제출 성공 0건**이 하네스 PR 의 통과 조건이다 — 보이는 칸을 다 채우고 누를 수 있는 것을 다 누르는
-  적대 스크립트(`tests/gym/adversary.py`)로 짐 서버가 받은 요청을 센다. 층을 하나씩 끄면(분류·네트워크·GET 규칙·strict 꼬리·
-  대화상자·사후 감지) 해당 사이트에서 제출이 새는 것도 테스트한다(`test_submit_guard_layers_native.py`).
+  적대 스크립트(`tests/gym/adversary.py`)로 짐 서버가 받은 요청을 센다. 예외는 매니페스트에 `accepted_risk`(결정 번호)가 붙은
+  사이트뿐이고(지금은 D17 의 `next_final_nosignal` 하나), 거기서는 제출 1건과 INCIDENT 를 단언한다. 층을 하나씩 끄면(분류·
+  네트워크·GET 규칙·strict 꼬리·대화상자·사후 감지·마지막 단계 신호) 해당 사이트에서 제출이 새는 것도 테스트한다
+  (`test_submit_guard_layers_native.py`).
 
 ## §A5 BrowserToolbox (에이전트 도구)
 
@@ -179,7 +202,7 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
 |---|---|
 | `snapshot()` | 접근성 트리 + ref (agent-browser 스타일). 비밀번호 필드 값은 가림 |
 | `navigate(url)` · `back()` · `scroll(ref?)` · `wait_for(text|ms)` | 이동 |
-| `click(ref)` | §A4 L2/L3 경유. 인자는 ref 하나 |
+| `click(ref)` | §A4 L2/L3 경유. 인자는 ref 하나. 단계 이동 버튼은 하네스가 확인하고 통과시킨다(D17) |
 | `fill(ref, value, source)` · `select(ref, option, source)` · `check(ref, on, source)` | `source` = 근거(profile 필드 / fact_id / answer_kb / generated / user). FillLog 에 자동 기록 |
 | `upload(ref, document_id)` | 앱이 관리하는 파일만 (임의 경로 금지) |
 | `generate_document(kind, …)` | 공고맞춤 이력서/포트폴리오 PDF, 자소서 문항 답변 — DocumentService 호출(§A7) |
@@ -197,6 +220,8 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   `GuardedPageDriver`(§A4 SubmitGuard 설계)에만 있고, 페이지를 건드리는 도구는 전부 SubmitGuard 창 안에서 돈다.
   `ready_for_review` 는 제출 대상(요소·조상 기술자, 선택자 후보, 프레임·페이지 URL, 문서 좌표)과 L2 판정·메모·`step`·FillLog 를
   `ReviewRecord`(`contracts/submit_guard.py`, 고유식별정보 없어야 만들어짐)로 확정하고 run 을 끝낸다. 요소는 누르지 않는다.
+  L2 판정은 그 순간 화면(`SubmitGuard.last_seen`)으로 해서 마지막 단계 신호도 기록된다. `click` 과 단계 이동 사후 확인은
+  `browser_toolbox_click.py`(§A4 D17).
 - ref 는 `e<N>` — snapshot 마다 새 번호(재사용 없음)라 옛 ref 가 다른 요소를 가리킬 수 없다. 드라이버가 요소 핸들을
   Python 쪽 표에 쥐고(DOM 에 표시 속성을 심지 않아 페이지가 ref 를 위조할 수 없다), 이동·새 snapshot 에 표를 버린다.
   snapshot 은 모든 프레임(iframe)을 훑고(`node.frame`), 숨긴 파일 입력도 싣는다. shadow DOM 은 아직 보지 않는다.

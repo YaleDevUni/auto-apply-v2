@@ -17,6 +17,7 @@ NEXT = "/sites/next.html"
 FRAME = "/sites/frame.html"
 INNER = "/sites/inner.html"
 HANDOFF = "/sites/handoff.html"
+STEP = "/sites/step.html"  # 단계 이동(D17) — 진행 표시·입력칸 셈·다른 폼 제출
 # 가드 이름을 먼저 차지하는 페이지 — 실제 드라이버 전용(대역은 스크립트 층이 없다)
 PREEMPT = "/sites/preempt.html"
 
@@ -105,10 +106,41 @@ def _handoff(base: str) -> FakeDocument:
     )
 
 
+def _step(base: str) -> FakeDocument:
+    return FakeDocument(
+        title="단계 이동 테스트",
+        elements=[
+            FakeElement("heading", "2단계 — 경력", tag="h1", level=1),
+            *(FakeElement("text", t, tag="li") for t in ("인적사항", "경력", "확인")),
+            FakeElement("textbox", "경력 요약", in_form=True),
+            FakeElement("checkbox", "동의", type="checkbox", in_form=True),
+            FakeElement("file", "첨부", type="file", visible=False, in_form=True),
+            FakeElement(
+                "button",
+                "다음",
+                tag="button",
+                type="submit",
+                in_form=True,
+                default_button=True,
+                on_click=(SubmitForm("POST", base + "/api/toolbox/step", by_click=True),),
+            ),
+            FakeElement(
+                "button",
+                "다른 폼 제출",
+                tag="button",
+                type="button",
+                on_click=(SubmitForm("POST", base + "/api/toolbox/submit"),),
+            ),
+        ],
+        progress=((2, 3),),
+    )
+
+
 def fake_sites(base: str = FAKE_BASE) -> dict[str, FakeDocument]:
     return {
         base + FORM: _form(base),
         base + HANDOFF: _handoff(base),
+        base + STEP: _step(base),
         base + NEXT: FakeDocument(
             title="두 번째 페이지",
             elements=[

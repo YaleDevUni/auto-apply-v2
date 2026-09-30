@@ -1,4 +1,4 @@
-"""하네스 층을 하나씩 끄면 제출이 새는가 (§A4 T2.5 수용 기준 — 각 층이 실제로 일하고 있다는 증거).
+"""하네스 층을 하나씩 끄면 제출이 새는가 (§A4 T2.5·T2.7 수용 기준 — 각 층이 일한다는 증거).
 
 층마다 "그 층만 막던" 사이트를 고르고, 그 층을 꺼 적대 스크립트를 돌려 짐 서버가
 **최종 제출을 받는지** 본다. 받으면 그 층이 없을 때 test_submit_guard_native 의 "제출 0건"이
@@ -13,6 +13,7 @@ import pytest
 from auto_apply.adapters.browser import playwright_guard
 from auto_apply.contracts.browser_tools import ToolError
 from auto_apply.contracts.click import SafeBasis, SafeClick
+from auto_apply.domain import submit_classifier
 from auto_apply.services import submit_guard
 from tests.guard_rig import Rig, _rig, rig
 from tests.gym.adversary import press_everything
@@ -23,7 +24,12 @@ FORM_SITES = ("multipart_form", "request_submit", "iframe_form", "multi_step_for
 
 
 def _no_l2(mp: pytest.MonkeyPatch) -> None:
-    mp.setattr(submit_guard, "classify_click", lambda d: SafeClick(basis=SafeBasis.SAFE_WORD))
+    safe = SafeClick(basis=SafeBasis.SAFE_WORD)
+    mp.setattr(submit_guard, "classify_click", lambda d, page=None: safe)
+
+
+def _no_last_step(mp: pytest.MonkeyPatch) -> None:
+    mp.setattr(submit_classifier, "last_step_signal", lambda page: None)
 
 
 def _no_network(mp: pytest.MonkeyPatch) -> None:
@@ -62,8 +68,11 @@ async def _run(rig: Rig, site: str) -> list[str]:
         (_no_network, "get_submit"),  # 쿼리를 싣는 GET 탐색
         (_no_network, "delayed_submit"),
         (_no_l4, "confirm_next"),  # "다음" 은 안전 어휘 — confirm 수락이면 곧장 제출
+        # D17 마지막 단계 신호가 없으면 마지막 "다음"·검토 페이지 "계속" 이 step 창으로 제출된다
+        (_no_last_step, "next_final_signal"),
+        (_no_last_step, "review_page"),
     ],
-    ids=["L2", "L3-network", "L3-get", "L3-delayed", "L4"],
+    ids=["L2", "L3-network", "L3-get", "L3-delayed", "L4", "D17-progress", "D17-review"],
 )
 async def test_turning_one_layer_off_lets_a_submission_through(rig, monkeypatch, off, site):
     off(monkeypatch)

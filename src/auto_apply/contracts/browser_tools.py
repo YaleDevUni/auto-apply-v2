@@ -123,8 +123,9 @@ class ToolError(StrEnum):
     OPTION_NOT_FOUND = "option_not_found"
     NAVIGATION_FAILED = "navigation_failed"
     TIMEOUT = "timeout"
-    # §A4 — 이 동작 창에서 하네스가 제출로 보이는 요청·폼 제출을 막았다. 최종 제출인지
-    # 단계 이동인지는 가르지 않는다: 입력을 마쳤으면 ready_for_review 로 사람 승인을 받는다.
+    # §A4 — 이 동작 창에서 하네스가 제출로 보이는 요청·폼 제출을 막았다. 명확한 단계 이동은
+    # 통과하므로(D17) 최종 제출이거나 애매한 버튼이다: 입력을 마쳤으면 ready_for_review 로
+    # 승인을 받는다.
     SUBMIT_BLOCKED = "submit_blocked"
     INCIDENT = "incident"  # L5 — 제출이 뚫린 흔적. run 은 멈췄고 어떤 도구도 받지 않는다
     GUARD_UNAVAILABLE = "guard_unavailable"  # 하네스를 못 켰다 — 동작하지 않았다

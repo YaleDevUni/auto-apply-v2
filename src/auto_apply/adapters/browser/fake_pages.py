@@ -51,6 +51,7 @@ class FakeDocument:
     title: str = ""
     elements: list[FakeElement] = field(default_factory=list)
     frames: tuple[str, ...] = ()  # 하위 프레임 URL (번호 1부터)
+    progress: tuple[tuple[int, int], ...] = ()  # DOM 진행 표시 (현재, 전체) — D17 마지막 단계 신호
 
 
 @dataclass

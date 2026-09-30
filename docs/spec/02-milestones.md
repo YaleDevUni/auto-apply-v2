@@ -132,7 +132,7 @@
 
 ## M2 · 브라우저 호스트 · 제출 차단 하네스
 목표: 설치된 Chrome 을 전용 프로필로 띄우고(mac/win 경로 탐지), BrowserToolbox 도구와 §A4 L1~L5 를 구현.
-수용 기준: **테스트 짐 전 픽스처에서 FILL 단계 제출 0건**, 클릭 분류기 단위 테스트, 로그인 핸드오프 픽스처 테스트. (`native` 마커)
+수용 기준: **테스트 짐 전 픽스처에서 FILL 단계 제출 0건**(D17 받아들인 위험 `next_final_nosignal` 만 1건 뒤 L5 INCIDENT), 클릭 분류기 단위 테스트, 로그인 핸드오프 픽스처 테스트. (`native` 마커)
 순서: T2.1 · T2.2 · T2.3 → T2.4 → T2.5 → T2.6 → T2.7(D17, 사용자 결정 2026-09-30).
 공통: 브라우저가 필요한 테스트는 `native` 마커. CI·Chrome 없는 환경을 위해 테스트는 Playwright 번들 Chromium 으로도 돌 수 있게
 (`AUTO_APPLY_TEST_BROWSER=chromium`), 제품 기본은 설치된 Chrome(D6).
@@ -239,6 +239,7 @@ shadow DOM 안 요소가 snapshot 에 안 나옴 — 실사이트 영향 확인 
 `config.llm_provider` 기본값이 `stub` — D5(기본 Claude Code CLI)에 맞추되 테스트·오프라인 게이트는 stub 유지.
 T2.6 이관: bootstrap 에 `human_wait_s` 설정 키·BrowserToolbox 에 HumanGate 주입. 첫 실사용에서 webdriver=true 로 Google 이
 식별자 제출 뒤 차단하는지 확인(막히면 사이트 자체 로그인 안내 — 우회 플래그 금지).
+T2.7 이관: 실사이트 fill run 로그로 단계 어휘·마지막 단계 신호의 오탐·미탐 빈도를 보고 어휘 조정. step 창의 핸들러 location.href 탐색은 사후 확인뿐(§A4 남는 위험).
 수용 기준: Scripted 런타임으로 상태기계 전 경로 테스트, CLI 런타임은 `native` 마커 e2e 1건(짐 사이트), ask_user 일시정지/재개 테스트.
 
 ## M4 · 승인 큐 · 재진입(submit/revise)
@@ -246,8 +247,9 @@ T2.6 이관: bootstrap 에 `human_wait_s` 설정 키·BrowserToolbox 에 HumanGa
 이관: 상태 쓰기 포트를 `ApplicationService` 만 쓰도록 봉인(절대 규칙 6), `upsert_state`→`append_state` 개명(이미 append-only),
 `PersistState.workflow_run_id`→`run_id`.
 T2.6 이관: HumanGate `pending()`·`answer()` 를 승인 큐 UI 에 연결, NEEDS_LOGIN/NEEDS_INPUT 전이는 ApplicationService 로.
+T2.7 이관: 단계 이동 후 도착 화면이 UNCLEAR 일 때 하네스가 여는 사람 넘김도 같은 UI 로. L6 값 대조는 FillLog 중 `step == ReviewRecord.step` 칸만 DOM 재독.
 dry_run→live 전환은 settings 테이블 + UI 확인으로만(설정 파일로 조용히 뒤집히지 않게, 절대 규칙 2).
-수용 기준: SUBMIT_MISMATCH 경로 테스트, dry_run 에서 클릭 0회 검증, 중복 지원 경고 테스트.
+수용 기준: SUBMIT_MISMATCH 경로 테스트, dry_run 에서 **최종 제출** 클릭 0회 검증(D17 — 단계 이동 클릭은 dry_run 에서도 함), 중복 지원 경고 테스트.
 
 ## M5 · 공고맞춤 문서 · 직군 템플릿
 목표: 4개 직군 이력서 템플릿 + 포트폴리오(직군별 필요도), Chrome PDF 렌더, 자소서 답변 생성(ground_check·글자수).

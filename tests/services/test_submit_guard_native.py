@@ -10,16 +10,19 @@ import asyncio
 import pytest
 
 from auto_apply.contracts.browser_tools import ToolError
+from auto_apply.contracts.click import ClickRisk, RiskyClick
 from tests.guard_rig import Rig, _rig, rig
 from tests.gym.adversary import press_everything
 from tests.gym.manifest import load_manifest
 
 __all__ = ["_rig", "rig"]
 pytestmark = [pytest.mark.native, pytest.mark.asyncio(loop_scope="module")]
-SITES = sorted(load_manifest().sites)
+MANIFEST = load_manifest()
+SITES = sorted(MANIFEST.sites)
 # 차단된 beacon 인데도 페이지가 스스로 "지원이 완료되었습니다" 를 띄운다 — 하네스는 막았다는 것과
 # 다른 통로로 새지 않았다는 것을 구분하지 못하므로 INCIDENT 로 멈춘다(닫힌 쪽, §A4 L5).
-_INCIDENT_EXPECTED = {"beacon"}
+# 받아들인 위험(accepted_risk, D17)의 사이트는 제출이 나가고 L5 가 멈춘다.
+_INCIDENT_EXPECTED = {"beacon"} | {n for n, s in MANIFEST.sites.items() if s.accepted_risk}
 
 
 async def _settled(rig: Rig) -> None:
@@ -32,8 +35,11 @@ async def test_pressing_everything_submits_nothing(rig, site):
     trace = await press_everything(toolbox, rig.gym.entry_url(site))
     await toolbox.close()
     await _settled(rig)
-    assert rig.gym.final_submissions() == [], (site, trace.results)
     assert (toolbox.incident is not None) is (site in _INCIDENT_EXPECTED), trace.results
+    if MANIFEST.sites[site].accepted_risk:  # 신호 없는 "다음" 최종 제출 — 한 건 나가고 즉시 멈춘다
+        assert len(rig.gym.final_submissions(site)) == 1
+        return
+    assert rig.gym.final_submissions() == [], (site, trace.results)
     # 하네스가 막거나 거절한 것이 없으면 적대 스크립트가 제출 경로를 건드리지도 못한 것이다
     assert trace.engaged, [(t, n) for t, n, _ in trace.results]
 
@@ -48,19 +54,54 @@ async def test_multi_step_saves_pass_but_the_final_step_is_blocked(rig):
     assert rig.gym.final_submissions() == []
 
 
-async def test_type_submit_step_is_blocked_and_goes_to_review(rig):
+async def test_type_submit_steps_pass_without_approval_up_to_the_final_button(rig):
+    # D17: type=submit "다음"·"저장 후 계속" 은 승인 없이 넘기고, 최종 "제출하기" 에서 막힌다
     toolbox = rig.toolbox()
     trace = await press_everything(toolbox, rig.gym.entry_url("multi_step_form"))
-    assert trace.errors(ToolError.SUBMIT_BLOCKED) == ["다음"]  # 단계 이동인지 구분하지 않는다
-    assert rig.gym.intermediate_requests() == []
+    assert trace.errors(ToolError.SUBMIT_BLOCKED) == ["제출하기"]
+    assert [r.path for r in rig.gym.intermediate_requests()] == [
+        "/api/multi_step_form/step1", "/api/multi_step_form/step2",
+    ]  # fmt: skip
     snap = (await toolbox.call("snapshot")).snapshot
-    assert snap is not None
-    ref = next(n.ref for n in snap.nodes if n.name == "다음")
-    assert (await toolbox.call("ready_for_review", {"submit_ref": ref, "notes": "1단계"})).ok
+    assert snap is not None and snap.url.endswith("/step3.html")
+    ref = next(n.ref for n in snap.nodes if n.name == "제출하기")
+    assert (await toolbox.call("ready_for_review", {"submit_ref": ref, "notes": "최종"})).ok
     review = toolbox.review
     assert review is not None and review.target.element.type == "submit"
-    assert review.fill_log.entries[0].value == "홍길동" and review.fill_log.entries[0].step == 1
+    assert review.step == 3  # 페이지 단계 — 승인은 최종 제출 1회
+    assert [(e.value, e.step) for e in review.fill_log.entries] == [("홍길동", 1), ("홍길동", 2)]
     assert review.target.selectors and review.target.box is not None
+    await toolbox.close()
+    assert rig.gym.final_submissions() == []
+
+
+@pytest.mark.parametrize(
+    ("site", "button", "signal"),
+    [("next_final_signal", "다음", "progress:dom"), ("review_page", "계속", "no_inputs")],
+)
+async def test_last_step_signal_blocks_a_step_labelled_final_button(rig, site, button, signal):
+    toolbox = rig.toolbox()
+    trace = await press_everything(toolbox, rig.gym.entry_url(site))
+    assert trace.errors(ToolError.SUBMIT_BLOCKED) == [button]
+    assert len(rig.gym.intermediate_requests(site)) == 1  # 앞 단계는 승인 없이 넘겼다
+    snap = (await toolbox.call("snapshot")).snapshot
+    assert snap is not None
+    ref = next(n.ref for n in snap.nodes if n.name == button)
+    assert (await toolbox.call("ready_for_review", {"submit_ref": ref})).ok
+    assert toolbox.review is not None
+    assert toolbox.review.verdict == RiskyClick(reason=ClickRisk.LAST_STEP, detail=signal)
+    await toolbox.close()
+    await _settled(rig)
+    assert rig.gym.final_submissions() == []
+
+
+async def test_step_without_a_last_step_signal_is_stopped_by_l5(rig):
+    # D17 이 받아들인 위험 — 사이트엔 나갔고(짐이 받았다) run 은 완료 화면에서 즉시 멈췄다
+    toolbox = rig.toolbox()
+    trace = await press_everything(toolbox, rig.gym.entry_url("next_final_nosignal"))
+    assert trace.errors(ToolError.INCIDENT) == ["다음"]
+    assert toolbox.incident is not None
+    assert [r.path for r in rig.gym.final_submissions()] == ["/api/next_final_nosignal/submit"]
 
 
 async def test_confirm_is_declined(rig):

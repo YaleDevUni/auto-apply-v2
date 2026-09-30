@@ -13,9 +13,10 @@ from auto_apply.domain.human_handoff import HandoffSignal, NodeFacts, detect_han
 from auto_apply.domain.unique_identifiers import contains_resident_registration_number
 from auto_apply.services.browser_toolbox_redact import redact_text
 
-# 막힌 클릭이 최종 제출인지 단계 이동인지 하네스는 가르지 않는다 (§A4 L6 확장) — 그대로 알린다.
+# 명확한 단계 이동은 하네스가 통과시킨다(D17). 막혔다면 최종 제출이거나 판단이 애매한 버튼이다.
 SUBMIT_BLOCKED_MESSAGE = (
-    "이 동작은 제출 동작으로 판정돼 하네스가 막았다(최종 제출인지 단계 이동인지는 구분하지 않는다)."
+    "이 동작은 제출 동작으로 판정돼 하네스가 막았다"
+    "(최종 제출이거나 단계 이동인지 확실하지 않은 버튼이다)."
     " 입력을 모두 마쳤으면 ready_for_review(submit_ref=누르려던 ref) 로 사람 승인을 받는다."
     " 승인 뒤 누르는 것은 하네스다."
 )

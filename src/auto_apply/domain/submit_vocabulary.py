@@ -109,6 +109,83 @@ SAFE_EN_TOKENS: frozenset[str] = frozenset(
     }
 )
 
+# --- D17 단계 이동 어휘 -------------------------------------------------------
+# 제출 컨트롤(type=submit)이라도 라벨 **전체**(압축형)가 이 중 하나면 단계 이동(STEP)이다 — 부분
+# 일치가 아니다("다음에 제출"·"Continue to review" 는 STEP 이 아니다). "저장"·"임시저장"·"이전" 은
+# 단계를 넘기지 않으므로 넣지 않는다(그런 submit 은 지금처럼 strict). 영어는 영숫자만 남긴 형태.
+STEP_PHRASES: frozenset[str] = frozenset(
+    {
+        "다음",
+        "다음단계",
+        "다음단계로",
+        "다음으로",
+        "다음단계로이동",
+        "다음페이지",
+        "계속",
+        "계속하기",
+        "저장후계속",
+        "저장하고계속",
+        "저장후다음",
+        "저장하고다음",
+        "저장후다음단계",
+        "next",
+        "nextstep",
+        "nextpage",
+        "continue",
+        "continuetonextstep",
+        "saveandcontinue",
+        "savecontinue",
+        "saveandnext",
+        "savenext",
+    }
+)
+
+# 마지막 단계 신호(D17) — 같은 페이지에 이게 있으면 단계 어휘 버튼도 Risky(LAST_STEP).
+# 한국어: 압축형 부분 문자열. "최종" 하나는 "최종학력" 에 걸려 쓰지 않는다.
+LAST_STEP_KO: tuple[str, ...] = (
+    "제출전",
+    "제출하기전",
+    "제출하시기전",
+    "최종제출",
+    "최종확인",
+    "최종검토",
+    "제출후에는",
+    "제출후수정",
+    "제출이후",
+    "지원후에는",
+    "지원후수정",
+    "지원서를검토",
+    "지원내용확인",
+    "입력내용확인",
+    "위내용이사실",
+    "기재한내용이사실",
+    "기재된내용이사실",
+    "입력한내용이사실",
+    "입력하신내용이사실",
+)
+
+# 영어: 공백을 하나로 접은 casefold 줄에 적용.
+LAST_STEP_EN = re.compile(
+    r"\breview (your|the) application\b"
+    r"|\bbefore (you )?submit"
+    r"|\bonce (you('ve| have) )?submit"
+    r"|\bafter submi(tting|ssion),? (you )?(can(no|')t|will not|won't)"
+    r"|\bfinal (review|step|confirmation)\b"
+    r"|\breview (and|&) submit\b"
+    r"|\bby submitting\b"
+    r"|\bi (hereby )?(certify|declare|attest)\b"
+    r"|\bconfirm (that )?(the|all|this) information\b"
+)
+
+# 글자 진행 표시 — (현재, 전체). 줄마다(접고 공백을 하나로) 찾는다. "3/3" 같은 맨 숫자는 날짜와
+# 헷갈려 "단계·step" 이 붙은 것만 본다.
+PROGRESS_TEXT: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?:step|단계) ?(?P<cur>\d{1,2}) ?(?:/|of|중) ?(?P<total>\d{1,2})"),
+    re.compile(r"(?P<cur>\d{1,2}) ?(?:/|of) ?(?P<total>\d{1,2}) ?(?:steps?\b|단계)"),
+    re.compile(r"(?P<cur>\d{1,2}) ?단계 ?/ ?(?P<total>\d{1,2}) ?단계"),
+    re.compile(r"(?:총|전체) ?(?P<total>\d{1,2}) ?단계 ?중 ?(?P<cur>\d{1,2}) ?단계"),
+)
+
 # 클릭해도 제출이 일어날 수 없는 입력 요소 — 라벨과 무관하게 Safe(위험 어휘가 없을 때).
 INERT_INPUT_TYPES: frozenset[str] = frozenset(
     {

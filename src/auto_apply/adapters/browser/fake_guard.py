@@ -18,6 +18,7 @@ from auto_apply.adapters.browser.fake_effects import (
     Show,
     SubmitForm,
 )
+from auto_apply.adapters.browser.fake_observe import observe
 from auto_apply.adapters.browser.fake_pages import FakeDocument, FakeElement, FakePageDriver
 from auto_apply.contracts.click import ElementDescriptor
 from auto_apply.contracts.page import UploadFile
@@ -38,8 +39,6 @@ from auto_apply.domain.submit_guard_policy import (
 )
 from auto_apply.domain.unique_identifiers import redact_resident_registration_numbers
 from auto_apply.ports.browser import PageHandle
-
-_TEXT_ROLES = frozenset({"text", "heading", "status", "alert", "button", "link"})
 
 
 def _origin(url: str) -> str:
@@ -105,7 +104,13 @@ class FakeGuardedPageDriver(FakePageDriver):
         el = self._element(page, ref)
         if rules.is_file_input(el.tag, el.type):
             raise PageActionFailed(PageFailure.UNSUPPORTED_ELEMENT, "파일 입력은 upload 로 넣는다")
-        self._fire_all(page, el.on_click)
+        step = self.mode is GuardMode.STEP  # 이 요소의 폼 제출 한 번만 스크립트 층을 지난다 (D17)
+        for effect in el.on_click:
+            if step and isinstance(effect, SubmitForm) and effect.by_click:
+                step = False
+                self._send(page, Send(effect.method, effect.url, navigation=True))
+            else:
+                self._fire(page, effect)
 
     async def fill(self, page: PageHandle, ref: str, value: str) -> None:
         await super().fill(page, ref, value)
@@ -126,9 +131,7 @@ class FakeGuardedPageDriver(FakePageDriver):
 
     async def read_text(self, page: PageHandle) -> PageText:
         tab = self._tab(page)
-        doc = tab.doc or FakeDocument()
-        lines = [e.name for e in doc.elements if e.visible and e.name and e.role in _TEXT_ROLES]
-        return PageText(urls=(tab.history[-1], *doc.frames), lines=tuple(lines))
+        return observe(tab.doc or FakeDocument(), tab.history[-1])
 
     async def submit_target(self, page: PageHandle, ref: str) -> SubmitTarget:
         el = self._element(page, ref)

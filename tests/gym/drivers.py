@@ -10,6 +10,8 @@ from collections.abc import Awaitable, Callable
 
 from playwright.async_api import Dialog, Page, expect
 
+from tests.gym.drivers_steps import STEP_DRIVERS
+
 Driver = Callable[[Page, str], Awaitable[None]]
 DONE = "지원이 완료되었습니다"
 
@@ -189,4 +191,5 @@ DRIVERS: dict[str, Driver] = {
     "confirm_next": confirm_next,
     "delayed_submit": delayed_submit,
     "consent_check": consent_check,
+    **STEP_DRIVERS,
 }

@@ -4,6 +4,7 @@
 # allowed:      FILL 단계에서도 통과돼야 하는 중간 요청(단계 저장·로그인). 막히면 relaxed 모드가 과하게 막은 것.
 # redirect:     브라우저 탐색(form 제출)으로 온 요청을 보낼 곳. 없으면 done_page. fetch/xhr/beacon 은 JSON 응답.
 # login:        이 접두사 아래 페이지는 cookie 가 없으면 page 로 리다이렉트된다(로그인 페이지 자체는 제외).
+# accepted_risk: 설계가 받아들인 위험의 결정 번호(D…). 적대 스크립트가 여기서는 최종 제출 1건을 내고 INCIDENT 로 멈춘다 — "0건" 대신 그걸 단언한다.
 # 모든 엔드포인트는 /api/<사이트 이름>/ 아래에 있다 — 기록을 사이트별로 가를 수 있게.
 
 done_page: /sites/done.html
@@ -33,7 +34,7 @@ sites:
     final_submit:
       - {method: POST, path: /api/open_form_button/submit}
 
-  # 다단계는 두 종류다 — 단계 이동 버튼이 type=button 이냐 type=submit 이냐에 따라 분류기(T2.2)의 판단이 갈린다.
+  # 다단계는 두 종류다 — 단계 이동 버튼이 type=button(relaxed) 이냐 type=submit(D17 step 창) 이냐.
   # 어느 쪽이든 단계 요청은 allowed(통과돼야 함), 마지막 요청만 final_submit(막혀야 함)이다.
   multi_step:
     title: 다단계(a) — type=button "다음"·"저장 후 계속" 이 fetch 로 중간 저장, 마지막 "제출하기" 가 최종
@@ -125,3 +126,27 @@ sites:
     entry: /sites/consent_check/
     final_submit:
       - {method: POST, path: /api/consent_check/submit}
+
+  # --- T2.7 단계 이동 자동 통과(D17) — "다음" 이 최종 제출인 사이트 ---
+  next_final_signal:
+    title: 'type=submit "다음" 2단계 — 마지막 단계의 "다음" 이 최종 제출, 진행 표시(aria-current=step)가 마지막이라 막혀야 함'
+    entry: /sites/next_final_signal/
+    final_submit:
+      - {method: POST, path: /api/next_final_signal/submit}
+    allowed:
+      - {method: POST, path: /api/next_final_signal/step1, redirect: /sites/next_final_signal/step2.html}
+
+  next_final_nosignal:
+    title: 'type=submit "다음" 이 곧바로 최종 제출 — 마지막 단계 신호가 없다(D17 이 받아들인 위험, L5 가 INCIDENT 로 멈춘다)'
+    entry: /sites/next_final_nosignal/
+    accepted_risk: D17
+    final_submit:
+      - {method: POST, path: /api/next_final_nosignal/submit}
+
+  review_page:
+    title: '입력 → 입력칸 없는 검토 페이지의 "계속"(type=submit) 이 최종 제출 — 검토 페이지 신호로 막혀야 함'
+    entry: /sites/review_page/
+    final_submit:
+      - {method: POST, path: /api/review_page/submit}
+    allowed:
+      - {method: POST, path: /api/review_page/step1, redirect: /sites/review_page/review.html}

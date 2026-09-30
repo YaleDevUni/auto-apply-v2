@@ -59,8 +59,8 @@ class FieldLabel(Frozen):
 
 class FillEntry(IdentifierFree):
     seq: int = Field(ge=1)
-    # 몇 번째 승인 단계에서 넣었나 — type=submit 다단계 사이트는 단계마다 승인을 받는다
-    # (§A4 L6 확장).
+    # 몇 번째 페이지 단계에서 넣었나 (D17) — 단계 이동을 통과해 새 입력 화면에 닿을 때마다 +1.
+    # 승인 뒤 값 대조(§A4 L6)는 마지막 단계의 칸만 DOM 에서 다시 읽을 수 있다.
     step: int = Field(default=1, ge=1)
     action: FillAction
     ref: str

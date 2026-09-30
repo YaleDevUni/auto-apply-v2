@@ -4,12 +4,14 @@
 toolbox_pages.fake_sites)를 쓰고, 실제 쪽은 "서버가 받은 요청"으로도 확인한다.
 """
 
+from urllib.parse import urlsplit
+
 import pytest
 
 from auto_apply.domain.errors import PageActionFailed, PageFailure, SubmitGuardUnavailable
 from auto_apply.domain.submit_guard_policy import BlockReason, GuardMode
 from tests.toolbox_kit import DriverKit, _shared_real_kit, driver_kit
-from tests.toolbox_pages import FORM, HANDOFF, NEXT, PREEMPT
+from tests.toolbox_pages import FORM, HANDOFF, NEXT, PREEMPT, STEP
 
 __all__ = ["_shared_real_kit", "driver_kit"]
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -96,6 +98,44 @@ async def test_read_text_and_submit_target(driver_kit):
     assert target.element.name == "지원하기"
     assert target.page_url == driver_kit.url(FORM) and target.frame_index == 0
     assert target.selectors  # 승인 뒤 같은 요소를 다시 찾을 후보가 있다 (§A4 L6)
+
+
+# ---------------------------------------------------------------- 단계 이동 (D17, T2.7)
+async def test_step_window_lets_only_the_step_buttons_own_submission_through(driver_kit):
+    page, refs = await _armed(driver_kit, STEP)
+    d = driver_kit.driver
+    await d.drain(page)
+    await d.set_window(page, GuardMode.STEP, carried=())
+    await d.click(page, refs["다른 폼 제출"])  # 핸들러의 form.submit() — step 창이라도 막힌다
+    await d.settle(page)
+    assert BlockReason.FORM_SUBMIT in [b.reason for b in (await d.drain(page)).blocked]
+    assert _posts(driver_kit) == []
+    await d.set_window(page, GuardMode.STEP, carried=())
+    await d.click(page, refs["다음"])  # 그 버튼 자신의 폼 POST 는 통과한다
+    await d.settle(page)
+    assert (await d.drain(page)).blocked == ()
+    assert [urlsplit(u).path for u in _posts(driver_kit)] == ["/api/toolbox/step"]
+
+
+async def test_step_buttons_submission_is_blocked_outside_a_step_window(driver_kit):
+    page, refs = await _armed(driver_kit, STEP)
+    d = driver_kit.driver
+    for mode in (GuardMode.RELAXED, GuardMode.STRICT):
+        await d.drain(page)
+        await d.set_window(page, mode, carried=())
+        await d.click(page, refs["다음"])
+        await d.settle(page)
+        assert BlockReason.FORM_SUBMIT in [b.reason for b in (await d.drain(page)).blocked]
+    assert _posts(driver_kit) == []
+
+
+async def test_read_text_counts_inputs_submitters_and_progress(driver_kit):
+    page, _ = await _armed(driver_kit, STEP)
+    seen = await driver_kit.driver.read_text(page)
+    # 입력칸 = 글자 칸 + 숨은 파일 입력(체크박스·hidden 은 세지 않는다), 제출 버튼 = "다음"
+    assert (seen.inputs, seen.submitters, seen.progress) == (2, 1, ((2, 3),))
+    form, _ = await _armed(driver_kit, FORM)
+    assert (await driver_kit.driver.read_text(form)).progress == ()
 
 
 # ---------------------------------------------------------------- 사람 핸드오프 (T2.6, T2.5 이관)

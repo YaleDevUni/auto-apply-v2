@@ -28,7 +28,7 @@ from auto_apply.services.browser_toolbox_record import (
     incident_result,
     node_facts,
 )
-from auto_apply.services.submit_guard import SubmitGuard
+from auto_apply.services.submit_guard import GuardedOutcome, SubmitGuard
 
 log = structlog.get_logger("auto_apply.services.browser_toolbox")
 # 사람이 로그인·CAPTCHA 를 끝내기를 기다리는 최대 시간(§A5) — 넘기면 NEEDS_LOGIN/NEEDS_INPUT.
@@ -139,6 +139,15 @@ class ToolboxBase:
     ) -> ToolResult:
         """`action` 을 하네스 창 안에서. 성공하면 `done(값)` 이 결과를 만든다(FillLog 기록 포함)."""
         out = await self._guard.run(page, mode, action, carried=self._typed_values())
+        return self._outcome(tool, mode, out, done)
+
+    def _outcome(
+        self,
+        tool: str,
+        mode: GuardMode,
+        out: GuardedOutcome[Any],
+        done: Callable[[Any], ToolResult] | None = None,
+    ) -> ToolResult:
         if out.evidence is not None:
             return self._stop(tool, out.evidence, out.report)
         result = ToolResult(tool=tool, ok=True)

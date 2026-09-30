@@ -57,6 +57,8 @@ class Site(_Frozen):
     final_submit: tuple[Endpoint, ...] = Field(min_length=1)
     allowed: tuple[Endpoint, ...] = ()
     login: Login | None = None
+    # 설계가 받아들인 위험(D…) — 하네스가 있어도 최종 제출이 나가고 L5 가 멈추는 사이트
+    accepted_risk: str | None = Field(default=None, pattern=r"^D\d+$")
 
     @model_validator(mode="after")
     def _namespaced(self) -> Site:

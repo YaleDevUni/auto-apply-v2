@@ -7,9 +7,20 @@
 from pydantic import Field
 
 from auto_apply.contracts._base import Frozen, IdentifierFree
-from auto_apply.contracts.click import ClickVerdict, ElementDescriptor
+from auto_apply.contracts.click import ClickVerdict, ElementDescriptor, PageText
 from auto_apply.contracts.fill_log import FillLog
 from auto_apply.domain.submit_guard_policy import BlockReason
+
+__all__ = [
+    "BlockedAction",
+    "DialogEvent",
+    "GuardReport",
+    # contracts/click 에 산다 — 분류기(domain)가 순환 없이 쓰게. 드라이버 계약은 여기서 본다
+    "PageText",
+    "ReviewRecord",
+    "SubmitTarget",
+    "TargetBox",
+]
 
 
 class BlockedAction(Frozen):
@@ -35,13 +46,6 @@ class GuardReport(Frozen):
         return GuardReport(
             blocked=(*self.blocked, *other.blocked), dialogs=(*self.dialogs, *other.dialogs)
         )
-
-
-class PageText(Frozen):
-    """L5 사후 감지용 — 모든 프레임의 URL 과 보이는 글자 줄."""
-
-    urls: tuple[str, ...] = ()
-    lines: tuple[str, ...] = ()
 
 
 class TargetBox(Frozen):
@@ -74,5 +78,6 @@ class ReviewRecord(IdentifierFree):
     target: SubmitTarget
     verdict: ClickVerdict  # 제출 대상의 L2 판정 (Safe 여도 기록한다 — 판단은 사람 몫)
     notes: str = ""
-    step: int = Field(ge=1)  # 다단계 사이트의 몇 번째 승인 단계인가 (§A4 L6 확장)
+    # 다단계 사이트의 몇 번째 페이지 단계인가 (D17) — FillLog 항목의 step 과 같으면 이 화면의 칸이다
+    step: int = Field(ge=1)
     fill_log: FillLog
