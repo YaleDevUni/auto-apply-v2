@@ -1,8 +1,9 @@
-import { useBlocker } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Field, Section } from "@/components/form";
+import { QueryStatus } from "@/components/QueryStatus";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AdditionalInfoSection } from "@/features/profile/AdditionalInfoSection";
@@ -11,23 +12,26 @@ import { toBody, toDraft, type ProfileDraft } from "@/features/profile/profile-f
 import { errorMessage } from "@/lib/error-message";
 import type { Profile } from "@/lib/profile-api";
 import { useProfile, useSaveProfile } from "@/lib/queries";
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 
 export function ProfilePage() {
   const { t } = useTranslation();
   const query = useProfile();
 
-  if (query.isPending) return <p className="text-muted-foreground text-sm">{t("common.loading")}</p>;
-  if (query.isError) {
-    return (
-      <div className="flex flex-col items-start gap-2">
-        <p className="text-destructive text-sm">{errorMessage(query.error, t)}</p>
-        <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
-          {t("common.retry")}
-        </Button>
-      </div>
-    );
-  }
-  return <ProfileForm initial={query.data} />;
+  if (!query.isSuccess) return <QueryStatus query={query} />;
+  return (
+    <div className="flex flex-col gap-4">
+      {query.data === null && (
+        <p className="bg-muted rounded-lg p-3 text-sm">
+          {t("profile.emptyHint")}{" "}
+          <Link to="/onboarding" className="text-primary font-medium underline-offset-4 hover:underline">
+            {t("profile.startWithResume")}
+          </Link>
+        </p>
+      )}
+      <ProfileForm initial={query.data} />
+    </div>
+  );
 }
 
 function ProfileForm({ initial }: { initial: Profile | null }) {
@@ -38,10 +42,7 @@ function ProfileForm({ initial }: { initial: Profile | null }) {
   const [nameError, setNameError] = useState(false);
 
   const dirty = JSON.stringify(toBody(draft)) !== JSON.stringify(toBody(baseline));
-  useBlocker({
-    shouldBlockFn: () => dirty && !window.confirm(t("common.unsavedLeave")),
-    enableBeforeUnload: () => dirty,
-  });
+  useUnsavedGuard(dirty);
 
   const set = <K extends keyof ProfileDraft>(key: K, value: ProfileDraft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));

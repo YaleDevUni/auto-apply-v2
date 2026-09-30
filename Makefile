@@ -31,7 +31,14 @@ test-fast: ## 개발 중 빠른 반복용 — 첫 실패에서 멈추고 직전 
 test-all: ## native 포함 전체 (Chrome·claude CLI 필요)
 	uv run pytest
 
-check: lint type arch test ## 커밋 전 전체 검사
+web-check: ## 웹 게이트 — build·lint·test (npm 이 없으면 경고만 하고 건너뜀)
+	@if command -v npm >/dev/null 2>&1; then \
+		cd web && { test -d node_modules || npm ci; } && npm run build && npm run lint && npm test; \
+	else \
+		echo "경고: npm 이 없어 웹 게이트(build·lint·test)를 건너뜁니다 — Node.js 를 설치하면 make check 가 함께 검사합니다." >&2; \
+	fi
+
+check: lint type arch test web-check ## 커밋 전 전체 검사
 
 api: ## FastAPI 개발 서버
 	uv run uvicorn auto_apply.api.main:app --reload --port 8000
@@ -39,4 +46,4 @@ api: ## FastAPI 개발 서버
 web: ## 웹 콘솔 dev 서버 (make api 가 먼저 떠 있어야 한다)
 	cd web && npm install && npm run dev
 
-.PHONY: help setup fmt lint type arch test test-fast test-all check api web
+.PHONY: help setup fmt lint type arch test test-fast test-all web-check check api web

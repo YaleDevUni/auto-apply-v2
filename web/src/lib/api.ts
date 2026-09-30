@@ -76,7 +76,11 @@ async function withToken(init: RequestInit): Promise<RequestInit> {
 }
 
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const base: RequestInit = { ...init, headers: { "Content-Type": "application/json", ...init.headers } };
+  // FormData 는 브라우저가 boundary 를 넣은 Content-Type 을 직접 붙여야 한다 — 덮어쓰면 서버가 본문을 못 읽는다.
+  const json = !(init.body instanceof FormData);
+  const base: RequestInit = json
+    ? { ...init, headers: { "Content-Type": "application/json", ...init.headers } }
+    : init;
   let res: Response;
   try {
     res = await send(path, await withToken(base));
@@ -92,4 +96,11 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 
 export function isNotFound(e: unknown): boolean {
   return e instanceof ApiError && e.status === 404;
+}
+
+// multipart `file` 필드 하나로 올린다 — 서버 `api/multipart.py` 가 받는 모양.
+export function uploadFile<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+  return request<T>(path, { method: "POST", body: form });
 }

@@ -1,11 +1,6 @@
 // 서버 Profile ↔ 화면 양식 변환. 양식은 입력 칸 그대로(문자열)를 들고, 저장할 때만 서버 모양으로 바꾼다 —
 // 특히 추가 정보의 빈 칸은 null("아직 모름", D10)로 보내야 실행 중 질문 대상이 된다.
-import type {
-  AdditionalInfo,
-  MilitaryStatus,
-  Profile,
-  ProfileBody,
-} from "@/lib/profile-api";
+import type { AdditionalInfo, MilitaryStatus, ProfileBody } from "@/lib/profile-api";
 
 export type TriState = "" | "yes" | "no";
 
@@ -42,7 +37,8 @@ function orNull(text: string): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-export function toDraft(profile: Profile | null): ProfileDraft {
+// 온보딩 초안의 인적사항(ProfileBody 모양)도 같은 양식으로 고친다.
+export function toDraft(profile: ProfileBody | null): ProfileDraft {
   const a = profile?.additional;
   const m = a?.military ?? null;
   return {

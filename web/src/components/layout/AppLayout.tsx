@@ -1,10 +1,11 @@
 import { Link, Outlet } from "@tanstack/react-router";
-import { BookText, Briefcase, FileText, MessageSquareText, type LucideIcon } from "lucide-react";
+import { BookText, Briefcase, FileText, FileUp, MessageSquareText, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-type NavKey = "profile" | "experiences" | "answers" | "documents";
+type NavKey = "onboarding" | "profile" | "experiences" | "answers" | "documents";
 
 const NAV: { to: `/${NavKey}`; key: NavKey; icon: LucideIcon }[] = [
+  { to: "/onboarding", key: "onboarding", icon: FileUp },
   { to: "/profile", key: "profile", icon: BookText },
   { to: "/experiences", key: "experiences", icon: Briefcase },
   { to: "/answers", key: "answers", icon: MessageSquareText },

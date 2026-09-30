@@ -36,18 +36,17 @@ describe("api request", () => {
   });
 
   it("변경 요청에는 /api/session 에서 받은 토큰을 붙이고, 토큰은 캐시한다", async () => {
-    const { request } = await loadApi();
+    // 기준 주소는 개발자 로컬 web/.env(VITE_API_BASE_URL)에 따라 다르다 — 경로만 본다.
+    const { request, API_BASE_URL } = await loadApi();
     fetchMock
       .mockResolvedValueOnce(json(200, { token: "tok-1", header: HEADER }))
       .mockResolvedValueOnce(json(200, {}))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     await request("/api/profile", { method: "PUT", body: "{}" });
     await expect(request("/api/answers/a", { method: "DELETE" })).resolves.toBeUndefined();
-    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([
-      "http://127.0.0.1:8000/api/session",
-      "http://127.0.0.1:8000/api/profile",
-      "http://127.0.0.1:8000/api/answers/a",
-    ]);
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(
+      ["/api/session", "/api/profile", "/api/answers/a"].map((p) => `${API_BASE_URL}${p}`),
+    );
     expect(headersOf(1)[HEADER]).toBe("tok-1");
     expect(headersOf(2)[HEADER]).toBe("tok-1");
   });
@@ -83,6 +82,21 @@ describe("api request", () => {
     await expect(request("/api/profile", { method: "PUT" })).rejects.toMatchObject({ code: "network", status: 0 });
     await request("/api/profile", { method: "PUT" });
     expect(headersOf(2)[HEADER]).toBe("t");
+  });
+
+  it("파일 업로드는 multipart 로 보내고 Content-Type 을 브라우저에 맡기되 토큰은 붙인다", async () => {
+    const { uploadFile } = await loadApi();
+    fetchMock
+      .mockResolvedValueOnce(json(200, { token: "t", header: HEADER }))
+      .mockResolvedValueOnce(json(201, { id: "doc_1" }));
+    const file = new File(["%PDF-1.4"], "cv.pdf", { type: "application/pdf" });
+    await expect(uploadFile("/api/documents", file)).resolves.toEqual({ id: "doc_1" });
+    const init = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeInstanceOf(FormData);
+    expect((init.body as FormData).get("file")).toBeInstanceOf(File);
+    expect(headersOf(1)["Content-Type"]).toBeUndefined();
+    expect(headersOf(1)[HEADER]).toBe("t");
   });
 
   it("에러 스키마가 아닌 응답도 ApiError 로 바꾼다", async () => {

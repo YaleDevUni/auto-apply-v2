@@ -1,10 +1,14 @@
 // 화면 문구는 전부 여기 키로 둔다 (D14). 영문을 더할 땐 같은 모양의 `en.ts` 를 만들고 resources 에 넣는다.
+import { koKnowledge } from "@/i18n/ko-knowledge";
+
 export const ko = {
+  ...koKnowledge,
   app: {
     title: "auto-apply",
     subtitle: "지원 준비물",
   },
   nav: {
+    onboarding: "이력서로 시작",
     profile: "프로필",
     experiences: "경험",
     answers: "답변",
@@ -15,16 +19,20 @@ export const ko = {
     save: "저장",
     saving: "저장 중…",
     saved: "저장했습니다",
+    deleted: "지웠습니다",
     add: "추가",
+    edit: "수정",
+    cancel: "취소",
     remove: "삭제",
     retry: "다시 시도",
     unsavedLeave: "저장하지 않은 변경이 있습니다. 이 화면을 떠날까요?",
     notFound: "없는 화면입니다.",
-    comingSoon: "이 화면은 다음 단계에서 제공됩니다.",
   },
   profile: {
     title: "인적사항",
     description: "지원서의 인적사항 칸에 그대로 들어가는 정보입니다.",
+    emptyHint: "아직 저장한 인적사항이 없습니다. 이력서 파일이 있으면 초안을 만들어 드립니다.",
+    startWithResume: "이력서로 시작하기",
     basic: {
       title: "기본 정보",
       name: "이름",
@@ -92,6 +100,16 @@ export const ko = {
   errors: {
     unique_identifier_rejected: "주민등록번호 형식의 값은 저장할 수 없습니다. 해당 칸을 지워 주세요.",
     validation_error: "입력 값이 올바르지 않습니다.",
+    not_found: "찾을 수 없습니다. 이미 지워졌을 수 있습니다.",
+    conflict: "이미 같은 항목이 있습니다.",
+    too_large: "파일이 크기 상한(기본 10MB)을 넘습니다.",
+    unsupported_type: "PDF·DOCX·PNG·JPG 파일만 올릴 수 있습니다. 확장자와 실제 내용이 같은지 확인하세요.",
+    empty: "빈 파일입니다.",
+    extraction_failed: "파일에서 글자를 읽지 못했습니다(스캔본·암호 PDF 등). 직접 입력해 주세요.",
+    llm_invalid_output: "AI 응답을 해석하지 못했습니다. 다시 시도해 주세요.",
+    llm_auth_required: "Claude 로그인이 필요합니다. 터미널에서 `claude login` 을 실행한 뒤 다시 시도하세요.",
+    llm_quota_exceeded: "AI 사용량 한도에 걸렸습니다. 잠시 뒤 다시 시도해 주세요.",
+    llm_error: "AI 호출이 실패했습니다. 잠시 뒤 다시 시도해 주세요.",
     invalid_token: "세션이 만료됐습니다. 페이지를 새로고침해 주세요.",
     origin_not_allowed: "허용되지 않은 주소에서 연 콘솔입니다.",
     host_not_allowed: "로컬 주소(127.0.0.1·localhost)로만 접속할 수 있습니다.",
