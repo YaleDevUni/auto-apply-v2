@@ -37,6 +37,11 @@ class Dialog:
 
 
 @dataclass(frozen=True)
+class ChooseFile:
+    """OS 파일 선택 창을 여는 동작(숨은 파일 입력의 click() 등)."""
+
+
+@dataclass(frozen=True)
 class Show:
     """글자가 화면에 나타난다(완료 문구·오류 문구)."""
 
@@ -51,4 +56,4 @@ class Later:
     effects: tuple["Effect", ...]
 
 
-Effect = Send | SubmitForm | Dialog | Show | Later
+Effect = Send | SubmitForm | Dialog | ChooseFile | Show | Later

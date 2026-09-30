@@ -12,6 +12,7 @@ import pytest
 from auto_apply.adapters.browser.fake import FakeBrowserHost
 from auto_apply.adapters.browser.fake_guard import FakeGuardedPageDriver
 from auto_apply.adapters.browser.playwright_guard import ContextGuard
+from auto_apply.adapters.human_gate.memory import InMemoryHumanGate
 from auto_apply.contracts.browser_tools import ToolError
 from auto_apply.domain.submit_guard_policy import BlockReason, GuardMode
 from auto_apply.services.browser_toolbox import BrowserToolbox
@@ -91,8 +92,8 @@ async def test_route_aborts_when_verdict_and_record_fail():
 
 async def test_safe_label_get_form_submission_is_blocked_in_relaxed(host):
     driver = FakeGuardedPageDriver(host, guard_sites())
-    toolbox = BrowserToolbox(host, driver, FakeDocuments({}), user_id="local",
-                             application_id="app_f", run_id="run_f")  # fmt: skip
+    toolbox = BrowserToolbox(host, driver, FakeDocuments({}), human_gate=InMemoryHumanGate(),
+                             user_id="local", application_id="app_f", run_id="run_f")  # fmt: skip
     assert (await toolbox.call("navigate", {"url": FORM})).ok
     snap = (await toolbox.call("snapshot")).snapshot
     assert snap is not None

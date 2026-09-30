@@ -15,6 +15,7 @@ from auto_apply.contracts._base import Frozen
 from auto_apply.contracts.fill_log import FillSource
 from auto_apply.contracts.page import PageSnapshot, Ref
 from auto_apply.contracts.submit_guard import GuardReport
+from auto_apply.domain.human_handoff import HandoffSignal
 
 # 긴 자소서 답변(수천 자)도 한 번에 넣을 수 있게, 그러나 페이지를 망가뜨릴 만큼은 아니게.
 MAX_FILL_CHARS = 20_000
@@ -102,6 +103,14 @@ class ReadyForReviewInput(ToolInput):
     notes: str = Field(default="", max_length=2000)
 
 
+class RequestLoginInput(ToolInput):
+    site: str = Field(min_length=1, max_length=200)  # 사람에게 보일 사이트 이름
+
+
+class RequestHumanInput(ToolInput):
+    reason: str = Field(min_length=1, max_length=2000)  # 사람에게 부탁할 일 (CAPTCHA·본인인증 …)
+
+
 class ToolError(StrEnum):
     INVALID_INPUT = "invalid_input"
     UNKNOWN_TOOL = "unknown_tool"
@@ -119,6 +128,11 @@ class ToolError(StrEnum):
     SUBMIT_BLOCKED = "submit_blocked"
     INCIDENT = "incident"  # L5 — 제출이 뚫린 흔적. run 은 멈췄고 어떤 도구도 받지 않는다
     GUARD_UNAVAILABLE = "guard_unavailable"  # 하네스를 못 켰다 — 동작하지 않았다
+    CAPTCHA = "captcha"  # CAPTCHA 위젯·답 칸 — 사람 몫이다(절대 규칙 3), request_human
+    # 사람이 로그인·확인하는 동안(가드가 꺼져 있다) 에이전트 도구는 받지 않는다 (§A5)
+    AWAITING_HUMAN = "awaiting_human"
+    NEEDS_LOGIN = "needs_login"  # request_login 을 사람이 끝내지 않았다(타임아웃·거절) — run 끝
+    NEEDS_INPUT = "needs_input"  # request_human 을 사람이 끝내지 않았다 — run 끝
 
 
 class ToolResult(Frozen):
@@ -130,5 +144,7 @@ class ToolResult(Frozen):
     message: str = ""
     snapshot: PageSnapshot | None = None
     found: bool | None = None  # wait_for(text)
+    # snapshot: 이 화면이 사람 몫으로 보이는 근거(로그인 벽·CAPTCHA·인증 코드) — 하네스가 판단한다
+    handoff: HandoffSignal | None = None
     # 직전 결과 뒤로 하네스가 막은 것·처리한 대화상자 (창 사이에 사이트가 스스로 보낸 것 포함)
     guard: GuardReport = GuardReport()

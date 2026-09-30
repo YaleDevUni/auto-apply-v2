@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from playwright.async_api import Dialog
 
 from auto_apply.adapters.browser.fake import FakeBrowserHost
 from auto_apply.adapters.browser.fake_guard import FakeGuardedPageDriver
@@ -56,6 +57,10 @@ class DriverKit:
     # 라벨이 `name` 인 칸의 type 을 password 로 바꾼다 (snapshot 뒤 페이지 스스로의 변화)
     make_secret: Callable[[PageHandle, str], Awaitable[None]]
     close_tabs: Callable[[PageHandle], Awaitable[None]]
+    # 사람이 (하네스를 거치지 않고) 이름이 `name` 인 버튼을 누른다
+    human_click: Callable[[PageHandle, str], Awaitable[None]]
+    # 지금부터 사람에게 온 대화상자 종류를 모은다 — 사람은 받은 대화상자를 수락한다
+    human_dialogs: Callable[[PageHandle], list[str]]
     gym: GymServer | None = None
 
     def url(self, path: str) -> str:
@@ -74,7 +79,15 @@ def _fake_kit(profile: Path) -> DriverKit:
     async def close_tabs(_: PageHandle) -> None:
         host.close_all_tabs()
 
-    return DriverKit("fake", host, driver, FAKE_BASE, make_secret, close_tabs)
+    async def human_click(page: PageHandle, name: str) -> None:
+        driver.human_click(page, name)
+
+    def human_dialogs(_: PageHandle) -> list[str]:
+        return driver.left_to_human
+
+    return DriverKit(
+        "fake", host, driver, FAKE_BASE, make_secret, close_tabs, human_click, human_dialogs
+    )
 
 
 def _real_kit(profile: Path, gym: GymServer) -> DriverKit:
@@ -86,6 +99,19 @@ def _real_kit(profile: Path, gym: GymServer) -> DriverKit:
     async def close_tabs(page: PageHandle) -> None:
         await close_tabs_like_human(host, page)
 
+    async def human_click(page: PageHandle, name: str) -> None:
+        await host.vendor_page(page).get_by_role("button", name=name).click()
+
+    def human_dialogs(page: PageHandle) -> list[str]:
+        seen: list[str] = []
+
+        async def accept(dialog: Dialog) -> None:
+            seen.append(dialog.type)
+            await dialog.accept()
+
+        host.vendor_page(page).on("dialog", accept)
+        return seen
+
     return DriverKit(
         "playwright",
         host,
@@ -93,6 +119,8 @@ def _real_kit(profile: Path, gym: GymServer) -> DriverKit:
         gym.base_url,
         make_secret,
         close_tabs,
+        human_click,
+        human_dialogs,
         gym,
     )
 

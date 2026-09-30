@@ -9,7 +9,15 @@ from collections.abc import Mapping
 from urllib.parse import urlsplit
 
 from auto_apply.adapters.browser.fake import FakeBrowserHost
-from auto_apply.adapters.browser.fake_effects import Dialog, Effect, Later, Send, Show, SubmitForm
+from auto_apply.adapters.browser.fake_effects import (
+    ChooseFile,
+    Dialog,
+    Effect,
+    Later,
+    Send,
+    Show,
+    SubmitForm,
+)
 from auto_apply.adapters.browser.fake_pages import FakeDocument, FakeElement, FakePageDriver
 from auto_apply.contracts.click import ElementDescriptor
 from auto_apply.contracts.page import UploadFile
@@ -46,6 +54,8 @@ class FakeGuardedPageDriver(FakePageDriver):
         self.mode = GuardMode.STRICT
         self.fail_arm = False  # 테스트: 하네스 설치 실패 흉내
         self.sent: list[tuple[str, str]] = []  # 하네스를 통과해 "서버"에 닿은 요청
+        # 가드가 꺼진 동안 뜬 대화상자·파일 선택 창 — 사람에게 둔다(처리하지 않는다)
+        self.left_to_human: list[str] = []
         self._carried: tuple[str, ...] = ()
         self._forbidden: tuple[str, ...] = ()
         self._blocked: list[BlockedAction] = []
@@ -133,6 +143,12 @@ class FakeGuardedPageDriver(FakePageDriver):
             frame_index=el.frame,
         )
 
+    def human_click(self, page: PageHandle, name: str) -> None:
+        """사람이 하네스를 거치지 않고 `name` 버튼을 누른다(테스트: 핸드오프 중의 사람)."""
+        doc = self.document(page)
+        el = next(e for e in doc.elements if e.role == "button" and e.name == name)
+        self._fire_all(page, el.on_click)
+
     # ------------------------------------------------------------------ 핸들러 실행
     def _fire_all(self, page: PageHandle, effects: tuple[Effect, ...]) -> None:
         for effect in effects:
@@ -143,13 +159,14 @@ class FakeGuardedPageDriver(FakePageDriver):
             self._later.extend(effect.effects)
         elif isinstance(effect, Show):
             self.document(page).elements.append(FakeElement(effect.role, effect.text, tag="p"))
+        elif isinstance(effect, Dialog | ChooseFile) and not self.armed:
+            self.left_to_human.append(effect.kind if isinstance(effect, Dialog) else "filechooser")
+        elif isinstance(effect, ChooseFile):
+            self._dialogs.append(DialogEvent(kind="filechooser", accepted=False))
         elif isinstance(effect, Dialog):
             accepted = dialog_verdict(effect.kind) == "accept"
-            if self.armed:
-                message = redact_resident_registration_numbers(effect.message)[0][:200]
-                self._dialogs.append(
-                    DialogEvent(kind=effect.kind, message=message, accepted=accepted)
-                )
+            message = redact_resident_registration_numbers(effect.message)[0][:200]
+            self._dialogs.append(DialogEvent(kind=effect.kind, message=message, accepted=accepted))
             if accepted:
                 self._fire_all(page, effect.then)
         elif isinstance(effect, SubmitForm):

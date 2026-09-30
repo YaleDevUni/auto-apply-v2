@@ -9,6 +9,7 @@ from auto_apply.contracts.browser_tools import ToolError, ToolResult
 from auto_apply.contracts.fill_log import FieldLabel, FillAction, FillEntry, FillSource
 from auto_apply.contracts.page import PageSnapshot, SnapshotNode
 from auto_apply.contracts.submit_guard import GuardReport
+from auto_apply.domain.human_handoff import HandoffSignal, NodeFacts, detect_handoff
 from auto_apply.domain.unique_identifiers import contains_resident_registration_number
 from auto_apply.services.browser_toolbox_redact import redact_text
 
@@ -38,6 +39,35 @@ def incident_result(tool: str, guard: GuardReport) -> ToolResult:
     return fail(tool, ToolError.INCIDENT, INCIDENT_MESSAGE, guard)
 
 
+HANDOFF_HINTS = {
+    HandoffSignal.PASSWORD_FIELD: "로그인 화면으로 보인다. 앱은 비밀번호를 입력하지 않는다"
+    " — request_login 으로 사람에게 넘긴다.",
+    HandoffSignal.LOGIN_URL: "로그인 화면으로 보인다"
+    " — 로그인은 request_login 으로 사람에게 넘긴다.",
+    HandoffSignal.CAPTCHA: "CAPTCHA 가 보인다. 풀거나 누르지 않는다"
+    " — request_human 으로 사람에게 넘긴다.",
+    HandoffSignal.ONE_TIME_CODE: "인증 코드(SMS·본인인증) 칸이 보인다. 앱은 입력하지 않는다"
+    " — request_human 으로 사람에게 넘긴다.",
+}
+
+
+def _frame_url(snapshot: PageSnapshot, node: SnapshotNode) -> str:
+    frames = snapshot.frames
+    return frames[node.frame] if node.frame < len(frames) else snapshot.url
+
+
+def node_facts(snapshot: PageSnapshot, node: SnapshotNode) -> NodeFacts:
+    return NodeFacts(
+        role=node.role, name=node.name, tag=node.tag, input_type=node.input_type,
+        autocomplete=node.autocomplete, frame_url=_frame_url(snapshot, node), hidden=node.hidden,
+    )  # fmt: skip
+
+
+def handoff_signal(snapshot: PageSnapshot) -> HandoffSignal | None:
+    """이 화면이 사람 몫인가 (§A5) — 로그인 벽·CAPTCHA·인증 코드."""
+    return detect_handoff(snapshot.url, (node_facts(snapshot, n) for n in snapshot.nodes))
+
+
 def fill_entry(
     seq: int,
     step: int,
@@ -55,8 +85,7 @@ def fill_entry(
     값에 주민등록번호 꼴이 있으면 값 없이 `withheld` — 승인 뒤 재입력 때 다시 묻는다.
     """
     assert node.ref is not None
-    frames = snapshot.frames
-    url = frames[node.frame] if node.frame < len(frames) else snapshot.url
+    url = _frame_url(snapshot, node)
     withheld = value is not None and contains_resident_registration_number(value)
     return FillEntry(
         seq=seq,

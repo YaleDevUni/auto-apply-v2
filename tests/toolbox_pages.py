@@ -6,7 +6,7 @@
 
 from pathlib import Path
 
-from auto_apply.adapters.browser.fake_effects import Send, SubmitForm
+from auto_apply.adapters.browser.fake_effects import ChooseFile, Dialog, Send, SubmitForm
 from auto_apply.adapters.browser.fake_pages import FakeDocument, FakeElement
 
 TOOLBOX_DIR = Path(__file__).resolve().parent / "fixtures" / "toolbox"
@@ -16,6 +16,9 @@ FORM = "/sites/form.html"
 NEXT = "/sites/next.html"
 FRAME = "/sites/frame.html"
 INNER = "/sites/inner.html"
+HANDOFF = "/sites/handoff.html"
+# 가드 이름을 먼저 차지하는 페이지 — 실제 드라이버 전용(대역은 스크립트 층이 없다)
+PREEMPT = "/sites/preempt.html"
 
 PASSWORD_VALUE = "prefilled-secret-pw"
 OTP_VALUE = "otp-778899"
@@ -65,9 +68,47 @@ def _form(base: str) -> FakeDocument:
     )
 
 
+def _handoff(base: str) -> FakeDocument:
+    return FakeDocument(
+        title="핸드오프 테스트",
+        elements=[
+            FakeElement("heading", "사람 핸드오프", tag="h1", level=1),
+            FakeElement(
+                "button",
+                "확인 창",
+                tag="button",
+                type="button",
+                on_click=(
+                    Dialog(
+                        "confirm",
+                        "계속할까요?",
+                        then=(Send("POST", base + "/api/toolbox/confirmed"),),
+                    ),
+                ),
+            ),
+            FakeElement("file", "", type="file", visible=False),
+            FakeElement(
+                "button", "파일 선택", tag="button", type="button", on_click=(ChooseFile(),)
+            ),
+            FakeElement("text", "선택 없음", tag="p"),
+            FakeElement("textbox", "이름", in_form=True),
+            FakeElement(
+                "button",
+                "지원하기",
+                tag="button",
+                type="submit",
+                in_form=True,
+                default_button=True,
+                on_click=(SubmitForm("POST", base + "/api/toolbox/submit"),),
+            ),
+        ],
+    )
+
+
 def fake_sites(base: str = FAKE_BASE) -> dict[str, FakeDocument]:
     return {
         base + FORM: _form(base),
+        base + HANDOFF: _handoff(base),
         base + NEXT: FakeDocument(
             title="두 번째 페이지",
             elements=[

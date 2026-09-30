@@ -1,21 +1,23 @@
 """브라우저 context 하나의 제출 차단 장치 — route(L3 네트워크)·init script(L3 페이지)·대화상자(L4).
 
-route 와 대화상자 처리는 처음 켤 때 한 번 달고 떼지 않는다: 앱 출처 차단은 가드가 꺼져 있어도(사람이
-브라우저를 쓰는 동안) 남아야 한다. 페이지 스크립트 층은 켤 때 등록하고 끌 때 걷어 낸다 — 꺼진 동안
-열리는 문서(사람의 로그인·SSO 자동 제출 폼)에는 아예 심지 않는다.
+route·대화상자 처리기는 처음 켤 때 달고 떼지 않는다(앱 출처 차단은 꺼져도 남는다; 대화상자는 꺼져
+있으면 사람에게 둔다). 페이지 스크립트·파일 선택 창 가로채기는 켤 때 걸고 끌 때 걷는다. 다시 켤 때
+프레임마다 가드가 우리 것인지 확인한다(VERIFY) — 못 하면 켜지 않은 것이다. 근거는 §A4 켜고 끄기.
 """
 
 import asyncio
 import contextlib
+import secrets
 from typing import Protocol
 from urllib.parse import urlsplit
 
 import structlog
-from playwright.async_api import BrowserContext, Dialog, Frame, Request, Route
+from playwright.async_api import BrowserContext, Dialog, FileChooser, Frame, Page, Request, Route
 from playwright.async_api import Error as PlaywrightError
 
-from auto_apply.adapters.browser.guard_script import CONTROL, GUARD_KEY, guard_script
+from auto_apply.adapters.browser.guard_script import CONTROL, GUARD_KEY, VERIFY, guard_script
 from auto_apply.contracts.submit_guard import BlockedAction, DialogEvent, GuardReport
+from auto_apply.domain.errors import SubmitGuardUnavailable
 from auto_apply.domain.submit_guard_policy import (
     BlockReason,
     GuardMode,
@@ -61,6 +63,7 @@ class ContextGuard:
         if not self._installed:
             await self._context.route("**/*", self._route)
             self._context.on("dialog", self._on_dialog)
+            self._context.on("page", self._on_page)
             # Playwright 는 내장 함수(set.add)를 처리기로 받지 못한다 — 메서드로 감싼다
             self._context.on("request", self._started)
             self._context.on("requestfinished", self._ended)
@@ -73,11 +76,15 @@ class ContextGuard:
             # 설치가 실패해도 네트워크 층은 켜져 있다.
             self.mode = GuardMode.STRICT
             self.armed = True
+        for page in self._context.pages:  # 에이전트의 클릭이 OS 파일 선택 창을 띄우지 않게
+            self._watch_file_chooser(page, on=True)
         if self._script is None:
             self._script = await self._context.add_init_script(script=guard_script(self._token))
         for frame in self._frames():  # 이미 열린 문서에는 init script 가 없다
             await self._run(frame, guard_script(self._token))
-            await self._run(frame, CONTROL, [GUARD_KEY, self._token, True])
+            decoy = secrets.token_hex(16)
+            if await self._run(frame, VERIFY, [GUARD_KEY, self._token, decoy]) is False:
+                raise SubmitGuardUnavailable("페이지가 제출 차단 스크립트 자리를 먼저 차지했다")
         self.ready = True  # 두 층이 다 섰다 — 그 전에는 창을 열지 않는다(드라이버가 확인)
 
     async def disarm(self) -> None:
@@ -86,6 +93,8 @@ class ContextGuard:
         if script is not None:
             with contextlib.suppress(PlaywrightError):
                 await script.close()  # init script 등록을 걷는다 — 이후 문서에는 심지 않는다
+        for page in self._context.pages:
+            self._watch_file_chooser(page, on=False)
         for frame in self._frames():
             with contextlib.suppress(PlaywrightError):
                 await frame.evaluate(CONTROL, [GUARD_KEY, self._token, False])
@@ -136,12 +145,28 @@ class ContextGuard:
                 )
 
     async def _on_dialog(self, dialog: Dialog) -> None:
+        if not self.armed:
+            return  # 사람이 브라우저를 쓰는 동안(핸드오프·run 밖) — 사람이 고른다
         accept = dialog_verdict(dialog.type) == "accept"
-        if self.armed:
-            message = redact_resident_registration_numbers(dialog.message)[0][:200]
-            self._dialogs.append(DialogEvent(kind=dialog.type, message=message, accepted=accept))
+        message = redact_resident_registration_numbers(dialog.message)[0][:200]
+        self._dialogs.append(DialogEvent(kind=dialog.type, message=message, accepted=accept))
         with contextlib.suppress(PlaywrightError):
             await (dialog.accept() if accept else dialog.dismiss())
+
+    def _on_file_chooser(self, _: FileChooser) -> None:
+        # 파일을 넣지 않고 흘려보낸다 — 파일은 upload 도구로 앱이 관리하는 문서만 (§A5)
+        self._dialogs.append(DialogEvent(kind="filechooser", accepted=False))
+
+    def _on_page(self, page: Page) -> None:
+        if self.armed:
+            self._watch_file_chooser(page, on=True)
+
+    def _watch_file_chooser(self, page: Page, *, on: bool) -> None:
+        # 처리기가 있는 동안만 Playwright 가 OS 창을 가로챈다. 두 번 달지 않게 먼저 뗀다.
+        with contextlib.suppress(KeyError, ValueError):
+            page.remove_listener("filechooser", self._on_file_chooser)
+        if on:
+            page.on("filechooser", self._on_file_chooser)
 
     # ------------------------------------------------------------------ 내부
     def _started(self, request: Request) -> None:
@@ -169,9 +194,11 @@ class ContextGuard:
     def _frames(self) -> list[Frame]:
         return [f for p in self._context.pages if not p.is_closed() for f in p.frames]
 
-    async def _run(self, frame: Frame, script: str, arg: object = None) -> None:
+    async def _run(self, frame: Frame, script: str, arg: object = None) -> object:
+        """떨어져 나간 프레임이면 None. 살아 있는 문서에 못 돌렸으면 예외 — 호출자가 닫는다."""
         try:
-            await frame.evaluate(script, arg)
+            return await frame.evaluate(script, arg)
         except PlaywrightError:
             if not frame.is_detached():
-                raise  # 살아 있는 문서에 못 심었다 — 호출자가 SubmitGuardUnavailable 로 닫는다
+                raise
+            return None

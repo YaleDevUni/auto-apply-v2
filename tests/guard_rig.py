@@ -11,6 +11,8 @@ import pytest
 import pytest_asyncio
 
 from auto_apply.adapters.browser.playwright_guarded import PlaywrightGuardedPageDriver
+from auto_apply.adapters.human_gate.memory import InMemoryHumanGate
+from auto_apply.ports.human_gate import HumanGate
 from auto_apply.services.browser_toolbox import BrowserToolbox
 from tests.browsers import close_tabs_like_human, real_host
 from tests.gym.server import GymServer
@@ -23,10 +25,10 @@ class Rig:
         self.driver = PlaywrightGuardedPageDriver(self.host)
         self.gym = gym
 
-    def toolbox(self) -> BrowserToolbox:
+    def toolbox(self, gate: HumanGate | None = None, human_wait_s: float = 30) -> BrowserToolbox:
         return BrowserToolbox(
-            self.host, self.driver, FakeDocuments({}), user_id="local",
-            application_id="app_gym", run_id="run_gym",
+            self.host, self.driver, FakeDocuments({}), human_gate=gate or InMemoryHumanGate(),
+            human_wait_s=human_wait_s, user_id="local", application_id="app_gym", run_id="run_gym",
             forbidden_origins=["http://127.0.0.1:8000"],
         )  # fmt: skip
 

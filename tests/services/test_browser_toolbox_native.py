@@ -6,6 +6,7 @@ import pytest
 
 from auto_apply.adapters.browser.playwright_guarded import PlaywrightGuardedPageDriver
 from auto_apply.adapters.browser.playwright_host import PlaywrightBrowserHost
+from auto_apply.adapters.human_gate.memory import InMemoryHumanGate
 from auto_apply.contracts.browser_tools import ToolError
 from auto_apply.contracts.fill_log import FillAction
 from auto_apply.services.browser_toolbox import BrowserToolbox
@@ -37,6 +38,7 @@ def _toolbox(host: PlaywrightBrowserHost) -> BrowserToolbox:
         host,
         PlaywrightGuardedPageDriver(host),
         FakeDocuments({"doc_resume1": b"%PDF-1.7\n"}),
+        human_gate=InMemoryHumanGate(),
         user_id="local",
         application_id="app_native",
         run_id="run_native",

@@ -11,6 +11,7 @@ import pytest
 
 from auto_apply.adapters.browser.fake import FakeBrowserHost
 from auto_apply.adapters.browser.fake_guard import FakeGuardedPageDriver
+from auto_apply.adapters.human_gate.memory import InMemoryHumanGate
 from auto_apply.contracts.browser_tools import ToolError, ToolResult
 from auto_apply.contracts.click import RiskyClick
 from auto_apply.domain.submit_guard_policy import BlockReason
@@ -44,7 +45,8 @@ def toolbox(host, driver, slept) -> BrowserToolbox:
         slept.append(seconds)
 
     return BrowserToolbox(
-        host, driver, FakeDocuments({}), user_id="local", application_id="app_g", run_id="run_g",
+        host, driver, FakeDocuments({}), human_gate=InMemoryHumanGate(), user_id="local",
+        application_id="app_g", run_id="run_g",
         forbidden_origins=["http://127.0.0.1:8000"], step=2, sleep=sleep,
     )  # fmt: skip
 

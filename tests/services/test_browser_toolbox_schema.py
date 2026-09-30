@@ -29,6 +29,8 @@ EXPECTED = {
     "click",
     "ready_for_review",
     "report_failure",
+    "request_login",
+    "request_human",
 }
 # 이름에 이 조각이 들어간 도구는 없어야 한다 — 임의 JS·키 입력·좌표 클릭·파일 경로·제출·하네스 모드.
 # `click` 은 하네스(§A4 L2·L3)를 거치는 그 이름 하나만 허용한다(test_click_is_the_only_click).

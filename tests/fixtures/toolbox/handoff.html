@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>핸드오프 테스트</title></head>
+<body>
+<h1>사람 핸드오프</h1>
+<button type="button" onclick="if (confirm('계속할까요?')) fetch('/api/toolbox/confirmed', {method: 'POST'})">확인 창</button>
+<input type="file" id="pick" hidden>
+<button type="button" onclick="document.getElementById('pick').click()">파일 선택</button>
+<p id="picked">선택 없음</p>
+<script>
+  document.getElementById("pick").addEventListener("change", (e) => {
+    document.getElementById("picked").textContent = e.target.files.length + "개 선택";
+  });
+</script>
+<form action="/api/toolbox/submit" method="post">
+  <label>이름 <input name="name"></label>
+  <button type="submit">지원하기</button>
+</form>
+</body></html>

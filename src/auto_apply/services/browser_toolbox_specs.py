@@ -18,6 +18,8 @@ from auto_apply.contracts.browser_tools import (
     NavigateInput,
     ReadyForReviewInput,
     ReportFailureInput,
+    RequestHumanInput,
+    RequestLoginInput,
     ScrollInput,
     SelectInput,
     SnapshotInput,
@@ -44,7 +46,8 @@ _SPECS = (
         "snapshot",
         "현재 탭(모든 프레임)의 접근성 트리. 조작할 수 있는 요소에 ref(e1, e2 …)가 붙는다."
         " ref 는 가장 최근 snapshot 것만 유효하다 — 이동·페이지 변화 뒤에는 다시 부른다."
-        " 비밀번호·인증 코드 칸은 secret 으로 표시되고 값이 없다.",
+        " 비밀번호·인증 코드 칸은 secret 으로 표시되고 값이 없다."
+        " 로그인 화면·CAPTCHA·인증 코드 화면으로 보이면 handoff 에 근거가 붙는다.",
         SnapshotInput,
     ),
     ToolSpec("navigate", "http(s) 주소로 이동한다.", NavigateInput),
@@ -75,6 +78,22 @@ _SPECS = (
         "upload",
         "파일 입력에 앱에 등록된 문서(document_id)를 넣는다. 파일 경로는 받지 않는다.",
         UploadInput,
+    ),
+    ToolSpec(
+        "request_login",
+        "로그인이 필요할 때 사람에게 넘긴다. 사람이 전용 크롬 창에서 직접 로그인한다"
+        " — 앱은 비밀번호를 입력하지 않고 계정을 만들지 않는다. 사람이 끝낼 때까지 다른 도구는"
+        " awaiting_human 으로 거부된다. 끝나면 화면이 바뀌었을 수 있으니 snapshot 부터 다시 본다."
+        " 사람이 제때 끝내지 못하면 needs_login 으로 run 이 끝난다."
+        " site 는 사람에게 보일 사이트 이름.",
+        RequestLoginInput,
+    ),
+    ToolSpec(
+        "request_human",
+        "CAPTCHA·SMS·본인인증처럼 사람만 할 수 있는 일을 부탁한다(앱은 풀거나 우회하지 않는다)."
+        " 기다리는 동안 다른 도구는 거부되고, 끝나면 snapshot 부터 다시 본다."
+        " 사람이 제때 끝내지 못하면 needs_input 으로 run 이 끝난다. reason 은 사람에게 보인다.",
+        RequestHumanInput,
     ),
     ToolSpec(
         "ready_for_review",

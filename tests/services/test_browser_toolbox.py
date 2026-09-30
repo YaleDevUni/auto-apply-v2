@@ -7,6 +7,7 @@ import pytest
 from auto_apply.adapters.browser.fake import FakeBrowserHost
 from auto_apply.adapters.browser.fake_guard import FakeGuardedPageDriver
 from auto_apply.adapters.browser.fake_pages import FakeElement
+from auto_apply.adapters.human_gate.memory import InMemoryHumanGate
 from auto_apply.contracts.browser_tools import ToolError, ToolResult
 from auto_apply.contracts.fill_log import FillAction, FillSourceKind
 from auto_apply.services.browser_toolbox import BrowserToolbox
@@ -40,6 +41,7 @@ def toolbox(host, driver, documents) -> BrowserToolbox:
         host,
         driver,
         documents,
+        human_gate=InMemoryHumanGate(),
         user_id="local",
         application_id="app_1",
         run_id="run_1",
@@ -222,8 +224,8 @@ async def test_wait_for(host, driver, documents):
         slept.append(seconds)
 
     toolbox = BrowserToolbox(
-        host, driver, documents, user_id="local", application_id=None, run_id=None,
-        sleep=sleep,
+        host, driver, documents, human_gate=InMemoryHumanGate(), user_id="local",
+        application_id=None, run_id=None, sleep=sleep,
     )  # fmt: skip
     await _open(toolbox, NEXT)
     assert (await toolbox.call("wait_for", {"ms": 250})).ok

@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>가드 이름 선점</title>
+<script>
+  // 가드가 꺼진 동안 열린 문서가 가드 자리를 먼저 차지한다 — 무엇을 물어도 "막은 것 없음"
+  Object.defineProperty(window, "__autoApplySubmitGuard", {value: () => [], configurable: false});
+</script></head>
+<body>
+<h1>지원서</h1>
+<form action="/api/toolbox/submit" method="post">
+  <label>이름 <input name="name"></label>
+  <button type="submit">지원하기</button>
+</form>
+</body></html>

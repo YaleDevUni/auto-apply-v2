@@ -66,6 +66,15 @@ CONTROL = """([key, token, on]) => {
   return typeof f === "function" ? f(token, on) : null;
 }"""
 
+# 켤 때 프레임마다 가드가 **우리 것**인지 확인하고 켠다. 가드가 꺼진 동안(사람 로그인) 열린 문서는
+# init script 없이 떠서, 페이지가 가드 이름을 먼저 차지했을 수 있다 — 가짜는 토큰을 모르니
+# 엉뚱한 토큰(decoy)엔 null, 진짜 토큰엔 배열을 돌려주지 못한다.
+VERIFY = """([key, token, decoy]) => {
+  const f = window[key];
+  if (typeof f !== "function") return false;
+  return f(decoy, null) === null && Array.isArray(f(token, true));
+}"""
+
 # 클릭 분류(§A4 L2) 기술자 — 요소와, 클릭이 닿는 조작 가능한 조상·라벨이 가리키는
 # 컨트롤(가장 안쪽부터).
 DESCRIBE_CLICK = (

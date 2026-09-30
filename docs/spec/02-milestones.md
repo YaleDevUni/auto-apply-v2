@@ -133,7 +133,7 @@
 ## M2 · 브라우저 호스트 · 제출 차단 하네스
 목표: 설치된 Chrome 을 전용 프로필로 띄우고(mac/win 경로 탐지), BrowserToolbox 도구와 §A4 L1~L5 를 구현.
 수용 기준: **테스트 짐 전 픽스처에서 FILL 단계 제출 0건**, 클릭 분류기 단위 테스트, 로그인 핸드오프 픽스처 테스트. (`native` 마커)
-병렬: T2.1 · T2.2 · T2.3 은 파일 범위가 겹치지 않아 worktree 병렬. T2.4 는 T2.1 뒤, T2.5 는 T2.2~T2.4 뒤, T2.6 은 T2.3·T2.4 뒤.
+순서: T2.1 · T2.2 · T2.3 → T2.4 → T2.5 → T2.6 → T2.7(D17, 사용자 결정 2026-09-30).
 공통: 브라우저가 필요한 테스트는 `native` 마커. CI·Chrome 없는 환경을 위해 테스트는 Playwright 번들 Chromium 으로도 돌 수 있게
 (`AUTO_APPLY_TEST_BROWSER=chromium`), 제품 기본은 설치된 Chrome(D6).
 
@@ -215,6 +215,20 @@
 - 수용 기준: native 로그인 벽 픽스처 — 감지 → 대기 → (테스트가 사람 대신 쿠키 설정) → 재개 → 폼 도달. password 필드 fill 거부 테스트,
   타임아웃 테스트, 로그인 휴리스틱 단위 테스트.
 
+### T2.7 단계 이동 자동 통과 (D17) — 최종 제출만 승인
+- 의존: T2.5, T2.6
+- 범위: `src/auto_apply/{domain/submit_classifier.py,domain/submit_vocabulary.py,domain/submit_guard_policy.py,services/submit_guard*.py,
+  services/browser_toolbox*.py,adapters/browser/,contracts/}`, `tests/`, `tests/fixtures/sites/`, `tests/gym/`, `docs/spec/01-architecture.md` §A4
+- 할 일: D17 구현. 분류 결과에 **STEP**(단계 이동) 추가 — `type=submit` 이라도 라벨이 명확한 단계 어휘(데이터로)면 STEP, 단 같은 페이지에
+  **마지막 단계 신호**(진행 표시가 마지막 단계, 편집 가능한 입력칸 없는 검토/요약 페이지, 최종 제출 동의·"제출 전 확인" 문구)가 있으면 Risky.
+  STEP 클릭은 폼 POST(단계 이동)를 허용하되 **사후 확인**: 결과 화면에 완료 어휘 → INCIDENT(L5), 새 입력 화면 → 계속,
+  입력칸도 완료 근거도 없는 화면 → run 멈춤 + `request_human`(애매하면 닫힌 쪽). 제출 어휘·애매한 라벨은 지금처럼 strict.
+  §A4 "다단계 사이트" 절을 D17 로 다시 쓰고(단계마다 승인하던 L6 확장 설계 제거 — 승인은 최종 제출 1회), 남는 위험 갱신.
+  dry_run 에서도 STEP 은 누른다(최종 제출만 안 함).
+- 수용 기준: 분류기 회귀 테스트(STEP/Risky 경계 — 마지막 단계 신호별), 짐에 픽스처 추가: 마지막 버튼이 "다음"이면서 최종 제출하는 사이트
+  (**마지막 단계 신호 있음 → FILL 제출 0건**, 신호 없음 → INCIDENT 로 즉시 중단되는지), 검토 페이지형, type=submit 3단계 사이트가
+  승인 없이 마지막 단계까지 도달하고 최종 버튼에서 SUBMIT_BLOCKED. 기존 짐 전 픽스처 FILL 제출 0건 유지(적대 스크립트).
+
 ## M3 · 에이전트 런타임 · 채우기(fill) run
 목표: AgentRuntime 3구현, MCP(HTTP) 노출, fill run 이 픽스처 사이트에서 FillLog + `ready_for_review` 까지.
 T2.5 이관(§A4 "남는 위험"): **안전 라벨 버튼의 fetch 최종 제출**(relaxed 에서 통과, L5 사후 감지뿐), WebSocket 전송, 3초 넘게 미룬 제출,
@@ -223,12 +237,15 @@ T2.4 이관: bootstrap 에서 BrowserHost 와 짝지은 PageDriver 조립, Brows
 shadow DOM 안 요소가 snapshot 에 안 나옴 — 실사이트 영향 확인 후 지원 여부 결정.
 이관: `domain/errors.py` 의 `NON_RETRYABLE`(Temporal 근거)을 §A9 JobRunner 재시도 정책으로 재정의하거나 삭제.
 `config.llm_provider` 기본값이 `stub` — D5(기본 Claude Code CLI)에 맞추되 테스트·오프라인 게이트는 stub 유지.
+T2.6 이관: bootstrap 에 `human_wait_s` 설정 키·BrowserToolbox 에 HumanGate 주입. 첫 실사용에서 webdriver=true 로 Google 이
+식별자 제출 뒤 차단하는지 확인(막히면 사이트 자체 로그인 안내 — 우회 플래그 금지).
 수용 기준: Scripted 런타임으로 상태기계 전 경로 테스트, CLI 런타임은 `native` 마커 e2e 1건(짐 사이트), ask_user 일시정지/재개 테스트.
 
 ## M4 · 승인 큐 · 재진입(submit/revise)
 목표: 트리거 API/UI, 승인 큐 UI(스크린샷·필드표·편집), submit run(§A4 L6 대조), revise run, 크래시 복구.
 이관: 상태 쓰기 포트를 `ApplicationService` 만 쓰도록 봉인(절대 규칙 6), `upsert_state`→`append_state` 개명(이미 append-only),
 `PersistState.workflow_run_id`→`run_id`.
+T2.6 이관: HumanGate `pending()`·`answer()` 를 승인 큐 UI 에 연결, NEEDS_LOGIN/NEEDS_INPUT 전이는 ApplicationService 로.
 dry_run→live 전환은 settings 테이블 + UI 확인으로만(설정 파일로 조용히 뒤집히지 않게, 절대 규칙 2).
 수용 기준: SUBMIT_MISMATCH 경로 테스트, dry_run 에서 클릭 0회 검증, 중복 지원 경고 테스트.
 

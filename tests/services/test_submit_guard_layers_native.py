@@ -32,6 +32,8 @@ def _no_network(mp: pytest.MonkeyPatch) -> None:
 
 def _no_page_script(mp: pytest.MonkeyPatch) -> None:
     mp.setattr(playwright_guard, "guard_script", lambda token: "undefined")
+    # 켤 때의 확인(VERIFY)도 건너뛴다 — 안 그러면 스크립트가 없다고 arm 이 닫혀 층을 시험하지 못한다
+    mp.setattr(playwright_guard, "VERIFY", "() => true")
 
 
 def _no_strict_tail(mp: pytest.MonkeyPatch) -> None:

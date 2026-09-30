@@ -134,7 +134,12 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   선 context 에서만). run 이 끝나면 `BrowserToolbox.close()` 가 끈다: init script 등록을 걷어 이후 문서(사람의 로그인·SSO
   자동 제출 폼)에는 심지 않고, route 는 앱 출처 차단만 남긴다. 부르지 않으면 켜진 채다(닫힌 쪽). 서비스 워커는 route 를
   비껴갈 수 있어 브라우저 기동 때 막는다(`service_workers="block"`). 모드 전환은 SubmitGuard 만 부른다 — 도구 인자(`click` 은
-  ref 하나)·가이드·프롬프트로 닿는 통로가 없다.
+  ref 하나)·가이드·프롬프트로 닿는 통로가 없다. 사람 핸드오프(§A5 `request_login`·`request_human`) 동안에도 끄고, 재개 때
+  다시 켠다(T2.5 이관). 꺼진 동안 대화상자는 처리하지 않고 사람에게 둔다(처리기를 떼면 Playwright 가 자동으로 닫으므로 처리기는
+  두고 손대지 않는다). 켜져 있는 동안은 OS 파일 선택 창(`filechooser`)을 가로채 파일 없이 흘려보내고 대화상자처럼 알린다 —
+  파일은 `upload` 로만 들어가고, 꺼지면 사람이 창을 쓸 수 있다. 켤 때는 프레임마다 가드가 **우리 것**인지 확인한다: 가짜
+  토큰엔 null, 진짜 토큰엔 기록 배열을 돌려줘야 한다(`guard_script.VERIFY`). 가드가 꺼진 동안 열린 문서(로그인 뒤 돌아온
+  지원 페이지)가 가드 이름을 먼저 차지했으면 켜지 않은 것으로 보고 `GUARD_UNAVAILABLE` 이다(닫힌 쪽).
 - **check·입력 도구**: `check` 는 체크박스를 클릭하므로 click 과 같은 분류·창을 거친다(onchange 발신, T2.4 이관).
   fill·select·upload 도 relaxed 창 안에서 돌아 change 핸들러의 폼 제출·앱 출처 요청이 막힌다. 막혔어도 입력은 됐으므로
   FillLog 에 남기고 결과는 `SUBMIT_BLOCKED` 다.
@@ -155,9 +160,10 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
 - **남는 위험**(L5 가 뒤를 받친다): 안전한 라벨의 버튼이 fetch 로 최종 제출하는 사이트(relaxed 가 통과시킨다 — L2 허용
   목록의 한계), 입력값을 싣지 않는 GET 하위 요청·`navigate` 로 여는 GET 제출 주소(입력값을 실으면 `navigate` 가 거부),
   3초보다 늦게 미룬 제출, 이미 열린 WebSocket 으로 보내는 제출, 리다이렉트로 앱 출처에 닿는 요청(Playwright route 는 첫 URL 만
-  본다 — §A10 Host·Origin·토큰 검사가 막는다). 페이지 스크립트 층이 서지 않는 경우 — shadow DOM 안 폼의 submit 이벤트
-  (composed 가 아니라 window 캡처에 닿지 않는다), 가드가 꺼진 동안 연 문서가 가드 이름을 먼저 차지한 경우 — 는 네트워크 층만
-  남는다(문서 POST·입력값을 싣는 탐색은 여전히 막힌다).
+  본다 — §A10 Host·Origin·토큰 검사가 막는다). shadow DOM 안 폼의 submit 이벤트(composed 가 아니라 window 캡처에 닿지
+  않는다)는 페이지 스크립트 층이 못 봐 네트워크 층만 남는다(문서 POST·입력값을 싣는 탐색은 여전히 막힌다). 사람 핸드오프로
+  가드가 꺼진 동안에는 그 전에 페이지가 3초 넘게 미뤄 둔 제출이 나갈 수 있다 — 끄기 전 strict 꼬리는 기다리고, 재개 때
+  넘기기 직전 화면과 비교하는 L5 가 본다.
 - **테스트 짐(gym)**: `tests/fixtures/sites/` 에 로컬 정적 사이트 — SPA fetch 제출, multipart 제출, confirm 대화상자 제출,
   "지원하기"가 폼 여는 버튼인 경우, 다단계 저장(fetch·`type=submit` 폼 POST 두 종류), iframe 폼, 제출 어휘가 없는 버튼(`확인`),
   링크로 여는 폼 페이지, GET 탐색 제출, confirm 수락 뒤 제출하는 "다음", 지연(setTimeout) 제출, 체크박스 onchange 제출 등.
@@ -178,7 +184,7 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
 | `upload(ref, document_id)` | 앱이 관리하는 파일만 (임의 경로 금지) |
 | `generate_document(kind, …)` | 공고맞춤 이력서/포트폴리오 PDF, 자소서 문항 답변 — DocumentService 호출(§A7) |
 | `ask_user(question, field_hint, options?, sensitive?)` | 실행 일시정지 → UI 질문. `sensitive=true` 면 답변 KB 에 저장 안 함 |
-| `request_login(site)` · `request_human(reason)` | 로그인 벽·CAPTCHA → 사람 핸드오프 후 재개 |
+| `request_login(site)` · `request_human(reason)` | 로그인 벽 · CAPTCHA·본인인증 → 사람 핸드오프(가드 꺼짐, 도구 거부) 후 재개 |
 | `ready_for_review(submit_ref, notes)` | FILL 종료. 제출 대상 요소 기술자(선택자 후보·텍스트·위치)와 FillLog 확정 |
 | `report_failure(reason)` | 진행 불가 |
 | `commit_submit()` | **SUBMITTING run 에서만 노출.** 실제 클릭은 하네스가 (§A4 L6) |
@@ -207,7 +213,30 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   generated·user 는 선택, upload 는 문서가 근거라 없다. 값에 주민등록번호 꼴이 있으면 사이트엔 넣되 기록하지 않고
   `withheld=true`(재입력 때 다시 묻는다, 절대 규칙 5). snapshot·`report_failure` 이유도 에이전트·기록에 넘기기 전에 같은 꼴을 가린다.
 - `ask_user`/`request_login` 은 도구 호출이 UI 응답(asyncio Future)을 **최대 N분**(설정) 기다린다. 넘기면 run 을 `NEEDS_INPUT` 으로
-  종료하고, 답이 오면 **재진입 run** 이 FillLog 부분 기록부터 이어간다 (D8 과 같은 메커니즘).
+  (`request_login` 은 `NEEDS_LOGIN`) 종료하고, 답이 오면 **재진입 run** 이 FillLog 부분 기록부터 이어간다 (D8 과 같은 메커니즘).
+- **사람 핸드오프(T2.6)**: 기다리는 통로는 `ports/human_gate.HumanGate`(`wait(task, timeout_s)`·`pending()`·`answer(id, reply)`)
+  — 구현은 `adapters/human_gate/memory.py`(asyncio Future, 앱이 단일 프로세스라 이것이 실제) · `scripted.py`(사람 대신 미리 적은
+  대로 답하는 대역). UI 연결(M3/M4)은 `pending()` 을 보여 주고 `answer()` 한다. 일(`HumanTask`)에는 에이전트의 말(site·reason)과
+  별개로 하네스가 직접 본 근거(`signal`)·탭 주소가 실리고, 고유식별정보는 가린 뒤 만든다. 흐름: L5 관찰 → 하네스 snapshot →
+  **대기 표시를 먼저 세우고** 가드를 끈다(strict 꼬리는 기다림) → 사람을 기다린다 → `DONE` 이면 가드를 다시 켜는 데 성공해야
+  도구가 돌고(`_page()` 가 켜기부터 — 실패하면 `GUARD_UNAVAILABLE`, 이후 도구도 같다), 넘기기 직전 화면과 비교한 L5 근거가
+  있으면 `INCIDENT` 다(사람이 스스로 제출한 경우 포함). `TIMED_OUT`·`DECLINED` 면 `NEEDS_LOGIN`/`NEEDS_INPUT` 결과로 run 이
+  끝나고(`BrowserToolbox.needs_human`), 사람이 계속 쓰도록 가드는 꺼 둔다(`close()` 와 같다). 도구 호출은 **직렬**(asyncio
+  Lock) — 핸드오프가 다른 동작의 창 도중에 가드를 끄지 못하고, 기다리는 동안 온 호출은 잠금을 기다리지 않고 바로
+  `AWAITING_HUMAN` 이다. 대기 상한은 `BrowserToolbox(human_wait_s=…)`(기본 600초) — 설정 키는 M3 bootstrap 에서.
+- 사람 몫 감지(`domain/human_handoff.py`, 순수): 보이는 비밀번호 칸(autocomplete 포함)·로그인 주소(경로 조각이 정확히
+  login·signin·auth·sso·oauth… 이거나 호스트 첫 이름이 accounts·login·nid…) → 로그인 벽, one-time-code 칸 → 본인인증,
+  CAPTCHA 제공자 프레임(reCAPTCHA·hCaptcha·Turnstile…) 안의 누를 수 있는 요소·"로봇이 아닙니다"·"자동입력 방지"·보안문자 칸 →
+  CAPTCHA. `snapshot` 결과의 `handoff` 에 근거가 붙고 어느 도구로 넘길지 안내한다. CAPTCHA 제공자 프레임 안의 요소(보이지
+  않는 v3 배지 포함)와 CAPTCHA 답 칸은 `click`·입력 도구가 `CAPTCHA` 로 거부한다(절대 규칙 3). 비밀번호 칸은 원래대로 `fill`
+  이 거부한다.
+- 탭 조작은 핸드오프에도 port 에 올리지 않는다(T2.1 이관 결정): 사람이 SSO 팝업·새 창을 다루고, 재개는 `BrowserHost.page()`
+  (작업 탭이 살아 있으면 그 탭, 닫혔으면 마지막 열린 탭)로 이어간다. 사람이 브라우저를 닫았으면 다시 띄우고 가드를 새로 건다.
+- Google 로그인 실측(T2.1 이관, 2026-09-30, 전용 프로필·설치 Chrome, 계정 입력 없이 진입 화면까지): `accounts.google.com`
+  식별자 화면이 정상으로 뜨고 차단 문구("안전하지 않은 브라우저" 류)는 없다. 다만 `navigator.webdriver` 는 `true` 다 —
+  Google 의 차단 판정은 식별자를 낸 뒤에 나오므로 계정 없이 끝까지는 확인하지 못했다. 그래서 기동 플래그는 바꾸지 않는다:
+  webdriver 신호를 숨기는 것은 봇 탐지 우회라 절대 규칙 3 밖이다. 사람의 첫 실사용에서 막히면(M3/M4 UI 에서 보이게) 사람이
+  Google 계정 대신 사이트 자체 로그인을 쓰도록 안내한다.
 
 ## §A6 AgentRuntime (port) — 구현 3개
 

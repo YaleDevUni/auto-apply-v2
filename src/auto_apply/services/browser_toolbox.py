@@ -3,7 +3,8 @@
 LLM 이 만든 인자는 `call()` 에서 Pydantic 검증을 통과해야만 브라우저에 닿는다(절대 규칙 4). 페이지를
 건드리는 도구는 전부 SubmitGuard 창 안에서 돈다(§A4) — 하네스를 못 켜면 동작하지 않는다.
 fill·select·check·upload 가 성공하면 FillLog 에 근거와 함께 남긴다 — 에이전트는 기록을 직접 쓰지
-못한다.
+못한다. 도구 호출은 한 번에 하나씩 돌고, 사람을 기다리는 동안(request_login·request_human)은
+받지 않는다.
 """
 
 from collections.abc import Awaitable, Callable, Mapping
@@ -27,8 +28,14 @@ from auto_apply.domain.errors import PageActionFailed, SubmitGuardUnavailable
 from auto_apply.domain.submit_guard_policy import GuardMode, carries_input
 from auto_apply.domain.url_policy import is_forbidden_url
 from auto_apply.services.browser_toolbox_base import DocumentReader, Refused
+from auto_apply.services.browser_toolbox_handoff import HandoffTools
 from auto_apply.services.browser_toolbox_inputs import InputTools
-from auto_apply.services.browser_toolbox_record import describe_validation_error, fail
+from auto_apply.services.browser_toolbox_record import (
+    HANDOFF_HINTS,
+    describe_validation_error,
+    fail,
+    handoff_signal,
+)
 from auto_apply.services.browser_toolbox_redact import redact_snapshot, redact_target, redact_text
 from auto_apply.services.browser_toolbox_specs import TOOLS
 from auto_apply.services.submit_guard import classify_target
@@ -39,12 +46,13 @@ _HANDLERS = {
     "snapshot": "_do_snapshot", "navigate": "_navigate", "back": "_back", "scroll": "_scroll",
     "wait_for": "_wait_for", "click": "_click", "fill": "_fill", "select": "_select",
     "check": "_check", "upload": "_upload", "ready_for_review": "_ready_for_review",
-    "report_failure": "_report_failure",
+    "report_failure": "_report_failure", "request_login": "_request_login",
+    "request_human": "_request_human",
 }  # fmt: skip
 assert _HANDLERS.keys() == TOOLS.keys()  # 정의와 실행이 어긋나면 import 부터 실패
 
 
-class BrowserToolbox(InputTools):
+class BrowserToolbox(InputTools, HandoffTools):
     """run 하나의 도구 상자. 탭은 BrowserHost 의 작업 탭 하나다(새 탭·팝업 조작은 없다).
 
     `step` 은 다단계 사이트에서 몇 번째 승인 단계의 FILL 인지 — FillLog 항목과
@@ -53,7 +61,13 @@ class BrowserToolbox(InputTools):
 
     async def call(self, tool: str, args: Mapping[str, object] | None = None) -> ToolResult:
         """에이전트 도구 호출의 유일한 입구."""
-        result = await self._call(tool, args or {})
+        if self._awaiting is not None:
+            # 가드가 꺼진 동안이다 — 잠금을 기다리지 않고 바로 거부한다 (§A5 핸드오프)
+            name = tool if tool in TOOLS else "unknown"
+            result = fail(name, ToolError.AWAITING_HUMAN, "사람이 끝낼 때까지 도구를 받지 않는다")
+        else:
+            async with self._serial:
+                result = await self._call(tool, args or {})
         self._log.info("toolbox.call", tool=result.tool, ok=result.ok, error=result.error)
         return result
 
@@ -64,7 +78,7 @@ class BrowserToolbox(InputTools):
             return fail("unknown", ToolError.UNKNOWN_TOOL, "없는 도구")
         if self._incident is not None:
             return fail(tool, ToolError.INCIDENT, "제출 흔적이 감지돼 멈춘 run 이다")
-        if self._failure is not None or self._review is not None:
+        if self._failure is not None or self._review is not None or self._needs_human is not None:
             return fail(tool, ToolError.RUN_FINISHED, "끝난 run 이다")
         try:
             data = spec.input_model.model_validate(dict(args))
@@ -88,7 +102,11 @@ class BrowserToolbox(InputTools):
         if evidence is not None:
             return self._stop("snapshot", evidence, report)
         self._snapshot = redact_snapshot(await self._pages.snapshot(page))
-        return ToolResult(tool="snapshot", ok=True, snapshot=self._snapshot, guard=report)
+        signal = handoff_signal(self._snapshot)
+        return ToolResult(
+            tool="snapshot", ok=True, snapshot=self._snapshot, guard=report, handoff=signal,
+            message=HANDOFF_HINTS[signal] if signal is not None else "",
+        )  # fmt: skip
 
     async def _navigate(self, data: NavigateInput) -> ToolResult:
         if is_forbidden_url(data.url, self._forbidden):
@@ -129,7 +147,7 @@ class BrowserToolbox(InputTools):
         return ToolResult(tool="wait_for", ok=True, found=found, guard=report)
 
     async def _click(self, data: ClickInput) -> ToolResult:
-        self._node(data.ref)
+        self._touchable(data.ref)
         page = await self._page()
         mode, _ = await self._guard.click_mode(page, data.ref)  # L2 → 창 모드 (L3)
         return await self._guarded("click", page, mode, partial(self._pages.click, page, data.ref))
