@@ -9,13 +9,15 @@ import itertools
 import pytest
 
 from auto_apply.domain.application_state import (
+    CRASH_RECOVERY,
     FINAL_STATES,
     INITIAL_STATE,
     TRANSITIONS,
     check_transition,
+    failure_target,
 )
 from auto_apply.domain.enums import ApplicationState as S
-from auto_apply.domain.errors import NON_RETRYABLE, InvalidTransition
+from auto_apply.domain.errors import FailureKind, InvalidTransition, classify_failure
 
 _EXPECTED_EDGES = {
     (S.DRAFT, S.QUEUED),
@@ -40,6 +42,7 @@ _EXPECTED_EDGES = {
     (S.SUBMITTING, S.SUBMITTED),
     (S.SUBMITTING, S.SUBMIT_MISMATCH),
     (S.SUBMITTING, S.FAILED),
+    (S.SUBMITTING, S.INCIDENT),
     (S.SUBMIT_MISMATCH, S.AWAITING_APPROVAL),
     (S.FAILED, S.QUEUED),
     (S.INCIDENT, S.SUBMITTED),
@@ -96,4 +99,51 @@ def test_table_is_read_only():
 
 
 def test_invalid_transition_is_not_retried():
-    assert InvalidTransition.__name__ in NON_RETRYABLE
+    assert classify_failure(InvalidTransition(S.DRAFT, S.SUBMITTED)) is FailureKind.CONFLICT
+
+
+def test_crash_recovery_targets():
+    """§A3: 제출 중 중단은 INCIDENT — 클릭이 나갔는지 모르므로 FAILED 로 숨기지 않는다."""
+    assert dict(CRASH_RECOVERY) == {
+        S.FILLING: S.QUEUED,
+        S.REVISING: S.AWAITING_APPROVAL,
+        S.SUBMITTING: S.INCIDENT,
+    }
+    assert all(to in TRANSITIONS[cur] for cur, to in CRASH_RECOVERY.items())
+
+
+_F = FailureKind
+_FAILURE_TABLE = [
+    # (현재, 실패, retry) -> 목적지
+    (S.FILLING, _F.TRANSIENT, True, S.QUEUED),
+    (S.QUEUED, _F.TRANSIENT, True, None),
+    (S.REVISING, _F.TRANSIENT, True, S.AWAITING_APPROVAL),
+    (S.FILLING, _F.TRANSIENT, False, S.FAILED),  # 재시도 한도 소진
+    (S.FILLING, _F.NEEDS_LOGIN, False, S.NEEDS_LOGIN),
+    (S.FILLING, _F.NEEDS_INPUT, False, S.NEEDS_INPUT),
+    (S.FILLING, _F.INCIDENT, False, S.INCIDENT),
+    (S.FILLING, _F.FATAL, False, S.FAILED),
+    (S.QUEUED, _F.FATAL, False, S.FAILED),  # 핸들러가 시작도 못 함
+    (S.QUEUED, _F.NEEDS_LOGIN, False, S.FAILED),  # 표에 없는 목적지는 FAILED 로
+    (S.REVISING, _F.NEEDS_LOGIN, False, S.FAILED),
+    (S.REVISING, _F.INCIDENT, False, S.INCIDENT),
+    # 제출 중이면 무엇이든 INCIDENT — 재시도로 되돌리지도 않는다.
+    (S.SUBMITTING, _F.TRANSIENT, True, S.INCIDENT),
+    (S.SUBMITTING, _F.FATAL, False, S.INCIDENT),
+    (S.SUBMITTING, _F.NEEDS_LOGIN, False, S.INCIDENT),
+    # 그 사이 다른 쪽이 바꿨거나(CONFLICT) 핸들러가 이미 정리한 상태면 건드리지 않는다.
+    (S.FILLING, _F.CONFLICT, False, None),
+    (S.SUBMITTING, _F.CONFLICT, False, None),
+    (S.AWAITING_APPROVAL, _F.FATAL, False, None),
+    (S.NEEDS_LOGIN, _F.FATAL, False, None),
+    (S.CANCELLED, _F.FATAL, False, None),
+    (S.INCIDENT, _F.TRANSIENT, True, None),
+]
+
+
+@pytest.mark.parametrize(("current", "failure", "retry", "expected"), _FAILURE_TABLE)
+def test_failure_target(current, failure, retry, expected):
+    target = failure_target(current, failure, retry=retry)
+    assert target is expected
+    if target is not None:
+        check_transition(current, target)

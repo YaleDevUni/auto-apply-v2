@@ -198,3 +198,13 @@ async def test_sqlite_enforces_foreign_keys(sqlite_url):
                 )
             )
     await engine.dispose()
+
+
+async def test_in_states_returns_only_matching_latest(uow_factory):
+    await _seed(uow_factory, "app_1", S.QUEUED, S.FILLING)
+    await _seed(uow_factory, "app_2", S.QUEUED)
+    await _seed(uow_factory, "app_3", S.QUEUED, S.FILLING, S.AWAITING_APPROVAL, S.REVISING)
+    async with uow_factory() as uow:
+        found = await uow.applications.in_states([S.FILLING, S.REVISING, S.SUBMITTING])
+        assert await uow.applications.in_states([]) == {}
+    assert found == {"app_1": S.FILLING, "app_3": S.REVISING}

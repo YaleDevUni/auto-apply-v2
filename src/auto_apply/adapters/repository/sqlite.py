@@ -4,7 +4,7 @@
 시간을 넉넉히 준다.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from types import TracebackType
 from typing import Any, Self
 
@@ -17,12 +17,14 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from auto_apply.adapters.repository.models import ApplicationRow, ApplicationStateRow
+from auto_apply.adapters.repository.sqlite_jobs import SqliteJobRepository
 from auto_apply.adapters.repository.sqlite_profile import (
     SqliteAnswerRepository,
     SqliteDocumentRepository,
     SqliteExperienceRepository,
     SqliteProfileRepository,
 )
+from auto_apply.adapters.repository.sqlite_runs import SqliteRunRepository
 from auto_apply.contracts.dto import ApplicationRecord, ApplicationSummary, PersistState
 from auto_apply.domain.enums import ApplicationState, SubmitMode
 from auto_apply.domain.errors import InvalidInput, InvalidTransition, NotFound
@@ -147,6 +149,14 @@ class SqliteApplicationRepository:
         )
         return {r.id: ApplicationState(r.state) for r in rows}
 
+    async def in_states(self, states: Collection[ApplicationState]) -> dict[str, ApplicationState]:
+        rows = await self._session.execute(
+            select(ApplicationRow.id, ApplicationRow.state).where(
+                ApplicationRow.state.in_([str(s) for s in states])
+            )
+        )
+        return {r.id: ApplicationState(r.state) for r in rows}
+
 
 class SqliteUnitOfWork:
     """세션 하나 = 트랜잭션 하나. `commit()` 없이 빠져나가면 롤백된다."""
@@ -158,6 +168,8 @@ class SqliteUnitOfWork:
         self.experiences = SqliteExperienceRepository(self._session)
         self.answers = SqliteAnswerRepository(self._session)
         self.documents = SqliteDocumentRepository(self._session)
+        self.jobs = SqliteJobRepository(self._session)
+        self.runs = SqliteRunRepository(self._session)
 
     async def __aenter__(self) -> Self:
         return self
@@ -178,16 +190,26 @@ class SqliteUnitOfWork:
         await self._session.commit()
 
 
-def _enable_foreign_keys(dbapi_conn: Any, _record: Any) -> None:
+def _on_connect(dbapi_conn: Any, _record: Any) -> None:
     # SQLite 는 연결마다 FK 강제를 켜야 한다 (기본 off).
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
+    # 드라이버의 암묵 BEGIN 을 끄고 `_begin_immediate` 가 트랜잭션을 연다.
+    dbapi_conn.isolation_level = None
+
+
+def _begin_immediate(conn: Any) -> None:
+    # 읽고 나서 쓰는 트랜잭션(claim·transition) 둘이 겹치면 DEFERRED 는 쓰기 잠금 승격에서
+    # 교착을 감지하고 기다리지 않고 "database is locked" 로 실패한다. 처음부터 쓰기 잠금을
+    # 잡으면 뒤에 온 쪽은 timeout 까지 기다린다 — API 와 JobRunner 가 한 파일을 같이 쓴다(§A1).
+    conn.exec_driver_sql("BEGIN IMMEDIATE")
 
 
 def build_engine(database_url: str) -> AsyncEngine:
     engine = create_async_engine(database_url, connect_args={"timeout": _LOCK_TIMEOUT_S})
-    event.listen(engine.sync_engine, "connect", _enable_foreign_keys)
+    event.listen(engine.sync_engine, "connect", _on_connect)
+    event.listen(engine.sync_engine, "begin", _begin_immediate)
     return engine
 
 

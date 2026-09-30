@@ -4,7 +4,7 @@
 
 ## 현재
 - 마일스톤: **M3 · 에이전트 런타임 · 채우기(fill) run** (M2 완료)
-- 다음 태스크: **T3.1** v3 상태기계·ApplicationService → T3.2 … T3.7 (카드 작성 완료)
+- 다음 태스크: **T3.2** JobRunner 큐·재시도·크래시 복구 → T3.3 … T3.7
 - **병렬 실행 금지**(사용자 지시 2026-09-30, 메모리 부족) — 서브에이전트는 한 번에 하나.
 - 차단 요소: 없음
 - 결정: `.env.v2.bak` 보존(사용자 지시, 손대지 않음). `main` 은 M1 완료 시 push.
@@ -12,13 +12,8 @@
 ## 완료
 - 2026-09-29 방향 전환 인터뷰 → `00-product.md`(D1~D15), `01-architecture.md`(§A1~§A10), `02-milestones.md` 작성.
   v2 는 `legacy/v2-telegram-recipe` 브랜치로 보존(origin push 완료).
-- T0.1 폐기 코드 삭제 — 검증 PASS_WITH_NOTES. 카드 밖 삭제(ApplicationWorkflow·API 라우터·cli·포트폴리오 매핑)는 정당,
-  잔재는 T0.2·M1·M6 카드로 이관. 웹 콘솔은 M1 전까지 동작 안 함(엔드포인트 삭제됨). D16(TanStack Router) 추가.
-- T0.2 Temporal·Postgres·S3 제거, SQLite+Alembic — 검증 PASS_WITH_NOTES. 상태 이력 A→B→A 버그를 append-only 로 고쳐 amend.
-  잔재는 T0.3·M3·M4·M5·M7 카드로 이관. 로컬 v2 데이터(`var/` 전체·config v2 파일) 삭제, `.env` 는 `.env.v2.bak` 백업 후 v3 로 재생성.
-- T0.3 `auto-apply` 진입점·JobRunner 뼈대·§A2 arch — 검증 PASS_WITH_NOTES. cwd `.env` 가 dry_run 을 덮는 통로(개발 모드만 허용)와
-  마이그레이션 부분 적용(pysqlite 트랜잭션 레시피)을 고쳐 amend. 잔재는 M1·M4·M7 로 이관.
-- T0.4 v2 문서 삭제·README v3·링크 검사 테스트 — 검증 PASS_WITH_NOTES, **M0 마일스톤 검증 완료**(카드 간 회귀 없음).
+- **M0 완료**(T0.1~T0.4): v2 코드·Temporal·Postgres·S3 제거, SQLite+Alembic(append-only 이력), `auto-apply` 진입점·JobRunner 뼈대·§A2 arch,
+  v2 문서 삭제. 로컬 v2 데이터 삭제, `.env` 는 `.env.v2.bak` 백업 후 재생성. 세부는 각 커밋.
 - T1.1 프로필·경험·답변KB·문서 SQLite 전환 — 검증 PASS_WITH_NOTES. 주민번호 미탐(전각·구분자·zero-width)과
   model_copy 우회를 NFKC 정규화 + 저장 시점 재검사로 막아 amend. user_id 컬럼은 port 호환상 유지.
 - T1.2 ProfileService·REST API·로컬 보안 — 검증 PASS_WITH_NOTES. 직접 만든 multipart 파서 결함 5개 → python-multipart 교체,
@@ -37,6 +32,8 @@
   Google 로그인 진입은 정상(navigator.webdriver=true, 봇탐지 우회 안 함). 범위 밖 adapters/browser 수정은 T2.5 이관 이행상 정당. bootstrap·UI 배선은 M3/M4.
 - T2.7 단계 이동 자동 통과(D17) — 분류기 STEP/LAST_STEP, type=submit 3단계 승인 없이 통과 후 최종 SUBMIT_BLOCKED. 카드 대비 변경 2건
   (사후 확인 '입력칸·폼 제출 버튼 있으면 계속'으로 넓힘 — 최종 버튼은 분류기가 여전히 막음 / 신호 있으면 type=button 단계 버튼도 Risky) 수용. **M2 완료.**
+- T3.1 v3 상태기계(+INCIDENT)·ApplicationService.transition 유일 통로(AST 봉인 테스트)·조건부 UPDATE 동시 전이 방어·Alembic 0003.
+  지적: 크래시 복구 SUBMITTING→FAILED 는 '제출됐을 수 있음'을 숨김 → T3.2 에서 INCIDENT 로. 16만 토큰·62회(교대 기준 근처).
 
 ## 열린 질문 (다음 마일스톤 시작 전에 사용자에게)
 - (백로그) 부하 시 `tests/api/test_profile_api.py::test_experience_crud[memory]` 1회 실패(재현 안 됨) — 플레이키 여부 조사.

@@ -1,48 +1,96 @@
-"""`TerminalError` 서브클래스는 전부 `NON_RETRYABLE` 에 있어야 한다.
+"""실패 분류 = 재시도 정책 (§A9). 재시도는 인프라성 실패만, 도메인 실패는 재시도 없이 상태 전이.
 
-`TerminalError` 의 정의가 곧 "재시도해도 결과가 같다"인데, Temporal 은 클래스 계층을 모르고
-`non_retryable_error_types` 에 실린 **이름 문자열**만 본다(§5). 그래서 새 TerminalError 를
-만들고 이 튜플에 등록하는 걸 잊으면 조용히 `maximum_attempts` 만큼(대부분 5회) 같은 실패를
-반복한 뒤에야 끝난다 — 에러도 안 나고 로그만 길어져서 알아채기 어렵다. 실제로 이 프로젝트에서
-이미 두 번(등록 안 된 플랫폼 URL, AuthRequired) 라이브에서 실측하고 사후에 고쳤다
-(`workflows/application.py`/`_execution.py` 의 `_QUICK` 주석).
-
-등록을 사람의 기억이 아니라 테스트로 강제한다 — 규칙을 더 늘리는 게 아니라, 이미 있는 규칙이
-지켜졌는지 기계가 보게 하는 쪽이다.
+기대 표는 §A9 를 손으로 옮긴 것이다. 새 에러 클래스가 생기면 이 표에 자리를 정해야 한다 —
+`test_every_error_class_is_classified` 가 빠뜨린 것을 잡는다.
 """
 
-from auto_apply.domain import errors
+import pytest
+
+from auto_apply.domain import errors as E
+from auto_apply.domain.errors import FailureKind as F
+from auto_apply.domain.errors import RetryPolicy, classify_failure
+
+_EXPECTED: dict[type[BaseException], F] = {
+    E.BrowserLaunchFailed: F.TRANSIENT,
+    E.LLMExecutionError: F.TRANSIENT,
+    E.LLMAuthRequired: F.FATAL,
+    E.LLMQuotaExceeded: F.FATAL,
+    E.LLMSchemaViolation: F.FATAL,
+    E.AuthRequired: F.NEEDS_LOGIN,
+    E.CaptchaEncountered: F.NEEDS_INPUT,
+    E.SubmitIncident: F.INCIDENT,
+    E.InvalidTransition: F.CONFLICT,
+    E.SubmitGuardUnavailable: F.FATAL,  # 하네스 없이 되풀이하지 않는다(닫힌 쪽)
+    E.PolicyViolation: F.FATAL,
+    E.ChromeNotFound: F.FATAL,
+    E.BrowserProfileInUse: F.FATAL,
+    E.TerminalError: F.FATAL,
+    E.ProfileNotFound: F.FATAL,
+    E.NotFound: F.FATAL,
+    E.InvalidInput: F.FATAL,
+    E.PageActionFailed: F.FATAL,
+    E.TextExtractionFailed: F.FATAL,
+    E.BlobNotFound: F.FATAL,
+    E.UniqueIdentifierRejected: F.FATAL,
+    E.AnswerKeyConflict: F.FATAL,
+    E.UploadRejected: F.FATAL,
+    E.AutoApplyError: F.FATAL,
+    # 어댑터가 감싸지 않고 새어 나온 예외 — 인프라성인지 모르니 되풀이하지 않는다.
+    RuntimeError: F.FATAL,
+    TimeoutError: F.FATAL,
+    ValueError: F.FATAL,
+}
 
 
-def _terminal_subclasses() -> set[str]:
-    found: set[str] = set()
-    pending = [errors.TerminalError]
+def _make(cls: type[BaseException]) -> BaseException:
+    if cls is E.InvalidTransition:
+        return E.InvalidTransition("filling", "draft")
+    if cls is E.UploadRejected:
+        return E.UploadRejected("empty", "x")
+    if cls is E.PageActionFailed:
+        return E.PageActionFailed(E.PageFailure.TIMEOUT, "x")
+    return cls("x")
+
+
+@pytest.mark.parametrize(("cls", "expected"), list(_EXPECTED.items()), ids=lambda v: str(v))
+def test_classification_table(cls, expected):
+    assert classify_failure(_make(cls)) is expected
+
+
+def test_every_error_class_is_classified():
+    found: set[type] = set()
+    pending: list[type] = [E.AutoApplyError]
     while pending:
-        for sub in pending.pop().__subclasses__():
-            found.add(sub.__name__)
-            pending.append(sub)
-    return found
+        cls = pending.pop()
+        found.add(cls)
+        pending.extend(cls.__subclasses__())
+    missing = {c.__name__ for c in found if c.__module__ == E.__name__} - {
+        c.__name__ for c in _EXPECTED
+    }
+    assert not missing, f"{sorted(missing)} 의 재시도 분류를 표에 정하라 (domain/errors.py)"
 
 
-def test_every_terminal_error_is_registered_as_non_retryable():
-    missing = _terminal_subclasses() - set(errors.NON_RETRYABLE)
-
-    assert not missing, (
-        f"{sorted(missing)} 가 NON_RETRYABLE 에 없다 — Temporal 이 이름으로만 판단하므로"
-        " 등록 전까지는 재시도해도 소용없는 실패를 5회씩 반복한다 (domain/errors.py)."
-    )
-
-
-def test_non_retryable_has_no_dangling_names():
-    """튜플에만 남고 클래스는 사라진 이름(오타/삭제)을 잡는다.
-
-    이름 문자열이라 안 잡히면 조용히 아무 데도 안 걸린다.
-    """
-    known = {
-        name
-        for name in dir(errors)
-        if isinstance(getattr(errors, name), type)
-        and issubclass(getattr(errors, name), errors.AutoApplyError)
+def test_only_infra_failures_are_transient():
+    assert {c for c, f in _EXPECTED.items() if f is F.TRANSIENT} == {
+        E.BrowserLaunchFailed,
+        E.LLMExecutionError,
     }
 
-    assert set(errors.NON_RETRYABLE) <= known
+
+def test_terminal_errors_never_retry():
+    for cls in _EXPECTED:
+        if issubclass(cls, E.TerminalError):
+            assert classify_failure(_make(cls)) is not F.TRANSIENT, cls
+
+
+def test_retry_policy_backoff_is_exponential_and_capped():
+    p = RetryPolicy(max_attempts=4, base_delay_s=2, factor=3, max_delay_s=10)
+    assert [p.delay_s(a) for a in (1, 2, 3)] == [2, 6, 10]
+    assert [p.should_retry(a) for a in (1, 2, 3, 4, 5)] == [True, True, True, False, False]
+
+
+def test_default_retry_policy_is_bounded():
+    p = RetryPolicy()
+    assert p.max_attempts >= 1
+    assert not p.should_retry(p.max_attempts)
+    assert p.delay_s(100) == p.max_delay_s

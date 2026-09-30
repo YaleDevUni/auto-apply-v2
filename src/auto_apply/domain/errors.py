@@ -1,9 +1,10 @@
-"""에러 분류 = 재시도 정책 (§A9).
+"""도메인 에러와 실패 분류 = 재시도 정책 (§A9).
 
-Temporal RetryPolicy 는 예외 '이름'으로 재시도 여부를 판단한다.
-그래서 재시도 금지 에러는 반드시 NON_RETRYABLE 에 등록해야 한다.
+JobRunner 는 핸들러가 던진 예외를 `classify_failure()` 로 가른다. 재시도는 인프라성 실패
+(`FailureKind.TRANSIENT`)만, 나머지는 재시도 없이 지원 건 상태 전이로 끝난다.
 """
 
+from dataclasses import dataclass
 from enum import StrEnum
 
 
@@ -12,7 +13,7 @@ class AutoApplyError(Exception):
 
 
 class TerminalError(AutoApplyError):
-    """재시도해도 결과가 같은 에러. Temporal 에 non-retryable 로 전달된다."""
+    """재시도해도 결과가 같은 에러. 서브클래스가 따로 분류되지 않으면 FATAL 이다."""
 
 
 class CaptchaEncountered(TerminalError):
@@ -25,6 +26,13 @@ class AuthRequired(TerminalError):
 
 class PolicyViolation(TerminalError):
     """rate limit / allowlist / submit 경로 정책 위반 (§3)."""
+
+
+class SubmitIncident(TerminalError):
+    """하네스 L5 가 승인 없는 제출 흔적을 봤다 (§A4).
+
+    사람이 사이트에서 확인해 닫는다 — 자동 재시도 없음.
+    """
 
 
 class InvalidTransition(TerminalError):
@@ -47,8 +55,8 @@ class LLMExecutionError(AutoApplyError):
     """LLM 호출 자체가 실패(프로세스 비정상 종료·타임아웃·응답 파싱 실패·분류 안 된 에러).
 
     스키마 위반과 다르다 — 재프롬프트로 고칠 문제가 아니라 대부분 일시적(타임아웃 등)이라
-    재시도로 회복될 수 있어 NON_RETRYABLE 에 넣지 않는다. 재시도로 저절로 안 풀리는 두
-    실패 모드(로그인 풀림·사용량 한도)는 아래 서브클래스로 갈라서 사람에게 알린다.
+    재시도(TRANSIENT)로 회복될 수 있다. 재시도로 저절로 안 풀리는 두 실패 모드(로그인 풀림·
+    사용량 한도)는 아래 서브클래스로 갈라 FATAL 로 사람에게 넘긴다.
     """
 
 
@@ -56,7 +64,7 @@ class LLMAuthRequired(LLMExecutionError):
     """`claude` CLI 로그인이 풀림 (`claude login` 필요).
 
     브라우저 storage_state 만료용 `AuthRequired`와 이름이 겹치지 않게 접두어를 다르게 뒀다.
-    재시도로 안 풀리는 실패라 NON_RETRYABLE 이다(`ClaudeCodeCliLLM._run` 이 CLI 응답
+    재시도로 안 풀리는 실패라 FATAL 이다(`ClaudeCodeCliLLM._run` 이 CLI 응답
     시그니처로 분류해서 던진다).
     """
 
@@ -65,7 +73,7 @@ class LLMQuotaExceeded(LLMExecutionError):
     """구독 사용량 한도(5시간/주간) 또는 `--max-budget-usd` 초과.
 
     리셋을 기다리거나 예산 설정을 사람이 조정해야 풀린다 — 재시도로 안 풀리는 실패라
-    NON_RETRYABLE 이다.
+    FATAL 이다.
     """
 
 
@@ -164,24 +172,56 @@ class PageActionFailed(AutoApplyError):
 class SubmitGuardUnavailable(AutoApplyError):
     """제출 차단 하네스(§A4 L3·L4)를 브라우저에 설치하지 못했다 — 그 동작은 하지 않았다.
 
-    하네스 없이 페이지를 건드리지 않는다(닫힌 쪽으로 실패). 브라우저가 닫히는 중이면 재시도로
-    풀린다.
+    하네스 없이 페이지를 건드리지 않는다(닫힌 쪽으로 실패). 자동 재시도하지 않는다 — 하네스가
+    못 서는 브라우저에서 같은 동작을 되풀이하지 않고 사람에게 넘긴다(FATAL).
     """
 
 
-NON_RETRYABLE: tuple[str, ...] = (
-    CaptchaEncountered.__name__,
-    AuthRequired.__name__,
-    PolicyViolation.__name__,
-    # generator 가 이미 내부에서 2회 재프롬프트했다(§5) — activity 레벨 재시도는
-    # 같은 실패를 반복할 뿐이라 여기서 non-retryable 로 끊는다.
-    LLMSchemaViolation.__name__,
-    ProfileNotFound.__name__,
-    # 재시도로 저절로 안 풀리는 claude CLI 실패 — 사람이 개입해야 한다 (로그인/한도 리셋).
-    LLMAuthRequired.__name__,
-    LLMQuotaExceeded.__name__,
-    # 사람이 Chrome 을 설치하거나 먼저 뜬 auto-apply 를 꺼야 풀린다.
-    ChromeNotFound.__name__,
-    BrowserProfileInUse.__name__,
-    InvalidTransition.__name__,
+class FailureKind(StrEnum):
+    """핸들러 실패의 갈래 (§A9). 지원 건이 갈 곳은 `application_state.failure_target`."""
+
+    TRANSIENT = "transient"  # 인프라성(브라우저 크래시·CLI 일시 오류) — 백오프 재시도
+    NEEDS_LOGIN = "needs_login"  # 사이트 로그인 필요 — 사람이 전용 창에서
+    NEEDS_INPUT = "needs_input"  # 사람이 풀어야 함(CAPTCHA 등 — 우회하지 않는다)
+    INCIDENT = "incident"  # 승인 없는 제출 흔적 (§A4 L5)
+    CONFLICT = "conflict"  # 그 사이 다른 쪽이 상태를 바꿨다(취소 등) — 지원 건을 건드리지 않는다
+    FATAL = "fatal"  # 재시도해도 같다 — FAILED, 사람이 다시 시작
+
+
+# 위에서부터 첫 일치. 서브클래스가 부모보다 먼저 와야 한다(LLMAuthRequired < LLMExecutionError).
+_FAILURE_TABLE: tuple[tuple[type[BaseException], FailureKind], ...] = (
+    (SubmitIncident, FailureKind.INCIDENT),
+    (AuthRequired, FailureKind.NEEDS_LOGIN),
+    (CaptchaEncountered, FailureKind.NEEDS_INPUT),
+    (InvalidTransition, FailureKind.CONFLICT),
+    (TerminalError, FailureKind.FATAL),
+    (LLMAuthRequired, FailureKind.FATAL),
+    (LLMQuotaExceeded, FailureKind.FATAL),
+    (SubmitGuardUnavailable, FailureKind.FATAL),
+    (BrowserLaunchFailed, FailureKind.TRANSIENT),
+    (LLMExecutionError, FailureKind.TRANSIENT),
 )
+
+
+def classify_failure(exc: BaseException) -> FailureKind:
+    """모르는 예외는 FATAL — 인프라성이라고 확인된 것만 되풀이한다(닫힌 쪽)."""
+    for kind, failure in _FAILURE_TABLE:
+        if isinstance(exc, kind):
+            return failure
+    return FailureKind.FATAL
+
+
+@dataclass(frozen=True, slots=True)
+class RetryPolicy:
+    """TRANSIENT 실패의 지수 백오프. `attempt` 는 1부터 — `max_attempts` 번째 실패면 그만둔다."""
+
+    max_attempts: int = 3
+    base_delay_s: float = 5.0
+    factor: float = 2.0
+    max_delay_s: float = 120.0
+
+    def should_retry(self, attempt: int) -> bool:
+        return attempt < self.max_attempts
+
+    def delay_s(self, attempt: int) -> float:
+        return min(self.base_delay_s * self.factor ** (attempt - 1), self.max_delay_s)

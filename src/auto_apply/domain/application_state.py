@@ -7,7 +7,7 @@ JobRunner(§A9)는 이 표를 거쳐서만 지원 건을 되돌린다.
 from types import MappingProxyType
 
 from auto_apply.domain.enums import ApplicationState as S
-from auto_apply.domain.errors import InvalidTransition
+from auto_apply.domain.errors import FailureKind, InvalidTransition
 
 INITIAL_STATE = S.DRAFT
 
@@ -29,8 +29,9 @@ _EDGES: dict[S, frozenset[S]] = {
     # →AWAITING_APPROVAL 은 revise 완료이자 revise 크래시 복구(직전 검토 상태로 — 제출 전
     # L6 대조가 다시 본다).
     S.REVISING: frozenset({S.AWAITING_APPROVAL, S.FAILED, S.INCIDENT}),
-    # 제출 중 중단은 제출됐는지 모르므로 FAILED 로 닫고 자동으로 다시 제출하지 않는다.
-    S.SUBMITTING: frozenset({S.SUBMITTED, S.SUBMIT_MISMATCH, S.FAILED}),
+    # →FAILED 는 핸들러가 최종 클릭 전에 멈춘 게 확실할 때만. 클릭이 나갔는지 모르는 중단
+    # (크래시·예외)은 →INCIDENT — FAILED 는 "제출됐을 수 있음"을 숨긴다. 자동 재제출은 없다.
+    S.SUBMITTING: frozenset({S.SUBMITTED, S.SUBMIT_MISMATCH, S.FAILED, S.INCIDENT}),
     S.SUBMIT_MISMATCH: frozenset({S.AWAITING_APPROVAL}),
     # 사람이 다시 시작할 때만. 자동 재시도는 JobRunner 가 FILLING→QUEUED 로 한다.
     S.FAILED: frozenset({S.QUEUED}),
@@ -51,3 +52,40 @@ def allowed_targets(current: S) -> frozenset[S]:
 def check_transition(current: S, to: S) -> None:
     if to not in TRANSITIONS[current]:
         raise InvalidTransition(current, to)
+
+
+# 크래시·정지로 run 이 끊겼을 때 되돌릴 곳 (§A3, §A9). 대기 상태(NEEDS_*)는 그대로 둔다 —
+# 사람이 마치면 재진입 run 으로 이어간다.
+CRASH_RECOVERY: MappingProxyType[S, S] = MappingProxyType(
+    {
+        S.FILLING: S.QUEUED,
+        S.REVISING: S.AWAITING_APPROVAL,
+        S.SUBMITTING: S.INCIDENT,
+    }
+)
+
+# 러너가 실패를 정리해 줄 상태 — 이 밖(검토 대기·사람 대기·종결)이면 핸들러가 이미 전이를 마쳤다.
+_RUNNER_OWNED: frozenset[S] = frozenset({S.QUEUED, *CRASH_RECOVERY})
+
+_FAILURE_STATE: dict[FailureKind, S] = {
+    FailureKind.NEEDS_LOGIN: S.NEEDS_LOGIN,
+    FailureKind.NEEDS_INPUT: S.NEEDS_INPUT,
+    FailureKind.INCIDENT: S.INCIDENT,
+}
+
+
+def failure_target(current: S, failure: FailureKind, *, retry: bool = False) -> S | None:
+    """핸들러 실패 뒤 지원 건이 갈 곳. None 이면 건드리지 않는다.
+
+    `retry` 는 러너가 같은 job 을 다시 줄 세울 때 — 재시도 가능한 상태로만 되돌린다.
+    제출 중(SUBMITTING)이면 어떤 실패든 INCIDENT 다(클릭이 나갔는지 모른다).
+    표에 없는 목적지는 FAILED 로 떨어진다(QUEUED 에서 로그인 요구 등).
+    """
+    if failure is FailureKind.CONFLICT or current not in _RUNNER_OWNED:
+        return None
+    if current is S.SUBMITTING:
+        return S.INCIDENT
+    if retry:
+        return CRASH_RECOVERY.get(current)
+    target = _FAILURE_STATE.get(failure, S.FAILED)
+    return target if target in TRANSITIONS[current] else S.FAILED

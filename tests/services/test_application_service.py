@@ -108,10 +108,14 @@ async def test_concurrent_transitions_from_same_state_only_one_wins(service, uow
 
 async def test_stale_read_is_rejected_by_repository(uow_factory):
     """서비스가 표를 확인한 뒤 쓰기 전에 다른 쪽이 전이하면(QUEUED→CANCELLED) 표 검증을 통과한
-    QUEUED→FILLING 이라도 쓰지 않는다 — 취소된 건이 되살아나지 않게."""
+    QUEUED→FILLING 이라도 쓰지 않는다 — 취소된 건이 되살아나지 않게.
+
+    sqlite 는 `BEGIN IMMEDIATE` 라 트랜잭션 안에 다른 쓰기가 끼지 못한다(끼우면 잠금 대기로 멈춘다).
+    그래서 끼어든 전이를 먼저 쓰고, 서비스가 읽는 값만 그 전 상태(QUEUED)로 낡게 돌려준다."""
     plain = ApplicationService(uow_factory, FixedClock(), SeqIds())
     app = (await plain.create("https://jobs.example.com/1")).application_id
     await plain.transition(app, S.QUEUED, run_id=None)
+    await plain.transition(app, S.CANCELLED, run_id=None)  # 서비스가 읽은 뒤 끼어든 전이
 
     class _Interleaving:
         def __init__(self) -> None:
@@ -119,12 +123,9 @@ async def test_stale_read_is_rejected_by_repository(uow_factory):
 
         async def __aenter__(self):
             await self._uow.__aenter__()
-            real = self._uow.applications.latest_states
 
             async def stale(ids):
-                seen = await real(ids)
-                await plain.transition(app, S.CANCELLED, run_id=None)  # 사이에 끼어든 전이
-                return seen
+                return {app: S.QUEUED}
 
             self._uow.applications.latest_states = stale
             return self._uow

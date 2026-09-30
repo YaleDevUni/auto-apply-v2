@@ -250,12 +250,13 @@
 
 ### T3.2 JobRunner 큐 소비 · 재시도 정책 · 크래시 복구 (§A9)
 - 의존: T3.1
-- 범위: `src/auto_apply/{runner/,adapters/repository/,ports/,domain/errors.py,services/application.py}`, `tests/`, §A9
+- 범위: `src/auto_apply/{runner/,adapters/repository/,ports/,domain/errors.py,domain/application_state.py,services/application.py,bootstrap.py}`, `tests/`, §A9·§A3
 - 할 일: Alembic `0004` `jobs` 테이블(§A9 컬럼). JobRunner 가 jobs 를 소비 — 브라우저 작업(fill/revise/submit)은 동시성 1, 그 외는 별도 슬롯.
   핸들러 등록 표(kind → handler), 핸들러가 없는 kind 는 FAILED. 재시도 정책을 `domain/errors.py` 에서 §A9 기준으로 재정의
   (T0.2 이관 `NON_RETRYABLE` Temporal 근거 제거): 인프라성 실패만 지수 백오프·상한, 도메인 실패(로그인·입력 필요·하네스 차단·INCIDENT)는
   재시도 없이 상태 전이. 기동 시 크래시 복구: `RUNNING` run·job → `INTERRUPTED`, 지원 건은 직전 재개 가능 상태로(§A3).
-  종료 시 진행 중 job 은 취소하고 INTERRUPTED 로.
+  종료 시 진행 중 job 은 취소하고 INTERRUPTED 로. T3.1 이관: run 저장소 메서드(시작·종료·INTERRUPTED 복구), ApplicationService·JobRunner bootstrap 배선.
+  **크래시 복구 SUBMITTING→FAILED 를 →INCIDENT 로 바꾼다**(최종 클릭이 나갔는지 모름 — FAILED 는 '제출됐을 수 있음'을 숨긴다. 사람이 SUBMITTED/CANCELLED 로 닫음), 전이 표·§A3 같이.
 - 수용 기준: 동시성 1 보장 테스트(브라우저 job 2개 동시 투입), 재시도/비재시도 분류 표 테스트, 크래시 복구 테스트(행을 RUNNING 으로
   심고 기동), 정지 시 대기 중 job 이 남아 다음 기동에 소비됨.
 

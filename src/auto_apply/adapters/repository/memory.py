@@ -1,7 +1,9 @@
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Self
 
+from auto_apply.adapters.repository.memory_jobs import InMemoryJobRepository, InMemoryRunRepository
 from auto_apply.adapters.repository.memory_profile import (
     InMemoryAnswerRepository,
     InMemoryDocumentRepository,
@@ -14,6 +16,7 @@ from auto_apply.contracts.knowledge import Answer, DocumentMeta
 from auto_apply.contracts.profile import Profile
 from auto_apply.domain.enums import ApplicationState
 from auto_apply.domain.errors import InvalidInput, InvalidTransition, NotFound
+from auto_apply.ports.jobs import JobRecord, RunRecord
 
 Rows = dict[str, list[PersistState]]
 
@@ -28,6 +31,8 @@ class InMemoryDatabase:
     experiences: dict[str, Experience] = field(default_factory=dict)
     answers: dict[str, Answer] = field(default_factory=dict)
     documents: dict[str, DocumentMeta] = field(default_factory=dict)
+    jobs: dict[str, JobRecord] = field(default_factory=dict)
+    runs: dict[str, RunRecord] = field(default_factory=dict)
 
 
 def _summary(application_id: str, latest: PersistState) -> ApplicationSummary:
@@ -76,6 +81,10 @@ class InMemoryApplicationRepository:
     async def latest_states(self, application_ids: list[str]) -> dict[str, ApplicationState]:
         return {aid: self._rows[aid][-1].state for aid in application_ids if self._rows.get(aid)}
 
+    async def in_states(self, states: Collection[ApplicationState]) -> dict[str, ApplicationState]:
+        wanted = set(states)
+        return {aid: h[-1].state for aid, h in self._rows.items() if h and h[-1].state in wanted}
+
 
 class InMemoryUnitOfWork:
     def __init__(self, db: InMemoryDatabase) -> None:
@@ -84,6 +93,8 @@ class InMemoryUnitOfWork:
         self.experiences = InMemoryExperienceRepository(db.experiences)
         self.answers = InMemoryAnswerRepository(db.answers)
         self.documents = InMemoryDocumentRepository(db.documents)
+        self.jobs = InMemoryJobRepository(db.jobs)
+        self.runs = InMemoryRunRepository(db.runs)
 
     async def __aenter__(self) -> Self:
         return self

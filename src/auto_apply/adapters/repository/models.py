@@ -5,7 +5,8 @@
 0002(T1.1): 프로필·지식베이스(§A7) — `profiles` · `experiences` · `answers` · `documents`.
 0003(T3.1): v3 상태기계(§A3) — 지원 건 `url`·`domain`·`submit_mode`, 이력 `run_id` nullable,
 `runs` 결과·토큰·transcript.
-가이드·작업 큐(§A8·§A9)는 해당 마일스톤에서 리비전을 추가한다. 조회 키만 컬럼으로 두고 나머지는
+0004(T3.2): 작업 큐(§A9) `jobs`.
+가이드(§A8)는 해당 마일스톤에서 리비전을 추가한다. 조회 키만 컬럼으로 두고 나머지는
 DTO 를 JSON 으로 그대로 담는다 — 필드가 늘어도 마이그레이션 없이 pydantic 기본값으로 흡수된다.
 """
 
@@ -74,6 +75,27 @@ class RunRow(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     # DATA_DIR 기준 상대 경로 (§A6 run 디렉터리) — 설치 위치가 바뀌어도 유효하게.
     transcript_path: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class JobRow(Base):
+    """작업 큐 1건 (§A9). kind·status 값은 ports/jobs `JobKind`·`JobStatus`. 시각은 UTC naive."""
+
+    __tablename__ = "jobs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    # 지원 건 없이 도는 작업(반성 등)도 있다.
+    application_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("applications.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    status: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    run_after: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 # ── 프로필 · 지식베이스 (§A7, 0002) ──────────────────────────────────────────

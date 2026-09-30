@@ -40,6 +40,7 @@ from auto_apply.ports.resume import ResumeGenerator, ResumeReviewer
 from auto_apply.ports.storage import BlobStore
 from auto_apply.ports.text_extract import DocumentTextExtractor
 from auto_apply.runner.job_runner import JobRunner
+from auto_apply.services.application import ApplicationService
 from auto_apply.services.document import DocumentService
 from auto_apply.services.profile import ProfileService
 from auto_apply.services.profile_drafts import ProfileDraftService
@@ -64,6 +65,8 @@ class Container:
     profiles: ProfileService
     uploads: UploadService
     drafts: ProfileDraftService
+    # 지원 건 상태의 유일한 쓰기 통로 (§A3). API 와 러너가 같은 인스턴스를 쓴다.
+    applications: ApplicationService
     runner: JobRunner
     # 첫 사용 때 뜨고 앱 종료 때 닫힌다(api/main.py lifespan). 대역은 테스트 전용이라
     # 설정 선택지가 없다.
@@ -192,6 +195,7 @@ def build_container(cfg: Settings) -> Container:
     uploads = UploadService(
         uow, store, extractor, clock, idgen, max_document_bytes=cfg.document_max_bytes
     )
+    applications = ApplicationService(uow, clock, idgen)
     return Container(
         settings=cfg,
         clock=clock,
@@ -209,7 +213,9 @@ def build_container(cfg: Settings) -> Container:
         profiles=ProfileService(uow, clock, idgen),
         uploads=uploads,
         drafts=ProfileDraftService(uow, store, uploads, extractor, llm, clock, idgen),
-        runner=JobRunner(),
+        applications=applications,
+        # 핸들러(fill·revise·submit·generate)는 T3.3~ 가 여기 등록한다 — 없는 kind 는 FAILED.
+        runner=JobRunner(uow, applications, clock, idgen),
         browser=PlaywrightBrowserHost(cfg.chrome_profile_dir),
         session_token=ensure_session_token(cfg.session_token_path),
     )

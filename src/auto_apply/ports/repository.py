@@ -2,11 +2,13 @@
 `tests/services/test_state_write_seal.py` 가 src 전체를 훑어 봉인한다(절대 규칙 6).
 """
 
+from collections.abc import Collection
 from types import TracebackType
 from typing import Protocol, Self
 
 from auto_apply.contracts.dto import ApplicationRecord, ApplicationSummary, PersistState
 from auto_apply.domain.enums import ApplicationState
+from auto_apply.ports.jobs import JobRepository, RunRepository
 from auto_apply.ports.profile_store import (
     AnswerRepository,
     DocumentRepository,
@@ -49,6 +51,10 @@ class ApplicationRepository(Protocol):
         """
         ...
 
+    async def in_states(self, states: Collection[ApplicationState]) -> dict[str, ApplicationState]:
+        """최신 상태가 `states` 중 하나인 지원 건 전부 — 기동 시 크래시 복구(§A3)가 쓴다."""
+        ...
+
 
 class UnitOfWork(Protocol):
     # @property 로 선언한다. Protocol 의 일반 속성은 invariant 로 취급되어
@@ -67,6 +73,12 @@ class UnitOfWork(Protocol):
 
     @property
     def documents(self) -> DocumentRepository: ...
+
+    @property
+    def jobs(self) -> JobRepository: ...
+
+    @property
+    def runs(self) -> RunRepository: ...
 
     async def __aenter__(self) -> Self: ...
 

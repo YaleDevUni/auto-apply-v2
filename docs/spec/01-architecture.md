@@ -72,7 +72,7 @@ DRAFT ───────────▶ QUEUED ──▶ FILLING ────
                      │          │                    REVISING ┘   REJECTED
                      └──────────┘ (재진입 run)
 FILLING ──(인프라 재시도·크래시 복구)──▶ QUEUED          QUEUED·FILLING·REVISING ──▶ FAILED ──(사람이 다시 시작)──▶ QUEUED
-FILLING·REVISING ──▶ INCIDENT ──(사람이 사이트에서 확인)──▶ SUBMITTED | CANCELLED   (§A4 L5, 자동 재시도 없음)
+FILLING·REVISING·SUBMITTING ──▶ INCIDENT ──(사람이 사이트에서 확인)──▶ SUBMITTED | CANCELLED   (§A4 L5·제출 중 중단, 자동 재시도 없음)
 종결(SUBMITTED·REJECTED·CANCELLED) 을 뺀 어느 상태에서든 cancel ──▶ CANCELLED
 ```
 
@@ -84,7 +84,7 @@ FILLING·REVISING ──▶ INCIDENT ──(사람이 사이트에서 확인)─
 | NEEDS_INPUT · NEEDS_LOGIN | FILLING(같은 run 에서 사람이 마침) · QUEUED(대기 끝난 뒤 재진입 run) |
 | AWAITING_APPROVAL | SUBMITTING(승인 — 제출 단계로 가는 유일한 간선) · REVISING · REJECTED |
 | REVISING | AWAITING_APPROVAL(완료·중단 복구 — 제출 전 L6 대조가 다시 본다) · FAILED · INCIDENT |
-| SUBMITTING | SUBMITTED · SUBMIT_MISMATCH · FAILED |
+| SUBMITTING | SUBMITTED · SUBMIT_MISMATCH · FAILED(최종 클릭 전에 멈춘 게 확실할 때만) · INCIDENT(클릭이 나갔는지 모름 — 크래시·예외) |
 | SUBMIT_MISMATCH | AWAITING_APPROVAL |
 | FAILED | QUEUED(사람이 다시 시작) |
 | INCIDENT | SUBMITTED(사람이 사이트에서 확인) — 그 외엔 CANCELLED 뿐 |
@@ -104,11 +104,17 @@ FILLING·REVISING ──▶ INCIDENT ──(사람이 사이트에서 확인)─
   스냅샷) · `application_state_history`(전이 이력 = 감사 로그, **append-only** — 전이마다 새 행, 자동 증가 `id` 가 순번,
   최신 = 가장 큰 순번. 같은 run 안의 FILLING↔NEEDS_INPUT 왕복도 그대로 쌓인다) · `runs`. `0003`(T3.1) applications 에
   `url`·`domain`(호스트, 도메인 가이드·중복 지원 조회 키)·`submit_mode`(생성 시점 스냅샷, 기본 `dry_run`), 이력 `run_id`
-  nullable, runs 에 결과·토큰·transcript. 리비전 스크립트는 설치본에도 실리도록 패키지 안
+  nullable, runs 에 결과·토큰·transcript. `0004`(T3.2) `jobs`(§A9). 리비전 스크립트는 설치본에도 실리도록 패키지 안
   (`adapters/repository/migrations/`)에 있고 `adapters/repository/migrate.py` 가 ini 없이 Config 를 조립한다
   (루트 `alembic.ini` 는 `alembic revision` 개발용).
-- 크래시 복구: 기동 시 `RUNNING` run 을 `INTERRUPTED` 로 닫고 지원 건을 직전 재개 가능 상태로 되돌린다 — FILLING→QUEUED,
-  REVISING→AWAITING_APPROVAL, SUBMITTING→FAILED(제출됐는지 모르므로 다시 제출하지 않는다).
+- 크래시 복구(`CRASH_RECOVERY`, JobRunner 기동·정지 때 `ApplicationService.recover_interrupted`): `RUNNING` run·job 을
+  `INTERRUPTED` 로 닫고 지원 건을 직전 재개 가능 상태로 되돌린다 — FILLING→QUEUED, REVISING→AWAITING_APPROVAL,
+  SUBMITTING→**INCIDENT**(최종 클릭이 나갔는지 모른다 — FAILED 는 "제출됐을 수 있음"을 숨긴다. 사람이 사이트를 보고
+  SUBMITTED/CANCELLED 로 닫고, 자동으로 다시 제출하지 않는다). 사람 대기(NEEDS_*)는 그대로 둔다.
+- 핸들러 실패 → 상태(`failure_target`, 러너가 `ApplicationService.settle_failure` 로): 러너가 정리하는 건
+  QUEUED·FILLING·REVISING·SUBMITTING 뿐(그 밖이면 핸들러가 이미 전이를 마쳤다). SUBMITTING 이면 무엇이든 INCIDENT,
+  재시도면 `CRASH_RECOVERY` 쪽, NEEDS_LOGIN·NEEDS_INPUT·INCIDENT 는 그 상태(표에 없으면 FAILED), 나머지 FAILED.
+  그 사이 다른 쪽(취소 등)이 먼저 바꿨으면 그쪽이 이긴다.
 
 ## §A4 제출 차단 하네스 (SubmitGuard) — 제품의 핵심 안전장치
 
@@ -369,9 +375,31 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
 
 ## §A9 작업 큐 (JobRunner)
 
-- `jobs(id, kind, application_id, status, attempt, payload, created_at, started_at, finished_at, error)` — SQLite 행 잠금 대신
-  단일 프로세스 asyncio 러너가 소비. 브라우저 필요 작업(fill/revise/submit)은 **동시성 1**, 문서 생성·반성은 별도 동시성.
-- 재시도는 인프라성 실패(브라우저 크래시·CLI 일시 오류)만. 도메인 실패(로그인 필요·입력 필요·하네스 차단)는 재시도 없이 상태 전이.
+- `jobs(id, kind, application_id, status, attempt, payload, created_at, run_after, started_at, finished_at, error)`
+  (`0004`) — SQLite 행 잠금 대신 단일 프로세스 asyncio 러너가 소비. `status = queued|running|done|failed|interrupted`,
+  `run_after` 는 백오프 재시도 시각(행에 남겨 정지·재기동에도 유지). `application_id` 는 지원 건 없는 작업(반성)을 위해 nullable.
+  꺼내기(`claim_next`)는 조건부 UPDATE 라 두 소비자가 같은 행을 꺼내지 않는다. port·DTO 는 `ports/jobs.py`(`JobRepository`·
+  `RunRepository`, UoW 의 `jobs`·`runs`).
+- 슬롯: 브라우저 필요 작업(fill/revise/submit)은 **동시성 1**(전용 크롬 창 하나), 생성·반성은 별도 슬롯(기본 2).
+  핸들러 등록 표(`JobKind → handler`, bootstrap 이 넘긴다) — 없는 kind 는 job FAILED(지원 건도 QUEUED→FAILED).
+- SQLite 트랜잭션은 `BEGIN IMMEDIATE` — 읽고 쓰는 트랜잭션(claim·transition) 둘이 DEFERRED 로 겹치면 쓰기 잠금 승격에서
+  기다리지 않고 "database is locked" 로 실패한다. 처음부터 쓰기 잠금을 잡아 뒤에 온 쪽이 timeout(30초)까지 기다린다.
+- 재시도(`domain/errors.py` `classify_failure`·`RetryPolicy`): 예외를 `FailureKind` 로 가른다.
+
+  | 실패 | 예외 | 처리 |
+  |---|---|---|
+  | TRANSIENT | `BrowserLaunchFailed` · `LLMExecutionError`(아래 둘 제외) | 지수 백오프(기본 5초×2ⁿ, 상한 120초) 3회까지, 같은 행 `attempt+1`. 지원 건 FILLING→QUEUED |
+  | NEEDS_LOGIN · NEEDS_INPUT | `AuthRequired` · `CaptchaEncountered` | 재시도 없이 그 상태로 |
+  | INCIDENT | `SubmitIncident` | 재시도 없이 INCIDENT |
+  | CONFLICT | `InvalidTransition` | 지원 건을 건드리지 않는다(취소 등이 먼저) |
+  | FATAL | 그 밖 전부 — 하네스 불가(`SubmitGuardUnavailable`)·`LLMAuthRequired`·`LLMQuotaExceeded`·**모르는 예외** | 재시도 없이 FAILED(사람이 다시 시작) |
+
+  모르는 예외는 인프라성인지 모르니 되풀이하지 않는다(닫힌 쪽). **submit 은 어떤 실패도 재시도·재투입하지 않는다**(이중 제출).
+  재실행은 지원 건이 QUEUED 일 때(또는 지원 건 없는 작업)만 — 그 사이 취소됐으면 다시 줄 세우지 않는다.
+- 기동: 소비 전에 크래시 복구(§A3) — `RUNNING` run·job → `INTERRUPTED`, 지원 건은 `CRASH_RECOVERY`, 되돌린 지원 건이 QUEUED 면
+  같은 작업을 새 job 행으로(크래시는 시도 1회로 센다 — 같은 작업이 매번 죽이는 루프를 한도에서 끊고 FAILED).
+- 정지: 진행 중 job 을 취소하고 같은 복구를 돈다(정지는 시도로 세지 않는다). 대기 중(QUEUED) job 은 그대로 남아 다음 기동에 소비된다.
+- 에러 문자열은 주민번호를 가린 뒤 500자로 자르고, 저장소는 job payload·에러·run 에러의 고유식별정보를 거부한다(절대 규칙 5).
 - UI 갱신: 폴링(TanStack Query) 기본, 필요 시 SSE.
 
 ## §A10 보안 · 설정

@@ -10,9 +10,14 @@ from urllib.parse import urlsplit
 import structlog
 
 from auto_apply.contracts.dto import ApplicationRecord, PersistState
-from auto_apply.domain.application_state import INITIAL_STATE, check_transition
+from auto_apply.domain.application_state import (
+    CRASH_RECOVERY,
+    INITIAL_STATE,
+    check_transition,
+    failure_target,
+)
 from auto_apply.domain.enums import ApplicationState, SubmitMode
-from auto_apply.domain.errors import InvalidInput, NotFound
+from auto_apply.domain.errors import FailureKind, InvalidInput, InvalidTransition, NotFound
 from auto_apply.ports.clock import Clock, IdGen
 from auto_apply.ports.repository import UnitOfWork
 
@@ -98,3 +103,50 @@ class ApplicationService:
             reason=reason,
         )
         return state
+
+    async def current_state(self, application_id: str) -> ApplicationState:
+        async with self._uow() as uow:
+            current = (await uow.applications.latest_states([application_id])).get(application_id)
+        if current is None:
+            raise NotFound(application_id)
+        return current
+
+    async def settle_failure(
+        self,
+        application_id: str,
+        failure: FailureKind,
+        *,
+        run_id: str | None,
+        reason: str,
+        retry: bool = False,
+    ) -> ApplicationState | None:
+        """JobRunner 가 핸들러 실패를 지원 건 상태로 정리한다 (§A9). 바꾼 상태, 안 바꿨으면 None.
+
+        그 사이 다른 쪽(취소 등)이 먼저 바꿨으면 그쪽이 이긴다 — 조용히 None.
+        """
+        try:
+            current = await self.current_state(application_id)
+            target = failure_target(current, failure, retry=retry)
+            if target is None:
+                return None
+            await self.transition(application_id, target, run_id=run_id, reason=reason)
+        except (InvalidTransition, NotFound):
+            return None
+        return target
+
+    async def recover_interrupted(self, *, reason: str) -> dict[str, ApplicationState]:
+        """끊긴 run 의 지원 건을 직전 재개 가능 상태로 (§A3 크래시 복구). {id: 되돌린 상태}.
+
+        러너가 아무것도 돌리지 않을 때(기동 직후·정지 뒤)만 부른다 — 진행 중 상태가 전부 낡았다.
+        """
+        async with self._uow() as uow:
+            stale = await uow.applications.in_states(CRASH_RECOVERY.keys())
+        recovered: dict[str, ApplicationState] = {}
+        for application_id, current in stale.items():
+            target = CRASH_RECOVERY[current]
+            try:
+                await self.transition(application_id, target, run_id=None, reason=reason)
+            except InvalidTransition:
+                continue
+            recovered[application_id] = target
+        return recovered

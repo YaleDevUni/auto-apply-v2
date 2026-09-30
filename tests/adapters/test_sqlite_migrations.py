@@ -30,7 +30,7 @@ def test_initial_schema_has_minimal_tables(sqlite_url):
     engine = create_engine(_sync(sqlite_url))
     tables = set(inspect(engine).get_table_names())
     engine.dispose()
-    assert {"applications", "application_state_history", "runs"} | _PROFILE_TABLES <= tables
+    assert {"applications", "application_state_history", "runs", "jobs"} | _PROFILE_TABLES <= tables
 
 
 def test_0002_adds_profile_tables_and_downgrade_removes_only_them(tmp_path):
@@ -108,6 +108,45 @@ def test_0003_upgrades_existing_m1_data_and_downgrade_restores_0002(tmp_path):
     with sqlite3.connect(db) as conn:
         assert conn.execute("select run_id from application_state_history").fetchall() == [("",)]
         assert conn.execute("select user_id from profiles").fetchall() == [("u1",)]
+
+
+def test_0004_adds_jobs_and_downgrade_removes_only_it(tmp_path):
+    """0004 up/down (T3.2): 작업 큐 테이블만 오르내리고 지원 건은 남는다."""
+    db = tmp_path / "db.sqlite3"
+    cfg = alembic_config(f"sqlite:///{db.as_posix()}")
+    command.upgrade(cfg, "0003")
+    assert "jobs" not in _tables(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "insert into applications (id, state, payload, last_event_id)"
+            " values ('a', 'queued', '{}', 1)"
+        )
+
+    command.upgrade(cfg, "0004")
+    cols = _columns(db, "jobs")
+    assert cols == {
+        "id": True,
+        "kind": True,
+        "application_id": False,
+        "status": True,
+        "attempt": True,
+        "payload": True,
+        "created_at": True,
+        "run_after": True,
+        "started_at": False,
+        "finished_at": False,
+        "error": False,
+    }
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "insert into jobs (id, kind, application_id, status, attempt, payload, created_at,"
+            " run_after) values ('j', 'fill', 'a', 'queued', 1, '{}', '2026-10-01', '2026-10-01')"
+        )
+
+    command.downgrade(cfg, "0003")
+    assert "jobs" not in _tables(db)
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("select id from applications").fetchall() == [("a",)]
 
 
 def test_downgrade_to_base_and_back(sqlite_url):
