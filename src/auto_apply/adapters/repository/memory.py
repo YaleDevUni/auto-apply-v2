@@ -8,11 +8,12 @@ from auto_apply.adapters.repository.memory_profile import (
     InMemoryExperienceRepository,
     InMemoryProfileRepository,
 )
-from auto_apply.contracts.dto import ApplicationSummary, PersistState
+from auto_apply.contracts.dto import ApplicationRecord, ApplicationSummary, PersistState
 from auto_apply.contracts.experience import Experience
 from auto_apply.contracts.knowledge import Answer, DocumentMeta
 from auto_apply.contracts.profile import Profile
 from auto_apply.domain.enums import ApplicationState
+from auto_apply.domain.errors import InvalidInput, InvalidTransition, NotFound
 
 Rows = dict[str, list[PersistState]]
 
@@ -22,6 +23,7 @@ class InMemoryDatabase:
     """UoW 여러 개가 공유하는 "DB". 트랜잭션이 없다 — 쓰는 즉시 보이고 롤백되지 않는다."""
 
     applications: Rows = field(default_factory=dict)
+    records: dict[str, ApplicationRecord] = field(default_factory=dict)
     profiles: dict[str, Profile] = field(default_factory=dict)
     experiences: dict[str, Experience] = field(default_factory=dict)
     answers: dict[str, Answer] = field(default_factory=dict)
@@ -33,17 +35,32 @@ def _summary(application_id: str, latest: PersistState) -> ApplicationSummary:
         application_id=application_id,
         state=latest.state,
         reason=latest.reason,
-        scheduled_at=latest.scheduled_at,
+        at=latest.at,
         submitted_at=latest.submitted_at,
     )
 
 
 class InMemoryApplicationRepository:
-    def __init__(self, rows: Rows) -> None:
+    def __init__(self, rows: Rows, records: dict[str, ApplicationRecord]) -> None:
         self._rows = rows
+        self._records = records
 
-    async def upsert_state(self, state: PersistState) -> None:
-        self._rows.setdefault(state.application_id, []).append(state)
+    async def add(self, record: ApplicationRecord, initial: PersistState) -> None:
+        if record.application_id in self._records:
+            raise InvalidInput(f"이미 있는 지원 건: {record.application_id}")
+        self._records[record.application_id] = record
+        self._rows[record.application_id] = [initial]
+
+    async def append_state(self, state: PersistState, *, expected: ApplicationState) -> None:
+        history = self._rows.get(state.application_id)
+        if not history:
+            raise NotFound(state.application_id)
+        if history[-1].state is not expected:
+            raise InvalidTransition(history[-1].state, state.state, f"expected {expected}")
+        history.append(state)
+
+    async def get(self, application_id: str) -> ApplicationRecord | None:
+        return self._records.get(application_id)
 
     async def history(self, application_id: str) -> list[PersistState]:
         return list(self._rows.get(application_id, []))
@@ -62,7 +79,7 @@ class InMemoryApplicationRepository:
 
 class InMemoryUnitOfWork:
     def __init__(self, db: InMemoryDatabase) -> None:
-        self.applications = InMemoryApplicationRepository(db.applications)
+        self.applications = InMemoryApplicationRepository(db.applications, db.records)
         self.profiles = InMemoryProfileRepository(db.profiles)
         self.experiences = InMemoryExperienceRepository(db.experiences)
         self.answers = InMemoryAnswerRepository(db.answers)

@@ -231,21 +231,93 @@
 
 ## M3 · 에이전트 런타임 · 채우기(fill) run
 목표: AgentRuntime 3구현, MCP(HTTP) 노출, fill run 이 픽스처 사이트에서 FillLog + `ready_for_review` 까지.
-T2.5 이관(§A4 "남는 위험"): **안전 라벨 버튼의 fetch 최종 제출**(relaxed 에서 통과, L5 사후 감지뿐), WebSocket 전송, 3초 넘게 미룬 제출,
-shadow DOM 폼 submit 이벤트, 가드 꺼진 동안 연 문서의 가드 이름 선점 — 실사이트 fill run 로그로 빈도를 보고 추가 층 결정.
-T2.4 이관: bootstrap 에서 BrowserHost 와 짝지은 PageDriver 조립, BrowserToolbox `forbidden_origins` 에 앱 자신의 주소 주입.
-shadow DOM 안 요소가 snapshot 에 안 나옴 — 실사이트 영향 확인 후 지원 여부 결정.
-이관: `domain/errors.py` 의 `NON_RETRYABLE`(Temporal 근거)을 §A9 JobRunner 재시도 정책으로 재정의하거나 삭제.
-`config.llm_provider` 기본값이 `stub` — D5(기본 Claude Code CLI)에 맞추되 테스트·오프라인 게이트는 stub 유지.
-T2.6 이관: bootstrap 에 `human_wait_s` 설정 키·BrowserToolbox 에 HumanGate 주입. 첫 실사용에서 webdriver=true 로 Google 이
-식별자 제출 뒤 차단하는지 확인(막히면 사이트 자체 로그인 안내 — 우회 플래그 금지).
-T2.7 이관: 실사이트 fill run 로그로 단계 어휘·마지막 단계 신호의 오탐·미탐 빈도를 보고 어휘 조정. step 창의 핸들러 location.href 탐색은 사후 확인뿐(§A4 남는 위험).
 수용 기준: Scripted 런타임으로 상태기계 전 경로 테스트, CLI 런타임은 `native` 마커 e2e 1건(짐 사이트), ask_user 일시정지/재개 테스트.
+순서: T3.1 → T3.2 → T3.3 → T3.4 → T3.5 → T3.6 → T3.7 (병렬 금지 중이라 직렬). 카드는 에이전트 1회(~15만 토큰) 크기로 잘랐다.
+공통: 실제 외부 사이트 접속 금지(짐 픽스처만). `claude` CLI·Chrome 이 필요한 테스트는 `native`.
+
+### T3.1 v3 상태기계 · ApplicationService.transition (§A3)
+- 의존: 없음(M2 완료)
+- 범위: `src/auto_apply/{domain/,contracts/,ports/repository.py,adapters/repository/,services/application.py}`, `tests/`, §A3
+- 할 일: `domain/enums.ApplicationState` 를 v2 값(COLLECTING·EVALUATING·SCHEDULED·EXECUTING…)에서 §A3 v3 값으로 교체하고 전이 표를
+  `domain/application_state.py` 순수 함수로(허용 안 된 전이는 `InvalidTransition`). **INCIDENT 상태 추가**(하네스 L5 가 승인 없는 제출
+  가능성을 감지 — 사람이 확인해 SUBMITTED 또는 CANCELLED 로 닫는다, 자동 재시도 없음)를 §A3 그림·표에 반영.
+  `ApplicationService.transition(application_id, to, *, run_id, reason)` 을 상태 쓰기 **유일 통로**로 — 저장소 쓰기 메서드는 서비스만
+  부르도록 arch 계약 또는 테스트로 봉인(절대 규칙 6). Alembic `0003`(0002 는 T1.1 프로필이 씀): applications 에 `url`·`domain`·`submit_mode`, `runs` 에
+  `kind`·`status(RUNNING|DONE|FAILED|INTERRUPTED)`·`result`·토큰·transcript 경로. v2 잔재 정리: M4 이관이던 `upsert_state`→`append_state`,
+  `PersistState.workflow_run_id`→`run_id` 를 여기서.
+- 수용 기준: 전이 표 전 경로(허용·금지) 표 테스트, 이력 append-only 유지, 서비스 밖에서 상태 쓰기 시도가 실패하는 테스트,
+  마이그레이션 up/down·models 대조 테스트, 기존 데이터(M1 이후 applications 0행 가정)로 업그레이드 통과.
+
+### T3.2 JobRunner 큐 소비 · 재시도 정책 · 크래시 복구 (§A9)
+- 의존: T3.1
+- 범위: `src/auto_apply/{runner/,adapters/repository/,ports/,domain/errors.py,services/application.py}`, `tests/`, §A9
+- 할 일: Alembic `0004` `jobs` 테이블(§A9 컬럼). JobRunner 가 jobs 를 소비 — 브라우저 작업(fill/revise/submit)은 동시성 1, 그 외는 별도 슬롯.
+  핸들러 등록 표(kind → handler), 핸들러가 없는 kind 는 FAILED. 재시도 정책을 `domain/errors.py` 에서 §A9 기준으로 재정의
+  (T0.2 이관 `NON_RETRYABLE` Temporal 근거 제거): 인프라성 실패만 지수 백오프·상한, 도메인 실패(로그인·입력 필요·하네스 차단·INCIDENT)는
+  재시도 없이 상태 전이. 기동 시 크래시 복구: `RUNNING` run·job → `INTERRUPTED`, 지원 건은 직전 재개 가능 상태로(§A3).
+  종료 시 진행 중 job 은 취소하고 INTERRUPTED 로.
+- 수용 기준: 동시성 1 보장 테스트(브라우저 job 2개 동시 투입), 재시도/비재시도 분류 표 테스트, 크래시 복구 테스트(행을 RUNNING 으로
+  심고 기동), 정지 시 대기 중 job 이 남아 다음 기동에 소비됨.
+
+### T3.3 AgentRuntime port · ScriptedAgentRuntime · fill run 핸들러 (§A6)
+- 의존: T3.2
+- 범위: `src/auto_apply/{ports/agent.py,adapters/agent/scripted.py,ai/,runner/fill.py,services/,contracts/}`, `tests/`, §A6
+- 할 일: `AgentRuntime` port — `run(system_prompt, tools: 도구 명세 목록, call_tool, *, limits) -> AgentOutcome`(벤더 타입 노출 금지,
+  도구 실행은 호출자가 넘긴 `call_tool` 로만 — 런타임이 브라우저를 직접 만지지 않는다). `ScriptedAgentRuntime`(미리 적은 도구 호출
+  시퀀스 재생) + contract test 틀(이후 CLI·API 구현이 params 로 붙는다). fill run 핸들러: 시스템 프롬프트 조립(역할·규칙 + 전역/도메인
+  가이드 자리 + fill 지시 + 프로필 요약, `ai/` 순수 빌더) → BrowserToolbox 로 도구 연결 → 결과를 상태 전이로:
+  `ready_for_review`→AWAITING_APPROVAL(ReviewRecord·FillLog 저장), `needs_human` NEEDS_LOGIN/NEEDS_INPUT, `report_failure`·도구 한도 초과→FAILED,
+  L5 INCIDENT→INCIDENT, 가드 불가(GUARD_UNAVAILABLE)→FAILED(재시도 없음). run 한도(도구 호출 수·시간) 설정.
+  에이전트 출력 텍스트는 상태에 영향 없음 — 오직 도구 결과만.
+- 수용 기준: Scripted 런타임 + 짐 픽스처(native)로 fill run → AWAITING_APPROVAL, 제출 0건. 대역 드라이버로 모든 종료 경로 → 상태 표 테스트.
+  에이전트가 없는 도구 이름·잘못된 인자를 부르면 ToolResult 에러로 돌려받고 run 은 계속(한도까지).
+
+### T3.4 ask_user · 답변 KB · 재진입 run (D8, D10)
+- 의존: T3.3
+- 범위: `src/auto_apply/{services/browser_toolbox*.py,contracts/,ports/human_gate.py,adapters/human_gate/,runner/fill.py,services/profile.py}`, `tests/`, §A5
+- 할 일: `ask_user(question, field_hint, options?, sensitive?)` 도구 — HumanGate 로 대기(T2.6 과 같은 통로, `HumanTask.kind=QUESTION`).
+  답은 `sensitive=false` 면 답변 KB 에 저장(D10, 질문 키 정규화 `domain/question_key.py`), `sensitive=true`·주민번호 꼴이면 저장 안 함(절대 규칙 5).
+  대기 타임아웃 → NEEDS_INPUT 으로 종료, 답이 오면 **재진입 run**: 같은 URL 로 다시 열고 직전 run 의 FillLog 부분 기록 + 받은 답을 프롬프트에
+  넣어 이어간다(값 재입력은 에이전트가 하되 FillLog 에 새로 쌓임). T2.6 이관: `human_wait_s` 설정 키.
+- 수용 기준: ask_user 일시정지 → 답 → 재개 테스트(대역), 타임아웃 → NEEDS_INPUT → 답 → 재진입 run → AWAITING_APPROVAL(Scripted·짐 native),
+  sensitive 답이 DB·로그·transcript 어디에도 없음을 단언.
+
+### T3.5 BrowserToolbox MCP(HTTP) 노출 (§A5)
+- 의존: T3.3
+- 범위: `src/auto_apply/{api/mcp*.py,services/,runner/}`, `pyproject.toml`(mcp SDK), `tests/`, §A5·§A10
+- 할 일: run 마다 발급하는 **run 토큰**으로만 열리는 MCP streamable HTTP 엔드포인트(127.0.0.1, 앱과 같은 프로세스). 도구 목록은
+  `browser_toolbox_specs.TOOLS` 그대로(여기서 도구를 새로 정의하지 않는다), 호출은 그 run 의 `BrowserToolbox.call`. run 이 끝나면 토큰 폐기.
+  Host·Origin 검사는 기존 API 와 같게. MCP 에 설치 토큰(`session_token`)은 통하지 않고, run 토큰으로 REST API 는 안 열린다(교차 거부).
+- 수용 기준: MCP 클라이언트(SDK)로 list_tools = TOOLS 이름 집합, 토큰 없음·만료·다른 run 토큰 거부, run 토큰으로 `/api/*` 거부,
+  도구 호출이 같은 FillLog 에 쌓임.
+
+### T3.6 ClaudeCliAgentRuntime (기본, D5)
+- 의존: T3.5
+- 범위: `src/auto_apply/{adapters/agent/claude_cli*.py,adapters/llm/,config.py,bootstrap.py}`, `tests/`, §A6
+- 할 일: `claude -p --output-format stream-json --mcp-config <run별 파일> --strict-mcp-config`, **내장 도구 전부 비활성**(Bash·Read·WebFetch 등 —
+  에이전트가 승인 API 를 부르거나 파일을 읽는 통로 차단), 우리 MCP 도구만 allow. 작업 디렉터리는 `DATA_DIR/runs/<run_id>/`(저장소의 CLAUDE.md·
+  사용자 설정 훅이 끼지 않게 설정 원천 격리). v2 `ClaudeCodeCliLLM` 의 프로세스 관리·장애 시그니처(로그인 풀림/한도초과) 재사용.
+  transcript 는 run 디렉터리에(고유식별정보 가림). 프로세스 종료·타임아웃·취소 시 자식 프로세스 정리. `config.llm_provider` 기본을
+  `claude_cli` 로(D5 — 테스트·오프라인 게이트는 stub 유지), 모델 기본값 최신화.
+- 수용 기준: stream-json init 이벤트의 도구 목록이 **우리 MCP 도구뿐**임을 단언(native), 짐 사이트 e2e 1건 → AWAITING_APPROVAL·제출 0건(native),
+  한도초과·로그인 풀림 시그니처 → 인프라 실패 분류(대역 stdout), 취소 시 잔여 프로세스 0.
+
+### T3.7 AnthropicApiAgentRuntime · bootstrap 배선
+- 의존: T3.6
+- 범위: `src/auto_apply/{adapters/agent/anthropic*.py,bootstrap.py,config.py,runner/}`, `tests/`, §A6·§A10
+- 할 일: Messages API tool-use 루프(같은 TOOLS 를 in-process 로), 가짜 HTTP 전송으로 테스트. AgentRuntime contract test 에 CLI·API params 추가.
+  bootstrap: BrowserHost 와 짝지은 PageDriver·SubmitGuard·BrowserToolbox 조립(T2.4 이관), `forbidden_origins` 에 앱 자신의 주소(실제 포트)
+  주입, HumanGate 주입(T2.6 이관), JobRunner 에 fill 핸들러 등록, 런타임 선택(`llm_provider`).
+- 수용 기준: API 런타임 contract test(가짜 전송), 앱 기동 → fill job 투입 → Scripted 런타임으로 AWAITING_APPROVAL 까지 통합 테스트,
+  forbidden_origins 에 실제 포트가 들어감을 단언.
+
+M3 이후 실사용 점검(사용자와, 카드 아님): T2.5 "남는 위험"(안전 라벨 fetch 최종 제출·WebSocket·3초 넘게 미룬 제출·shadow DOM submit·
+가드 이름 선점), T2.7 단계 어휘·마지막 단계 신호 오탐·미탐, shadow DOM snapshot 누락, T2.6 Google 로그인 webdriver 차단 여부 —
+실사이트 dry_run fill 로그로 빈도를 보고 추가 층·어휘 조정을 M4 이후 카드로 만든다.
 
 ## M4 · 승인 큐 · 재진입(submit/revise)
 목표: 트리거 API/UI, 승인 큐 UI(스크린샷·필드표·편집), submit run(§A4 L6 대조), revise run, 크래시 복구.
-이관: 상태 쓰기 포트를 `ApplicationService` 만 쓰도록 봉인(절대 규칙 6), `upsert_state`→`append_state` 개명(이미 append-only),
-`PersistState.workflow_run_id`→`run_id`.
+(상태 쓰기 봉인·`append_state`·`run_id` 개명은 T3.1 로 옮김.)
 T2.6 이관: HumanGate `pending()`·`answer()` 를 승인 큐 UI 에 연결, NEEDS_LOGIN/NEEDS_INPUT 전이는 ApplicationService 로.
 T2.7 이관: 단계 이동 후 도착 화면이 UNCLEAR 일 때 하네스가 여는 사람 넘김도 같은 UI 로. L6 값 대조는 FillLog 중 `step == ReviewRecord.step` 칸만 DOM 재독.
 dry_run→live 전환은 settings 테이블 + UI 확인으로만(설정 파일로 조용히 뒤집히지 않게, 절대 규칙 2).

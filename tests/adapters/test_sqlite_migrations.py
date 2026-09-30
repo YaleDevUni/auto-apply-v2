@@ -64,6 +64,52 @@ def test_0002_adds_profile_tables_and_downgrade_removes_only_them(tmp_path):
         assert conn.execute("select id from applications").fetchall() == [("app_1",)]
 
 
+def _columns(db, table: str) -> dict[str, bool]:
+    """컬럼 이름 → NOT NULL 여부."""
+    with sqlite3.connect(db) as conn:
+        return {r[1]: bool(r[3]) for r in conn.execute(f"pragma table_info({table})")}
+
+
+def test_0003_upgrades_existing_m1_data_and_downgrade_restores_0002(tmp_path):
+    """0003 up/down (T3.1): M1 이후 DB(프로필 데이터 있음, 지원 건 0행)가 그대로 오르내린다."""
+    db = tmp_path / "db.sqlite3"
+    cfg = alembic_config(f"sqlite:///{db.as_posix()}")
+    command.upgrade(cfg, "0002")
+    with sqlite3.connect(db) as conn:
+        conn.execute("insert into profiles (user_id, payload) values ('u1', '{}')")
+        conn.execute(
+            "insert into answers (id, user_id, question_key, answer, updated_at)"
+            " values ('a1', 'u1', 'k', 'v', '2026-09-30 00:00:00')"
+        )
+
+    command.upgrade(cfg, "0003")
+    apps = _columns(db, "applications")
+    assert {"url", "domain", "submit_mode"} <= apps.keys()
+    assert _columns(db, "application_state_history")["run_id"] is False  # 사람 조작 전이는 run 없음
+    assert {"result", "input_tokens", "output_tokens", "transcript_path"} <= _columns(
+        db, "runs"
+    ).keys()
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "insert into applications (id, state, payload, last_event_id)"
+            " values ('app_1', 'draft', '{}', 1)"
+        )
+        conn.execute(
+            "insert into application_state_history (application_id, run_id, state, payload)"
+            " values ('app_1', NULL, 'draft', '{}')"
+        )
+        # 새 컬럼을 빼먹은 행도 안전한 쪽 기본값(dry_run, 절대 규칙 2)으로 들어간다.
+        assert conn.execute("select submit_mode from applications").fetchone() == ("dry_run",)
+        assert conn.execute("select count(*) from answers").fetchone() == (1,)
+
+    command.downgrade(cfg, "0002")
+    assert {"url", "domain", "submit_mode"}.isdisjoint(_columns(db, "applications"))
+    assert _columns(db, "application_state_history")["run_id"] is True
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("select run_id from application_state_history").fetchall() == [("",)]
+        assert conn.execute("select user_id from profiles").fetchall() == [("u1",)]
+
+
 def test_downgrade_to_base_and_back(sqlite_url):
     cfg = alembic_config(_sync(sqlite_url))
     command.downgrade(cfg, "base")

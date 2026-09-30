@@ -3,6 +3,8 @@
 
 0001(T0.2): `applications` · `application_state_history` · `runs`.
 0002(T1.1): 프로필·지식베이스(§A7) — `profiles` · `experiences` · `answers` · `documents`.
+0003(T3.1): v3 상태기계(§A3) — 지원 건 `url`·`domain`·`submit_mode`, 이력 `run_id` nullable,
+`runs` 결과·토큰·transcript.
 가이드·작업 큐(§A8·§A9)는 해당 마일스톤에서 리비전을 추가한다. 조회 키만 컬럼으로 두고 나머지는
 DTO 를 JSON 으로 그대로 담는다 — 필드가 늘어도 마이그레이션 없이 pydantic 기본값으로 흡수된다.
 """
@@ -24,10 +26,14 @@ class ApplicationRow(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     state: Mapped[str] = mapped_column(String, nullable=False)
-    # 최신 PersistState 전체 — reason·scheduled_at 등 조회 전용 값
+    # 최신 PersistState 전체 — reason·at 등 조회 전용 값
     payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     # 최신 이력 행의 id(= 마지막 전이). "최근 갱신" 정렬 기준 (ports/repository.py list_recent)
     last_event_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    # 0003 이전 행을 위한 server_default. 새 행은 저장소가 항상 값을 넣는다.
+    url: Mapped[str] = mapped_column(String, nullable=False, server_default="")
+    domain: Mapped[str] = mapped_column(String, nullable=False, server_default="", index=True)
+    submit_mode: Mapped[str] = mapped_column(String, nullable=False, server_default="dry_run")
 
 
 class ApplicationStateRow(Base):
@@ -42,13 +48,14 @@ class ApplicationStateRow(Base):
     application_id: Mapped[str] = mapped_column(
         String, ForeignKey("applications.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    run_id: Mapped[str] = mapped_column(String, nullable=False)
+    # 사람 조작(trigger·approve·cancel) 전이는 run 이 없다.
+    run_id: Mapped[str | None] = mapped_column(String, nullable=True)
     state: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
 
 
 class RunRow(Base):
-    """에이전트 세션 1회 = 1행 (§A3). 토큰·transcript 등 나머지 컬럼은 M3 에서 추가한다."""
+    """에이전트 세션 1회 = 1행 (§A3). kind·status 값은 domain/enums `RunKind`·`RunStatus`."""
 
     __tablename__ = "runs"
 
@@ -57,10 +64,16 @@ class RunRow(Base):
         String, ForeignKey("applications.id", ondelete="CASCADE"), index=True, nullable=False
     )
     kind: Mapped[str] = mapped_column(String, nullable=False)  # fill | revise | submit
-    status: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)  # running|done|failed|interrupted
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # run 이 남긴 지원 건 상태(예: awaiting_approval·needs_login) — 끝나기 전엔 비어 있다.
+    result: Mapped[str | None] = mapped_column(String, nullable=True)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # DATA_DIR 기준 상대 경로 (§A6 run 디렉터리) — 설치 위치가 바뀌어도 유효하게.
+    transcript_path: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 # ── 프로필 · 지식베이스 (§A7, 0002) ──────────────────────────────────────────

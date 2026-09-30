@@ -27,6 +27,18 @@ class PolicyViolation(TerminalError):
     """rate limit / allowlist / submit 경로 정책 위반 (§3)."""
 
 
+class InvalidTransition(TerminalError):
+    """상태기계(§A3) 표에 없는 전이. 동시에 다른 쪽이 먼저 상태를 바꾼 경우도 이것이다.
+
+    같은 요청을 다시 해도 표는 그대로라 재시도하지 않는다.
+    """
+
+    def __init__(self, current: str, to: str, detail: str = "") -> None:
+        super().__init__(f"{current} -> {to} 전이 불가" + (f" ({detail})" if detail else ""))
+        self.current = current
+        self.to = to
+
+
 class LLMSchemaViolation(AutoApplyError):
     """LLM 출력이 Pydantic 스키마를 위반. activity 내부에서 2회까지 재프롬프트."""
 
@@ -171,4 +183,5 @@ NON_RETRYABLE: tuple[str, ...] = (
     # 사람이 Chrome 을 설치하거나 먼저 뜬 auto-apply 를 꺼야 풀린다.
     ChromeNotFound.__name__,
     BrowserProfileInUse.__name__,
+    InvalidTransition.__name__,
 )

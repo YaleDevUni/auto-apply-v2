@@ -65,26 +65,50 @@ bootstrap   ★ 어댑터를 생성하는 유일한 파일
 
 ```
           trigger
-DRAFT ───────────▶ QUEUED ──▶ FILLING ──┬──▶ AWAITING_APPROVAL ──approve──▶ SUBMITTING ──▶ SUBMITTED
-                                 ▲  │    │        │   │                           │
-                  answer/login ──┘  ▼    │   revise   reject                       ├──▶ SUBMIT_MISMATCH ─▶ AWAITING_APPROVAL
-                          NEEDS_INPUT    │        ▼   ▼                           │    (재입력 값이 기록과 다름)
-                          NEEDS_LOGIN    │   REVISING  REJECTED                    └──▶ FAILED
-                                         └──▶ FAILED        │
-                                                            └──▶ AWAITING_APPROVAL
-어느 상태에서든 cancel ──▶ CANCELLED
+DRAFT ───────────▶ QUEUED ──▶ FILLING ─────────────▶ AWAITING_APPROVAL ──approve──▶ SUBMITTING ──▶ SUBMITTED
+                     ▲          │  ▲                    │    ▲     │                   ├──▶ SUBMIT_MISMATCH ──▶ AWAITING_APPROVAL
+                     │          ▼  │ answer/login    revise  │   reject                 └──▶ FAILED
+                     │   NEEDS_INPUT·NEEDS_LOGIN        ▼    │     ▼
+                     │          │                    REVISING ┘   REJECTED
+                     └──────────┘ (재진입 run)
+FILLING ──(인프라 재시도·크래시 복구)──▶ QUEUED          QUEUED·FILLING·REVISING ──▶ FAILED ──(사람이 다시 시작)──▶ QUEUED
+FILLING·REVISING ──▶ INCIDENT ──(사람이 사이트에서 확인)──▶ SUBMITTED | CANCELLED   (§A4 L5, 자동 재시도 없음)
+종결(SUBMITTED·REJECTED·CANCELLED) 을 뺀 어느 상태에서든 cancel ──▶ CANCELLED
 ```
 
-- 전이 표는 `domain/application_state.py` 에 순수 함수로. 허용되지 않은 전이는 예외.
-- 상태를 쓰는 통로는 `ApplicationService.transition()` **하나** (v2 의 persist_state 규칙 계승).
-- `runs` 테이블: 에이전트 세션 1회 = run 1행 (`kind=fill|revise|submit`, 토큰, 소요시간, transcript 경로, 결과).
-- 초기 스키마(T0.2, Alembic `0001`): `applications`(지원 건 1행 = 최신 상태 스냅샷) · `application_state_history`
-  (전이 이력 = 감사 로그, **append-only** — 전이마다 새 행, 자동 증가 `id` 가 순번, 최신 = 가장 큰 순번. 같은 run 안의
-  FILLING↔NEEDS_INPUT 왕복도 그대로 쌓인다) · `runs`(최소 컬럼). 스키마는 Alembic 이 유일한 원천이고
-  `models.py` 와의 일치는 테스트가 대조한다. 리비전 스크립트는 설치본에도 실리도록 패키지 안
+| 현재 | 갈 수 있는 곳 (+ 종결 외 전부 CANCELLED) |
+|---|---|
+| DRAFT | QUEUED |
+| QUEUED | FILLING · FAILED(핸들러가 시작도 못 함) |
+| FILLING | AWAITING_APPROVAL · NEEDS_INPUT · NEEDS_LOGIN · FAILED · INCIDENT · QUEUED(인프라 재시도·크래시 복구) |
+| NEEDS_INPUT · NEEDS_LOGIN | FILLING(같은 run 에서 사람이 마침) · QUEUED(대기 끝난 뒤 재진입 run) |
+| AWAITING_APPROVAL | SUBMITTING(승인 — 제출 단계로 가는 유일한 간선) · REVISING · REJECTED |
+| REVISING | AWAITING_APPROVAL(완료·중단 복구 — 제출 전 L6 대조가 다시 본다) · FAILED · INCIDENT |
+| SUBMITTING | SUBMITTED · SUBMIT_MISMATCH · FAILED |
+| SUBMIT_MISMATCH | AWAITING_APPROVAL |
+| FAILED | QUEUED(사람이 다시 시작) |
+| INCIDENT | SUBMITTED(사람이 사이트에서 확인) — 그 외엔 CANCELLED 뿐 |
+| SUBMITTED · REJECTED · CANCELLED | (없음) |
+
+- 전이 표는 `domain/application_state.py` 에 순수 함수로(`check_transition`). 허용되지 않은 전이는 `InvalidTransition`
+  (재시도 없음). 크래시 복구·재시도 간선도 이 표에 있다 — JobRunner(§A9)도 표를 거쳐서만 되돌린다.
+- 상태를 쓰는 통로는 `ApplicationService.transition(application_id, to, *, run_id, reason)` **하나**(생성은 `create()` 가
+  DRAFT 로, 제출 모드 기본 dry_run). 저장소의 쓰기(`add`·`append_state`)는 이 서비스만 부른다 — import-linter 는 메서드
+  호출을 못 봐서 `tests/services/test_state_write_seal.py` 가 src AST 를 훑어 서비스·저장소 구현 밖의 `.applications`·
+  `.append_state` 접근을 거부한다. `append_state(state, expected=)` 는 현재 상태가 `expected` 일 때만 쓰는 조건부
+  UPDATE 라, 서비스가 읽은 뒤 API·러너가 먼저 전이했으면 `InvalidTransition` 으로 아무것도 쓰지 않는다.
+- 이력 행(`PersistState`): `run_id`(사람 조작 전이는 None) · `state` · `reason` · `at` · `submitted_at`.
+- `runs` 테이블: 에이전트 세션 1회 = run 1행 (`kind=fill|revise|submit`, `status=running|done|failed|interrupted`,
+  `result`(남긴 지원 건 상태), 입력·출력 토큰, 시작·종료 시각, `transcript_path`(DATA_DIR 기준 상대 경로), `error`).
+- 스키마(Alembic 이 유일한 원천, `models.py` 와의 일치는 테스트가 대조): `0001`(T0.2) `applications`(지원 건 1행 = 최신 상태
+  스냅샷) · `application_state_history`(전이 이력 = 감사 로그, **append-only** — 전이마다 새 행, 자동 증가 `id` 가 순번,
+  최신 = 가장 큰 순번. 같은 run 안의 FILLING↔NEEDS_INPUT 왕복도 그대로 쌓인다) · `runs`. `0003`(T3.1) applications 에
+  `url`·`domain`(호스트, 도메인 가이드·중복 지원 조회 키)·`submit_mode`(생성 시점 스냅샷, 기본 `dry_run`), 이력 `run_id`
+  nullable, runs 에 결과·토큰·transcript. 리비전 스크립트는 설치본에도 실리도록 패키지 안
   (`adapters/repository/migrations/`)에 있고 `adapters/repository/migrate.py` 가 ini 없이 Config 를 조립한다
   (루트 `alembic.ini` 는 `alembic revision` 개발용).
-- 크래시 복구: 기동 시 `RUNNING` run 을 `INTERRUPTED` 로 닫고 지원 건을 직전 재개 가능 상태로 되돌린다.
+- 크래시 복구: 기동 시 `RUNNING` run 을 `INTERRUPTED` 로 닫고 지원 건을 직전 재개 가능 상태로 되돌린다 — FILLING→QUEUED,
+  REVISING→AWAITING_APPROVAL, SUBMITTING→FAILED(제출됐는지 모르므로 다시 제출하지 않는다).
 
 ## §A4 제출 차단 하네스 (SubmitGuard) — 제품의 핵심 안전장치
 

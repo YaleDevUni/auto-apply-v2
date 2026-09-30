@@ -1,40 +1,53 @@
-"""도메인 열거형. 외부 의존 없음 (§A2).
-
-v3 상태기계(§A3)는 M4 에서 `domain/application_state.py` 로 다시 짠다 — 아래는 그 전까지
-repository projection 이 쓰는 v2 상태값이다.
-"""
+"""도메인 열거형. 외부 의존 없음 (§A2)."""
 
 from enum import StrEnum
 
 
 class ApplicationState(StrEnum):
-    """DB 의 status 는 이 값의 projection."""
+    """지원 건 상태 (§A3). 전이 규칙은 `domain/application_state.py`.
 
-    COLLECTING = "collecting"
-    EVALUATING = "evaluating"
-    GENERATING_RESUME = "generating_resume"
-    REVIEWING = "reviewing"
-    RENDERING_PDF = "rendering_pdf"
+    DB 의 state 는 이 값의 projection.
+    """
+
+    DRAFT = "draft"
+    QUEUED = "queued"
+    FILLING = "filling"
+    NEEDS_INPUT = "needs_input"
+    NEEDS_LOGIN = "needs_login"
     AWAITING_APPROVAL = "awaiting_approval"
-    SCHEDULED = "scheduled"
-    EXECUTING = "executing"
-    VERIFYING = "verifying"
-    COMPLETED = "completed"
+    REVISING = "revising"
+    SUBMITTING = "submitting"
+    SUBMITTED = "submitted"
+    SUBMIT_MISMATCH = "submit_mismatch"
+    FAILED = "failed"
     REJECTED = "rejected"
     CANCELLED = "cancelled"
-    EXPIRED = "expired"
-    NEEDS_HUMAN = "needs_human"
+    # 하네스 L5 가 승인 없는 제출 가능성을 감지했다(§A4). 사람이 확인해 닫는다 — 자동 재시도 없음.
+    INCIDENT = "incident"
 
 
-TERMINAL_STATES: frozenset[ApplicationState] = frozenset(
-    {
-        ApplicationState.COMPLETED,
-        ApplicationState.REJECTED,
-        ApplicationState.CANCELLED,
-        ApplicationState.EXPIRED,
-        ApplicationState.NEEDS_HUMAN,
-    }
-)
+class SubmitMode(StrEnum):
+    """지원 건 생성 시점의 제출 모드 스냅샷. 기본은 DRY_RUN (00-product 절대 규칙 2)."""
+
+    DRY_RUN = "dry_run"
+    LIVE = "live"
+
+
+class RunKind(StrEnum):
+    """에이전트 세션 1회의 종류 (§A3 runs)."""
+
+    FILL = "fill"
+    REVISE = "revise"
+    SUBMIT = "submit"
+
+
+class RunStatus(StrEnum):
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    # 프로세스가 죽거나 멈춰 끝을 못 본 run — 기동 시 크래시 복구가 RUNNING 을 이걸로
+    # 닫는다(§A3, §A9).
+    INTERRUPTED = "interrupted"
 
 
 # ── 프로필 · 지식베이스 (§A7) ────────────────────────────────────────────────

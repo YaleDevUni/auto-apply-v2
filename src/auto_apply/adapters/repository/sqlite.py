@@ -9,7 +9,6 @@ from types import TracebackType
 from typing import Any, Self
 
 from sqlalchemy import event, insert, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -24,8 +23,9 @@ from auto_apply.adapters.repository.sqlite_profile import (
     SqliteExperienceRepository,
     SqliteProfileRepository,
 )
-from auto_apply.contracts.dto import ApplicationSummary, PersistState
-from auto_apply.domain.enums import ApplicationState
+from auto_apply.contracts.dto import ApplicationRecord, ApplicationSummary, PersistState
+from auto_apply.domain.enums import ApplicationState, SubmitMode
+from auto_apply.domain.errors import InvalidInput, InvalidTransition, NotFound
 
 SessionFactory = async_sessionmaker[AsyncSession]
 
@@ -37,7 +37,7 @@ def _summary(state: PersistState) -> ApplicationSummary:
         application_id=state.application_id,
         state=state.state,
         reason=state.reason,
-        scheduled_at=state.scheduled_at,
+        at=state.at,
         submitted_at=state.submitted_at,
     )
 
@@ -47,19 +47,48 @@ class SqliteApplicationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def upsert_state(self, state: PersistState) -> None:
-        payload = state.model_dump(mode="json")
-        # FK 때문에 지원 건 행이 먼저 있어야 한다. 스냅샷 값은 아래에서 이 전이로 덮어쓴다.
+    async def add(self, record: ApplicationRecord, initial: PersistState) -> None:
+        payload = initial.model_dump(mode="json")
+        # pysqlite 의 SAVEPOINT 는 믿기 어려워 IntegrityError 를 잡는 대신 먼저 본다
+        # (단일 프로세스, §A1).
+        if await self.get(record.application_id) is not None:
+            raise InvalidInput(f"이미 있는 지원 건: {record.application_id}")
         await self._session.execute(
-            sqlite_insert(ApplicationRow)
-            .values(id=state.application_id, state=str(state.state), payload=payload)
-            .on_conflict_do_nothing(index_elements=[ApplicationRow.id])
+            insert(ApplicationRow).values(
+                id=record.application_id,
+                state=str(initial.state),
+                payload=payload,
+                url=record.url,
+                domain=record.domain,
+                submit_mode=str(record.submit_mode),
+            )
         )
+        await self._append_history(initial, payload)
+
+    async def append_state(self, state: PersistState, *, expected: ApplicationState) -> None:
+        payload = state.model_dump(mode="json")
+        # 조건부 UPDATE 가 비교와 쓰기를 한 문장으로 한다 — 읽고 쓰는 사이에 다른 UoW 가
+        # 끼지 못한다.
+        res = await self._session.execute(
+            update(ApplicationRow)
+            .where(ApplicationRow.id == state.application_id, ApplicationRow.state == str(expected))
+            .values(state=str(state.state), payload=payload)
+        )
+        if res.rowcount == 0:  # type: ignore[attr-defined]
+            current = await self._session.scalar(
+                select(ApplicationRow.state).where(ApplicationRow.id == state.application_id)
+            )
+            if current is None:
+                raise NotFound(state.application_id)
+            raise InvalidTransition(current, state.state, f"expected {expected}")
+        await self._append_history(state, payload)
+
+    async def _append_history(self, state: PersistState, payload: dict[str, Any]) -> None:
         event_id = await self._session.scalar(
             insert(ApplicationStateRow)
             .values(
                 application_id=state.application_id,
-                run_id=state.workflow_run_id,
+                run_id=state.run_id,
                 state=str(state.state),
                 payload=payload,
             )
@@ -69,11 +98,27 @@ class SqliteApplicationRepository:
         await self._session.execute(
             update(ApplicationRow)
             .where(ApplicationRow.id == state.application_id)
-            .values(
-                state=str(state.state),
-                payload=payload,
-                last_event_id=event_id,
+            .values(last_event_id=event_id)
+        )
+
+    async def get(self, application_id: str) -> ApplicationRecord | None:
+        row = (
+            await self._session.execute(
+                select(
+                    ApplicationRow.id,
+                    ApplicationRow.url,
+                    ApplicationRow.domain,
+                    ApplicationRow.submit_mode,
+                ).where(ApplicationRow.id == application_id)
             )
+        ).one_or_none()
+        if row is None:
+            return None
+        return ApplicationRecord(
+            application_id=row.id,
+            url=row.url,
+            domain=row.domain,
+            submit_mode=SubmitMode(row.submit_mode),
         )
 
     async def history(self, application_id: str) -> list[PersistState]:

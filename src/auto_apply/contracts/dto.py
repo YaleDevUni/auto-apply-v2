@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from auto_apply.domain.enums import ApplicationState
+from auto_apply.domain.enums import ApplicationState, SubmitMode
 
 
 class _Frozen(BaseModel):
@@ -27,8 +27,19 @@ class ApplicationSummary(_Frozen):
     application_id: str
     state: ApplicationState
     reason: str = ""
-    scheduled_at: datetime | None = None
+    at: datetime
     submitted_at: datetime | None = None
+
+
+class ApplicationRecord(_Frozen):
+    """지원 건 자체(상태 말고). 생성 때 한 번 정해지고 바뀌지 않는다."""
+
+    application_id: str
+    url: str
+    domain: str  # 도메인 가이드(§A8)·중복 지원 조회 키. url 의 호스트, 소문자
+    # 생성 시점 스냅샷 — 설정이 나중에 live 로 바뀌어도 이미 만든 건은 조용히 따라가지
+    # 않는다(절대 규칙 2).
+    submit_mode: SubmitMode = SubmitMode.DRY_RUN
 
 
 # ── Resume ───────────────────────────────────────────────────────────────
@@ -65,9 +76,12 @@ class ReviewRequest(_Frozen):
 
 # ── Persistence (projection) ─────────────────────────────────────────────
 class PersistState(_Frozen):
+    """상태 전이 1건 (§A3 이력 1행). `ApplicationService.transition()` 만 만든다."""
+
     application_id: str
-    workflow_run_id: str
+    # 전이를 일으킨 run. 사람 조작(trigger·approve·cancel)은 run 이 없어 None.
+    run_id: str | None
     state: ApplicationState
     reason: str = ""
-    scheduled_at: datetime | None = None
+    at: datetime
     submitted_at: datetime | None = None

@@ -1,7 +1,11 @@
+"""저장소 port (§A3). 지원 건 상태 쓰기(`add`·`append_state`)는 `ApplicationService` 만 부른다 —
+`tests/services/test_state_write_seal.py` 가 src 전체를 훑어 봉인한다(절대 규칙 6).
+"""
+
 from types import TracebackType
 from typing import Protocol, Self
 
-from auto_apply.contracts.dto import ApplicationSummary, PersistState
+from auto_apply.contracts.dto import ApplicationRecord, ApplicationSummary, PersistState
 from auto_apply.domain.enums import ApplicationState
 from auto_apply.ports.profile_store import (
     AnswerRepository,
@@ -12,16 +16,22 @@ from auto_apply.ports.profile_store import (
 
 
 class ApplicationRepository(Protocol):
-    async def upsert_state(self, state: PersistState) -> None:
-        """전이 1건을 이력에 append 한다 (§A3). 이름과 달리 합치지 않는다 — 최신 = 마지막 호출.
+    async def add(self, record: ApplicationRecord, initial: PersistState) -> None:
+        """새 지원 건 + 첫 이력 1행. 같은 id 가 이미 있으면 `InvalidInput`."""
+        ...
 
-        같은 run 안에서도 A→B→A 로 되돌아올 수 있어 (run, state) 로 중복을 거르지 않는다.
-        전이 검증·중복 차단은 `ApplicationService.transition()`(M4) 몫이다.
+    async def append_state(self, state: PersistState, *, expected: ApplicationState) -> None:
+        """전이 1건을 이력에 append 하고 스냅샷을 바꾼다 (§A3). 합치지 않는다 — 최신 = 마지막 호출.
+
+        현재 상태가 `expected` 가 아니면(그 사이 다른 쪽이 전이) 아무것도 쓰지 않고
+        `InvalidTransition`, 없는 지원 건이면 `NotFound`. 표 검증은 호출자(서비스) 몫이다.
         """
         ...
 
+    async def get(self, application_id: str) -> ApplicationRecord | None: ...
+
     async def history(self, application_id: str) -> list[PersistState]:
-        """상태 전이 이력. 감사 로그 겸 테스트 검증용."""
+        """상태 전이 이력(오래된 순). 감사 로그 겸 테스트 검증용."""
         ...
 
     async def list_recent(self, limit: int = 10) -> list[ApplicationSummary]:
@@ -33,7 +43,7 @@ class ApplicationRepository(Protocol):
         ...
 
     async def latest_states(self, application_ids: list[str]) -> dict[str, ApplicationState]:
-        """주어진 id들 중 이력이 있는 것만, 최신 상태로. id 하나씩 `history()`를 부르면
+        """주어진 id들 중 있는 것만, 최신 상태로. id 하나씩 `history()`를 부르면
 
         N+1 쿼리가 되므로 배치로 받는다.
         """

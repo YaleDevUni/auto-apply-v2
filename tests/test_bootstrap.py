@@ -1,5 +1,6 @@
 """composition root 테스트 — 설정만 바꿔 구현이 교체되는지 확인 (§A2)."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from alembic import command
@@ -15,7 +16,7 @@ from auto_apply.adapters.storage.local import LocalBlobStore
 from auto_apply.adapters.storage.memory import InMemoryBlobStore
 from auto_apply.bootstrap import build_container
 from auto_apply.config import Settings
-from auto_apply.contracts.dto import PersistState
+from auto_apply.contracts.dto import ApplicationRecord, PersistState
 from auto_apply.contracts.experience import Experience, ExperienceFact
 from auto_apply.contracts.profile import Profile
 from auto_apply.domain.enums import ApplicationState, ExperienceKind
@@ -56,14 +57,26 @@ def test_repository_defaults_to_sqlite_in_data_dir(tmp_path):
     assert cfg.database_url.endswith(f"{tmp_path.resolve().as_posix()}/db.sqlite3")
 
 
+_RECORD = ApplicationRecord(
+    application_id="app_1", url="https://jobs.example.com/1", domain="jobs.example.com"
+)
+
+
+def _draft() -> PersistState:
+    return PersistState(
+        application_id="app_1",
+        run_id=None,
+        state=ApplicationState.DRAFT,
+        at=datetime(2026, 10, 1, tzinfo=UTC),
+    )
+
+
 async def test_memory_repository_shares_rows_across_uows():
     c = build_container(Settings(storage="memory", repository="memory"))
-    state = PersistState(
-        application_id="app_1", workflow_run_id="run_1", state=ApplicationState.EVALUATING
-    )
+    state = _draft()
     async with c.uow() as uow:
         assert isinstance(uow, InMemoryUnitOfWork)
-        await uow.applications.upsert_state(state)
+        await uow.applications.add(_RECORD, state)
     async with c.uow() as uow:
         assert await uow.applications.history("app_1") == [state]
 
@@ -72,12 +85,10 @@ async def test_sqlite_repository_roundtrip_through_container(tmp_path):
     cfg = Settings(storage="memory", repository="sqlite", data_dir=tmp_path)
     command.upgrade(alembic_config(cfg.database_url.replace("+aiosqlite", "")), "head")
     c = build_container(cfg)
-    state = PersistState(
-        application_id="app_1", workflow_run_id="run_1", state=ApplicationState.EVALUATING
-    )
+    state = _draft()
     async with c.uow() as uow:
         assert isinstance(uow, SqliteUnitOfWork)
-        await uow.applications.upsert_state(state)
+        await uow.applications.add(_RECORD, state)
         await uow.commit()
     async with c.uow() as uow:
         assert await uow.applications.history("app_1") == [state]
