@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>폼 여는 지원하기</title></head>
+<body>
+<h1>백엔드 엔지니어</h1>
+<p>공고 본문…</p>
+<button type="button" id="open">지원하기</button>
+<form id="f" action="/api/open_form_button/submit" method="post" hidden>
+  <label>이름 <input name="name"></label>
+  <label>연락처 <input name="phone"></label>
+  <button type="submit">최종 제출</button>
+</form>
+<script>
+  document.getElementById("open").addEventListener("click", () => {
+    document.getElementById("f").hidden = false;
+  });
+</script>
+</body></html>

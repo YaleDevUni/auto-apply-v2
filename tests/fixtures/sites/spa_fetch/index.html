@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>SPA 지원</title></head>
+<body>
+<h1>SPA 채용 — 지원서</h1>
+<label>이름 <input id="name" name="name"></label>
+<label>이메일 <input id="email" name="email" type="email"></label>
+<div id="apply" role="button" tabindex="0">지원하기</div>
+<p id="result" role="status"></p>
+<script>
+  document.getElementById("apply").addEventListener("click", async () => {
+    const body = JSON.stringify({
+      name: document.getElementById("name").value,
+      email: document.getElementById("email").value,
+    });
+    const res = await fetch("/api/spa_fetch/submit", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body,
+    });
+    if (res.ok) document.getElementById("result").textContent = "지원이 완료되었습니다";
+  });
+</script>
+</body></html>

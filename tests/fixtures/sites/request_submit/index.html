@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>requestSubmit 지원</title></head>
+<body>
+<h1>지원서</h1>
+<form id="f" action="/api/request_submit/submit" method="post">
+  <label>이름 <input name="name"></label>
+</form>
+<button type="button" id="send">지원서 보내기</button>
+<script>
+  document.getElementById("send").addEventListener("click", () => {
+    document.getElementById("f").requestSubmit();
+  });
+</script>
+</body></html>

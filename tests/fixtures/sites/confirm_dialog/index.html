@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>확인 대화상자 지원</title></head>
+<body>
+<h1>지원서</h1>
+<form id="f" onsubmit="return false">
+  <label>이름 <input name="name"></label>
+</form>
+<button type="button" id="apply">지원하기</button>
+<p id="result" role="status"></p>
+<script>
+  document.getElementById("apply").addEventListener("click", async () => {
+    if (!confirm("정말 제출하시겠습니까?")) return;
+    const res = await fetch("/api/confirm_dialog/submit", {
+      method: "POST", body: new FormData(document.getElementById("f")),
+    });
+    if (res.ok) document.getElementById("result").textContent = "지원이 완료되었습니다";
+  });
+</script>
+</body></html>

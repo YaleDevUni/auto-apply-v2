@@ -191,6 +191,10 @@
   (`SUBMIT_BLOCKED` 에 "단계 이동일 수 있음" 구분 없이 ready_for_review 로 유도하되 FillLog 에 단계 표시), 다단계 POST 사이트는
   승인 후 SUBMITTING 에서 하네스가 단계별로 진행하는 방식(§A4 L6 확장)을 §A4 에 설계로 적는다. 짐에 type=submit 다단계 픽스처 포함.
   `detect_completion` 은 클릭 전 페이지 문구와 비교해 원래 있던 문구로 오탐하지 않게.
+- T2.3 이관(설계 과제): L3 는 비-GET·form submit 만 막아 **GET 탐색으로 제출**(`location.href="/apply?…"`)하는 사이트는 L5 사후 감지뿐.
+  Risky 클릭 창에서의 문서 탐색 처리 규칙을 §A4 에 정하고(예: 쿼리/본문을 싣는 GET 탐색은 차단, 단순 페이지 이동은 허용 — "지원하기"가 폼 페이지로
+  이동하는 픽스처는 통과해야 함), 짐에 GET 제출 픽스처를 추가해 0건 단언. 짐 헬퍼는 `tests/gym/fixtures.py`(gym·gym_browser,
+  `GymServer.final_submissions()`·`intermediate_requests()`·`wait_for()`). native 가 느리면(Chrome 기준 ~28초) module 스코프 검토.
 - 수용 기준: native **짐 전 픽스처에서 FILL 단계 제출 0건** — 모든 버튼을 차례로 누르는 적대적 스크립트로(T2.3 기록 서버 단언),
   다단계 중간 저장은 통과, 완료 페이지 도달 시 INCIDENT, confirm 거절 테스트, 하네스 층을 하나씩 끄면 테스트가 실패하는지 확인.
 

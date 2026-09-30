@@ -29,6 +29,7 @@
 - T1.5 웹 경험·답변·문서·온보딩 + make check 웹 게이트 — 자체 검증에서 경험 링크 `javascript:` XSS 발견·수정. **M1 완료.**
 - T2.2 제출 클릭 분류기(허용 목록·애매하면 Risky)·완료 어휘. type=submit "다음" 다단계 문제는 T2.5 설계 과제로 이관.
 - T2.1 BrowserHost — 설치 Chrome 탐지·전용 프로필 잠금·기본 프로필 거부(D6)·지연 기동. Windows 잠금 분기 실측은 M7.
+- T2.3 테스트 짐 — 픽스처 12종·제출 기록 서버·매니페스트, 하네스 없이는 12종 모두 제출됨(양성 대조). GET 탐색 제출 빈틈은 T2.5 설계 과제.
 
 ## 열린 질문 (다음 마일스톤 시작 전에 사용자에게)
 - (백로그) `make check` 단독 ~22초(94초는 병렬 메모리 압박 탓) — 최대 원인 `tests/api/test_profile_api.py::test_upload_memory_peak_is_about_one_file[a.pdf]` 18초,

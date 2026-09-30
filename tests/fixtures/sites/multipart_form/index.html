@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>multipart 지원</title></head>
+<body>
+<h1>지원서 (첨부)</h1>
+<form action="/api/multipart_form/submit" method="post" enctype="multipart/form-data">
+  <label>이름 <input name="name"></label>
+  <label>이력서 <input type="file" name="resume"></label>
+  <input type="submit" value="제출">
+</form>
+</body></html>

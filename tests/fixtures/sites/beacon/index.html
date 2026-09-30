@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>beacon 지원</title></head>
+<body>
+<h1>지원서</h1>
+<label>이름 <input id="name"></label>
+<button type="button" id="send">제출</button>
+<p id="result" role="status"></p>
+<script>
+  document.getElementById("send").addEventListener("click", () => {
+    const data = new Blob([JSON.stringify({name: document.getElementById("name").value})],
+                          {type: "text/plain"});
+    if (navigator.sendBeacon("/api/beacon/submit", data)) {
+      document.getElementById("result").textContent = "지원이 완료되었습니다";
+    }
+  });
+</script>
+</body></html>

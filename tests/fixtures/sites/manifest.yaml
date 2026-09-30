@@ -1,0 +1,96 @@
+# 테스트 짐(§A4) 사이트별 기대값. tests/gym/server.py 가 읽는다.
+#
+# final_submit: 이 요청이 서버에 닿으면 "제출됐다". 하네스 테스트(T2.5)는 FILL 단계에서 이게 0건임을 단언한다.
+# allowed:      FILL 단계에서도 통과돼야 하는 중간 요청(단계 저장·로그인). 막히면 relaxed 모드가 과하게 막은 것.
+# redirect:     브라우저 탐색(form 제출)으로 온 요청을 보낼 곳. 없으면 done_page. fetch/xhr/beacon 은 JSON 응답.
+# login:        이 접두사 아래 페이지는 cookie 가 없으면 page 로 리다이렉트된다(로그인 페이지 자체는 제외).
+# 모든 엔드포인트는 /api/<사이트 이름>/ 아래에 있다 — 기록을 사이트별로 가를 수 있게.
+
+done_page: /sites/done.html
+
+sites:
+  spa_fetch:
+    title: SPA — role=button div 클릭 → fetch(JSON) 제출, 같은 화면에 완료 문구
+    entry: /sites/spa_fetch/
+    final_submit:
+      - {method: POST, path: /api/spa_fetch/submit}
+
+  multipart_form:
+    title: multipart form — 파일 첨부 + <input type=submit value=제출>
+    entry: /sites/multipart_form/
+    final_submit:
+      - {method: POST, path: /api/multipart_form/submit}
+
+  confirm_dialog:
+    title: '"지원하기" → confirm() 대화상자 수락 뒤 fetch(FormData) 제출'
+    entry: /sites/confirm_dialog/
+    final_submit:
+      - {method: POST, path: /api/confirm_dialog/submit}
+
+  open_form_button:
+    title: '"지원하기" 는 폼을 여는 버튼(요청 없음), 실제 제출은 폼 안 "최종 제출"'
+    entry: /sites/open_form_button/
+    final_submit:
+      - {method: POST, path: /api/open_form_button/submit}
+
+  # 다단계는 두 종류다 — 단계 이동 버튼이 type=button 이냐 type=submit 이냐에 따라 분류기(T2.2)의 판단이 갈린다.
+  # 어느 쪽이든 단계 요청은 allowed(통과돼야 함), 마지막 요청만 final_submit(막혀야 함)이다.
+  multi_step:
+    title: 다단계(a) — type=button "다음"·"저장 후 계속" 이 fetch 로 중간 저장, 마지막 "제출하기" 가 최종
+    entry: /sites/multi_step/
+    final_submit:
+      - {method: POST, path: /api/multi_step/submit}
+    allowed:
+      - {method: POST, path: /api/multi_step/save}
+
+  multi_step_form:
+    title: 다단계(b) — type=submit "다음"·"저장 후 계속" 폼 POST 로 단계 이동(303), 마지막 "제출하기" 가 최종
+    entry: /sites/multi_step_form/
+    final_submit:
+      - {method: POST, path: /api/multi_step_form/submit}
+    allowed:
+      - {method: POST, path: /api/multi_step_form/step1, redirect: /sites/multi_step_form/step2.html}
+      - {method: POST, path: /api/multi_step_form/step2, redirect: /sites/multi_step_form/step3.html}
+
+  iframe_form:
+    title: iframe 안의 form 제출
+    entry: /sites/iframe_form/
+    final_submit:
+      - {method: POST, path: /api/iframe_form/submit}
+
+  plain_confirm_button:
+    title: 제출 어휘 없는 "확인" 버튼(dialog 밖) → XMLHttpRequest 제출
+    entry: /sites/plain_confirm_button/
+    final_submit:
+      - {method: POST, path: /api/plain_confirm_button/submit}
+
+  beacon:
+    title: navigator.sendBeacon 으로 제출
+    entry: /sites/beacon/
+    final_submit:
+      - {method: POST, path: /api/beacon/submit}
+
+  request_submit:
+    title: type=button 클릭 핸들러가 form.requestSubmit() 호출
+    entry: /sites/request_submit/
+    final_submit:
+      - {method: POST, path: /api/request_submit/submit}
+
+  complete_page:
+    title: 폼 기본 버튼(type 생략, "등록") → 완료 페이지("지원이 완료되었습니다", URL 에 complete)
+    entry: /sites/complete_page/
+    final_submit:
+      - {method: POST, path: /api/complete_page/submit, redirect: /sites/complete_page/complete.html}
+
+  login_wall:
+    title: 쿠키 없으면 로그인 폼으로 리다이렉트, 로그인 뒤 지원 폼
+    entry: /sites/login_wall/
+    login:
+      cookie: gym_session
+      prefix: /sites/login_wall/
+      page: /sites/login_wall/login.html
+      endpoint: /api/login_wall/login
+    final_submit:
+      - {method: POST, path: /api/login_wall/submit}
+    allowed:
+      - {method: POST, path: /api/login_wall/login}

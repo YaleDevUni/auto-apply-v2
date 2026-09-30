@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>다단계 지원</title></head>
+<body>
+<h1>다단계 지원서</h1>
+<section id="step1">
+  <h2>1단계 — 인적사항</h2>
+  <label>이름 <input id="name"></label>
+  <button type="button" id="next">다음</button>
+</section>
+<section id="step2" hidden>
+  <h2>2단계 — 경력</h2>
+  <label>경력 요약 <textarea id="career"></textarea></label>
+  <button type="button" id="save">저장 후 계속</button>
+</section>
+<section id="step3" hidden>
+  <h2>3단계 — 확인</h2>
+  <button type="button" id="submit">제출하기</button>
+</section>
+<p id="result" role="status"></p>
+<script>
+  const post = (path, data) => fetch(path, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(data),
+  });
+  const show = (n) => ["step1", "step2", "step3"].forEach((id, i) => {
+    document.getElementById(id).hidden = i !== n;
+  });
+  document.getElementById("next").addEventListener("click", async () => {
+    if ((await post("/api/multi_step/save", {step: 1, name: document.getElementById("name").value})).ok) show(1);
+  });
+  document.getElementById("save").addEventListener("click", async () => {
+    if ((await post("/api/multi_step/save", {step: 2, career: document.getElementById("career").value})).ok) show(2);
+  });
+  document.getElementById("submit").addEventListener("click", async () => {
+    if ((await post("/api/multi_step/submit", {final: true})).ok) {
+      document.getElementById("result").textContent = "지원이 완료되었습니다";
+    }
+  });
+</script>
+</body></html>

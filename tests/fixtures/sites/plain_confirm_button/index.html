@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>확인 버튼 지원</title></head>
+<body>
+<h1>지원서</h1>
+<label>이름 <input id="name"></label>
+<button type="button" id="ok">확인</button>
+<p id="result" role="status"></p>
+<script>
+  document.getElementById("ok").addEventListener("click", () => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/plain_confirm_button/submit");
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.onload = () => {
+      if (xhr.status === 200) document.getElementById("result").textContent = "지원이 완료되었습니다";
+    };
+    xhr.send(JSON.stringify({name: document.getElementById("name").value}));
+  });
+</script>
+</body></html>
