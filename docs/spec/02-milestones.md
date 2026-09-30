@@ -302,6 +302,8 @@
   사용자 설정 훅이 끼지 않게 설정 원천 격리). v2 `ClaudeCodeCliLLM` 의 프로세스 관리·장애 시그니처(로그인 풀림/한도초과) 재사용.
   transcript 는 run 디렉터리에(고유식별정보 가림). 프로세스 종료·타임아웃·취소 시 자식 프로세스 정리. `config.llm_provider` 기본을
   `claude_cli` 로(D5 — 테스트·오프라인 게이트는 stub 유지), 모델 기본값 최신화.
+  T3.3 이관: run 한도 설정 키(도구 호출 수·시간, 지금 AgentLimits 기본 200회·1800초), bootstrap 의 빈 Scripted 런타임을 실제 런타임 선택으로 교체,
+  `bootstrap.py`(252줄) 조립 함수 분리.
 - 수용 기준: stream-json init 이벤트의 도구 목록이 **우리 MCP 도구뿐**임을 단언(native), 짐 사이트 e2e 1건 → AWAITING_APPROVAL·제출 0건(native),
   한도초과·로그인 풀림 시그니처 → 인프라 실패 분류(대역 stdout), 취소 시 잔여 프로세스 0.
 
@@ -310,7 +312,7 @@
 - 범위: `src/auto_apply/{adapters/agent/anthropic*.py,bootstrap.py,config.py,runner/}`, `tests/`, §A6·§A10
 - 할 일: Messages API tool-use 루프(같은 TOOLS 를 in-process 로), 가짜 HTTP 전송으로 테스트. AgentRuntime contract test 에 CLI·API params 추가.
   bootstrap: BrowserHost 와 짝지은 PageDriver·SubmitGuard·BrowserToolbox 조립(T2.4 이관), `forbidden_origins` 에 앱 자신의 주소(실제 포트)
-  주입, HumanGate 주입(T2.6 이관), JobRunner 에 fill 핸들러 등록, 런타임 선택(`llm_provider`).
+  주입(T3.3 이관 — 지금은 `cfg.web_cors_origin` 만 넘김), HumanGate·fill 핸들러 등록은 T3.3 에서 끝남.
 - 수용 기준: API 런타임 contract test(가짜 전송), 앱 기동 → fill job 투입 → Scripted 런타임으로 AWAITING_APPROVAL 까지 통합 테스트,
   forbidden_origins 에 실제 포트가 들어감을 단언.
 

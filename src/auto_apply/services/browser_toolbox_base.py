@@ -5,15 +5,14 @@
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable, Iterable
-from typing import Any, Protocol
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from typing import Any
 
 import structlog
 
 from auto_apply.contracts.browser_tools import ToolError, ToolResult
 from auto_apply.contracts.fill_log import FillAction, FillLog, FillSource
 from auto_apply.contracts.human_gate import HumanTask
-from auto_apply.contracts.knowledge import DocumentMeta
 from auto_apply.contracts.page import PageSnapshot, SnapshotNode
 from auto_apply.contracts.submit_guard import GuardReport, ReviewRecord
 from auto_apply.domain.errors import PageActionFailed, SubmitGuardUnavailable
@@ -21,6 +20,7 @@ from auto_apply.domain.human_handoff import is_captcha_node
 from auto_apply.domain.submit_guard_policy import GuardMode, carried_values
 from auto_apply.ports.browser import BrowserHost, GuardedPageDriver, PageHandle
 from auto_apply.ports.human_gate import HumanGate
+from auto_apply.services.browser_toolbox_deps import AnswerSink, DocumentReader
 from auto_apply.services.browser_toolbox_record import (
     blocked_result,
     fail,
@@ -33,12 +33,6 @@ from auto_apply.services.submit_guard import GuardedOutcome, SubmitGuard
 log = structlog.get_logger("auto_apply.services.browser_toolbox")
 # 사람이 로그인·CAPTCHA 를 끝내기를 기다리는 최대 시간(§A5) — 넘기면 NEEDS_LOGIN/NEEDS_INPUT.
 DEFAULT_HUMAN_WAIT_S = 600.0
-
-
-class DocumentReader(Protocol):
-    """앱이 관리하는 문서만 읽는 통로 (UploadService 가 만족한다). 없거나 남의 것이면 NotFound."""
-
-    async def read_document(self, user_id: str, document_id: str) -> tuple[DocumentMeta, bytes]: ...
 
 
 class Refused(Exception):
@@ -56,6 +50,8 @@ class ToolboxBase:
         *,
         human_gate: HumanGate,
         human_wait_s: float = DEFAULT_HUMAN_WAIT_S,
+        answers: AnswerSink | None = None,
+        held_answers: Mapping[str, str] | None = None,
         user_id: str,
         application_id: str | None,
         run_id: str | None,
@@ -68,6 +64,9 @@ class ToolboxBase:
         self._application_id, self._run_id = application_id, run_id
         self._log = log.bind(application_id=application_id, run_id=run_id)
         self._gate, self._human_wait_s = human_gate, human_wait_s
+        # 가린 답(ask_user sensitive) — 핸들 → 값. 메모리에만 두고 기록하지 않는다(절대 규칙 5).
+        # 재진입 run 은 직전에 받은 가린 답을 `held_answers` 로 넘겨받는다.
+        self._answers, self._private = answers, dict(held_answers or {})
         # 도구 호출은 한 번에 하나 — 창(§A4)이 겹치거나 핸드오프가 다른 동작의 창 도중에 가드를
         # 끄지 않게. 사람을 기다리는 동안 온 호출은 이 잠금을 기다리지 않고 바로 거부된다.
         self._serial = asyncio.Lock()
@@ -169,7 +168,8 @@ class ToolboxBase:
 
     def _typed_values(self) -> tuple[str, ...]:
         entries = self._fill_log.entries
-        return carried_values(e.value for e in entries if e.action is FillAction.FILL and e.value)
+        logged = (e.value for e in entries if e.action is FillAction.FILL and e.value)
+        return carried_values((*logged, *self._private.values()))  # 가린 답도 URL 에 실리면 막는다
 
     # ------------------------------------------------------------------ snapshot·FillLog
     def _node(self, ref: str) -> SnapshotNode:
@@ -193,10 +193,17 @@ class ToolboxBase:
         return node
 
     def _record(
-        self, action: FillAction, node: SnapshotNode, source: FillSource | None, **what: Any
+        self,
+        action: FillAction,
+        node: SnapshotNode,
+        source: FillSource | None,
+        *,
+        withhold: bool = False,
+        **what: Any,
     ) -> None:
         assert self._snapshot is not None
         entry = fill_entry(
-            self._fill_log.next_seq, self._step, action, self._snapshot, node, source, **what
-        )
+            self._fill_log.next_seq, self._step, action, self._snapshot, node, source,
+            withhold=withhold, **what,
+        )  # fmt: skip
         self._fill_log = self._fill_log.append(entry)

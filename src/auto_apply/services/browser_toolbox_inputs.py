@@ -14,7 +14,7 @@ from auto_apply.contracts.browser_tools import (
     ToolResult,
     UploadInput,
 )
-from auto_apply.contracts.fill_log import FillAction
+from auto_apply.contracts.fill_log import FillAction, FillSource, FillSourceKind
 from auto_apply.contracts.page import UploadFile
 from auto_apply.domain.errors import NotFound
 from auto_apply.domain.page_elements import normalize_fill_value
@@ -29,13 +29,19 @@ class InputTools(ToolboxBase):
         # 브라우저가 한 줄 칸의 줄바꿈을 지운다 — 정리한 값을 넣고 그 값을 기록해
         # DOM 과 기록이 같게(§A4 L6).
         editable = node.tag not in ("input", "textarea")
+        hidden = self._held(data.source)
+        if hidden is None and not data.value and data.source.kind is FillSourceKind.USER:
+            # 가린 답 핸들로 비워 보냈는데 앱이 쥔 답이 없다(재시작 등) — 빈 칸으로 덮지 않는다
+            raise Refused(ToolError.INVALID_INPUT, "앱이 쥔 가린 답이 없다 — 다시 묻는다")
         value = normalize_fill_value(
-            node.tag, node.input_type, data.value, contenteditable=editable
-        )
+            node.tag, node.input_type, data.value if hidden is None else hidden,
+            contenteditable=editable,
+        )  # fmt: skip
         page = await self._page()
 
         def done(_: object) -> ToolResult:
-            self._record(FillAction.FILL, node, data.source, value=value)
+            withhold = hidden is not None
+            self._record(FillAction.FILL, node, data.source, value=value, withhold=withhold)
             return ToolResult(tool="fill", ok=True)
 
         action = partial(self._pages.fill, page, data.ref, value)
@@ -43,14 +49,27 @@ class InputTools(ToolboxBase):
 
     async def _select(self, data: SelectInput) -> ToolResult:
         node = self._input_node(data.ref)
+        hidden = self._held(data.source)
+        option = data.option if hidden is None else hidden
+        if not option:
+            raise Refused(ToolError.INVALID_INPUT, "option 이 비었고 source 가 가린 답이 아니다")
         page = await self._page()
 
         def done(chosen: str) -> ToolResult:
+            if hidden is not None:  # 가린 답이 고른 선택지는 에이전트에게도 보이지 않는다
+                self._record(FillAction.SELECT, node, data.source, value=chosen, withhold=True)
+                return ToolResult(tool="select", ok=True)
             self._record(FillAction.SELECT, node, data.source, value=chosen)
             return ToolResult(tool="select", ok=True, message=redact_text(chosen))
 
-        action = partial(self._pages.select, page, data.ref, data.option)
+        action = partial(self._pages.select, page, data.ref, option)
         return await self._guarded("select", page, GuardMode.RELAXED, action, done)
+
+    def _held(self, source: FillSource) -> str | None:
+        """source 가 ask_user 의 가린 답 핸들이면 그 값 — 에이전트가 준 값 대신 앱이 넣는다."""
+        if source.kind is FillSourceKind.USER and source.key is not None:
+            return self._private.get(source.key)
+        return None
 
     async def _check(self, data: CheckInput) -> ToolResult:
         node = self._input_node(data.ref)

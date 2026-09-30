@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from pydantic import ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from auto_apply.contracts._base import Frozen
-from auto_apply.contracts.fill_log import FillSource
+from auto_apply.contracts.fill_log import FillSource, FillSourceKind
 from auto_apply.contracts.page import PageSnapshot, Ref
 from auto_apply.contracts.submit_guard import GuardReport
 from auto_apply.domain.human_handoff import HandoffSignal
@@ -74,8 +74,15 @@ class FillInput(ToolInput):
 
 class SelectInput(ToolInput):
     ref: Ref
-    option: str = Field(min_length=1, max_length=500)  # 선택지 라벨(없으면 value 로도 찾는다)
+    # 선택지 라벨(없으면 value 로도 찾는다). 비워 두는 것은 가린 답(ask_user sensitive)을 고를 때뿐
+    option: str = Field(max_length=500)
     source: FillSource
+
+    @model_validator(mode="after")
+    def _option_or_hidden_answer(self) -> Self:
+        if not self.option and self.source.kind is not FillSourceKind.USER:
+            raise ValueError("option 이 비었다")
+        return self
 
 
 class CheckInput(ToolInput):
@@ -111,6 +118,16 @@ class RequestHumanInput(ToolInput):
     reason: str = Field(min_length=1, max_length=2000)  # 사람에게 부탁할 일 (CAPTCHA·본인인증 …)
 
 
+class AskUserInput(ToolInput):
+    question: str = Field(min_length=1, max_length=500)  # 사람에게 보일 질문 (답변 KB 의 키)
+    field_hint: str = Field(default="", max_length=200)  # 어느 칸인가 (라벨·형식)
+    options: tuple[Annotated[str, StringConstraints(min_length=1, max_length=200)], ...] | None = (
+        Field(default=None, min_length=1, max_length=50)
+    )
+    # 민감한 답(건강·가족 등) — 답변 KB 에 저장하지 않고 에이전트에게도 값을 보이지 않는다
+    sensitive: bool = False
+
+
 class ToolError(StrEnum):
     INVALID_INPUT = "invalid_input"
     UNKNOWN_TOOL = "unknown_tool"
@@ -135,6 +152,19 @@ class ToolError(StrEnum):
     NEEDS_LOGIN = "needs_login"  # request_login 을 사람이 끝내지 않았다(타임아웃·거절) — run 끝
     NEEDS_INPUT = "needs_input"  # request_human 을 사람이 끝내지 않았다 — run 끝
     RUN_LIMIT = "run_limit"  # run 의 도구 호출 수·시간 상한을 넘었다 — run 끝 (§A6)
+    # ask_user 에 사람이 답하지 않겠다고 했다 — run 은 계속된다(그 칸 없이 가거나 report_failure)
+    ANSWER_DECLINED = "answer_declined"
+
+
+class UserAnswer(Frozen):
+    """ask_user 의 답. `source` 를 fill·select 에 그대로 쓴다.
+
+    `value` 가 None 이면 가린 답이다(sensitive·고유식별정보) — 값은 앱만 쥐고, 그 source 로 부르면
+    앱이 채운다(fill value 는 비워 둔다). 에이전트·기록·transcript 에 값이 남지 않는다(절대 규칙 5).
+    """
+
+    source: FillSource
+    value: str | None = None
 
 
 class ToolResult(Frozen):
@@ -148,5 +178,6 @@ class ToolResult(Frozen):
     found: bool | None = None  # wait_for(text)
     # snapshot: 이 화면이 사람 몫으로 보이는 근거(로그인 벽·CAPTCHA·인증 코드) — 하네스가 판단한다
     handoff: HandoffSignal | None = None
+    answer: UserAnswer | None = None  # ask_user
     # 직전 결과 뒤로 하네스가 막은 것·처리한 대화상자 (창 사이에 사이트가 스스로 보낸 것 포함)
     guard: GuardReport = GuardReport()

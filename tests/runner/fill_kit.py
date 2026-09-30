@@ -1,7 +1,7 @@
 """fill run 핸들러 테스트 공용 — 대역 브라우저·사이트·스크립트 걸음·조립 (§A6)."""
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from auto_apply.adapters.agent.scripted import ScriptedAgentRuntime, ScriptedCall, ScriptStep
@@ -20,7 +20,9 @@ from auto_apply.domain.enums import ApplicationState as S
 from auto_apply.domain.errors import ProfileNotFound
 from auto_apply.ports.agent import AgentRuntime
 from auto_apply.runner.fill import FillRunHandler
+from auto_apply.runner.fill_reentry import FillReentry, HeldAnswers
 from auto_apply.services.browser_toolbox import BrowserToolbox
+from auto_apply.services.profile import ProfileService
 from auto_apply.services.run_artifacts import RunArtifacts
 from tests.runner.kit import T0, Rig
 from tests.toolbox_kit import FakeDocuments
@@ -106,7 +108,7 @@ class FakeProfiles:
 
 class FillRig(Rig):
     def __init__(self, tmp_path: Path, *, human: Sequence[HumanStep] = ()) -> None:
-        db = InMemoryDatabase()
+        db = self.db = InMemoryDatabase()
         super().__init__(lambda: InMemoryUnitOfWork(db))
         self.store = InMemoryBlobStore()
         self.artifacts = RunArtifacts(self.store)
@@ -114,10 +116,16 @@ class FillRig(Rig):
         self.driver = FakeGuardedPageDriver(self.host, sites())
         self.gate = ScriptedHumanGate(human)
         self.toolboxes: list[BrowserToolbox] = []
+        self.profiles = ProfileService(self.uow, self.clock, self.ids)
+        self.held = HeldAnswers()
+        self.human_wait_s = 1.0
 
-    def make_toolbox(self, record: ApplicationRecord, run_id: str) -> BrowserToolbox:
+    def make_toolbox(
+        self, record: ApplicationRecord, run_id: str, held: Mapping[str, str]
+    ) -> BrowserToolbox:
         box = BrowserToolbox(
-            self.host, self.driver, FakeDocuments({}), human_gate=self.gate, human_wait_s=1.0,
+            self.host, self.driver, FakeDocuments({}), human_gate=self.gate,
+            human_wait_s=self.human_wait_s, answers=self.profiles, held_answers=held,
             user_id="local", application_id=record.application_id, run_id=run_id,
         )  # fmt: skip
         self.toolboxes.append(box)
@@ -129,7 +137,11 @@ class FillRig(Rig):
         return FillRunHandler(
             self.uow, self.apps, self.artifacts, runtime, self.make_toolbox,
             FakeProfiles(profile), self.clock, self.ids, limits=limits,
+            answers=self.profiles, held=self.held,
         )  # fmt: skip
+
+    def reentry(self, enqueue) -> FillReentry:
+        return FillReentry(self.uow, self.apps, self.artifacts, self.profiles, self.held, enqueue)
 
     async def queued(self) -> tuple[str, JobRecord]:
         app = await self.app_in(S.QUEUED)

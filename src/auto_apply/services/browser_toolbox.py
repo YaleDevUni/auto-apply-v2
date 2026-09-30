@@ -3,8 +3,8 @@
 LLM 이 만든 인자는 `call()` 에서 Pydantic 검증을 통과해야만 브라우저에 닿는다(절대 규칙 4). 페이지를
 건드리는 도구는 전부 SubmitGuard 창 안에서 돈다(§A4) — 하네스를 못 켜면 동작하지 않는다.
 fill·select·check·upload 가 성공하면 FillLog 에 근거와 함께 남긴다 — 에이전트는 기록을 직접 쓰지
-못한다. 도구 호출은 한 번에 하나씩 돌고, 사람을 기다리는 동안(request_login·request_human)은
-받지 않는다.
+못한다. 도구 호출은 한 번에 하나씩 돌고, 사람을 기다리는 동안(request_login·request_human·
+ask_user)은 받지 않는다.
 """
 
 from collections.abc import Awaitable, Callable, Mapping
@@ -26,8 +26,10 @@ from auto_apply.contracts.submit_guard import ReviewRecord
 from auto_apply.domain.errors import PageActionFailed, SubmitGuardUnavailable
 from auto_apply.domain.submit_guard_policy import GuardMode, carries_input
 from auto_apply.domain.url_policy import is_forbidden_url
-from auto_apply.services.browser_toolbox_base import DocumentReader, Refused
+from auto_apply.services.browser_toolbox_ask import AskTools
+from auto_apply.services.browser_toolbox_base import Refused
 from auto_apply.services.browser_toolbox_click import ClickTools
+from auto_apply.services.browser_toolbox_deps import AnswerSink, DocumentReader
 from auto_apply.services.browser_toolbox_inputs import InputTools
 from auto_apply.services.browser_toolbox_record import (
     HANDOFF_HINTS,
@@ -35,23 +37,28 @@ from auto_apply.services.browser_toolbox_record import (
     fail,
     handoff_signal,
 )
-from auto_apply.services.browser_toolbox_redact import redact_snapshot, redact_target, redact_text
+from auto_apply.services.browser_toolbox_redact import (
+    hide_values,
+    redact_snapshot,
+    redact_target,
+    redact_text,
+)
 from auto_apply.services.browser_toolbox_specs import TOOLS
 from auto_apply.services.submit_guard import classify_target
 
-__all__ = ["BrowserToolbox", "DocumentReader"]
+__all__ = ["AnswerSink", "BrowserToolbox", "DocumentReader"]
 WAIT_TEXT_TIMEOUT_MS = 10_000
 _HANDLERS = {
     "snapshot": "_do_snapshot", "navigate": "_navigate", "back": "_back", "scroll": "_scroll",
     "wait_for": "_wait_for", "click": "_click", "fill": "_fill", "select": "_select",
     "check": "_check", "upload": "_upload", "ready_for_review": "_ready_for_review",
     "report_failure": "_report_failure", "request_login": "_request_login",
-    "request_human": "_request_human",
+    "request_human": "_request_human", "ask_user": "_ask_user",
 }  # fmt: skip
 assert _HANDLERS.keys() == TOOLS.keys()  # 정의와 실행이 어긋나면 import 부터 실패
 
 
-class BrowserToolbox(InputTools, ClickTools):
+class BrowserToolbox(InputTools, ClickTools, AskTools):
     """run 하나의 도구 상자. 탭은 BrowserHost 의 작업 탭 하나다(새 탭·팝업 조작은 없다).
 
     `step` 은 시작 페이지 단계 — 단계 이동(D17)으로 새 입력 화면에 닿을 때마다 +1 되고 FillLog
@@ -100,7 +107,8 @@ class BrowserToolbox(InputTools, ClickTools):
         report, evidence = await self._guard.observe(page)
         if evidence is not None:
             return self._stop("snapshot", evidence, report)
-        self._snapshot = redact_snapshot(await self._pages.snapshot(page))
+        seen = hide_values(await self._pages.snapshot(page), self._private.values())
+        self._snapshot = redact_snapshot(seen)
         signal = handoff_signal(self._snapshot)
         return ToolResult(
             tool="snapshot", ok=True, snapshot=self._snapshot, guard=report, handoff=signal,

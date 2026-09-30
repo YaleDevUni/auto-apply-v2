@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     approval_timeout_hours: int = Field(default=72, ge=1)
     # 이 라운드를 넘으면 사람에게 넘긴다 — 무한 재생성 루프를 만들지 않는다
     max_revisions: int = Field(default=10, ge=1)
+    # run 이 사람(로그인·CAPTCHA·ask_user 질문)을 기다리는 최대 초 (§A5)
+    # — 넘기면 NEEDS_LOGIN/NEEDS_INPUT 으로 끝나고, 늦은 답은 재진입 run 이 받는다
+    human_wait_s: float = Field(default=600.0, ge=1, le=24 * 3600)
 
     # 이력서 블록 개수 안전 상한 (domain/resume_blocks.select_relevant_blocks). 몇 개를 보여줄지는
     # 가이드 + LLM 판단이 정하고, 이 값은 fact 가 비정상적으로 많을 때의 프롬프트 폭주 방지판이다.

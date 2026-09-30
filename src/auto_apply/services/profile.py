@@ -139,6 +139,23 @@ class ProfileService:
             await uow.commit()
         return row
 
+    async def remember_answer(
+        self, user_id: str, question: str, answer: str, *, application_id: str | None
+    ) -> Answer:
+        """실행 중 ask_user 로 받은 답 (D10) — 같은 질문 키가 있으면 사람이 방금 준 답으로 갱신."""
+        key = normalize_question_key(question)
+        async with self._uow() as uow:
+            current = await uow.answers.find(user_id, key)
+            row = Answer(
+                id=current.id if current else self._idgen.new_id("ans"),
+                user_id=user_id, question_key=key, answer=answer,
+                source_application_id=current.source_application_id if current else application_id,
+                updated_at=self._clock.now(),
+            )  # fmt: skip
+            await uow.answers.save(row)
+            await uow.commit()
+        return row
+
     async def delete_answer(self, user_id: str, answer_id: str) -> None:
         async with self._uow() as uow:
             await _owned_answer(uow, user_id, answer_id)

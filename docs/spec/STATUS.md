@@ -4,7 +4,7 @@
 
 ## 현재
 - 마일스톤: **M3 · 에이전트 런타임 · 채우기(fill) run** (M2 완료)
-- 다음 태스크: **T3.3** AgentRuntime port·Scripted·fill run 핸들러 → T3.4 … T3.7
+- 다음 태스크: **T3.4** ask_user·답변 KB·재진입 run → T3.5 … T3.7
 - **병렬 실행 금지**(사용자 지시 2026-09-30, 메모리 부족) — 서브에이전트는 한 번에 하나.
 - 차단 요소: 없음
 - 결정: `.env.v2.bak` 보존(사용자 지시, 손대지 않음). `main` 은 M1 완료 시 push.
@@ -14,14 +14,8 @@
   v2 는 `legacy/v2-telegram-recipe` 브랜치로 보존(origin push 완료).
 - **M0 완료**(T0.1~T0.4): v2 코드·Temporal·Postgres·S3 제거, SQLite+Alembic(append-only 이력), `auto-apply` 진입점·JobRunner 뼈대·§A2 arch,
   v2 문서 삭제. 로컬 v2 데이터 삭제, `.env` 는 `.env.v2.bak` 백업 후 재생성. 세부는 각 커밋.
-- T1.1 프로필·경험·답변KB·문서 SQLite 전환 — 검증 PASS_WITH_NOTES. 주민번호 미탐(전각·구분자·zero-width)과
-  model_copy 우회를 NFKC 정규화 + 저장 시점 재검사로 막아 amend. user_id 컬럼은 port 호환상 유지.
-- T1.2 ProfileService·REST API·로컬 보안 — 검증 PASS_WITH_NOTES. 직접 만든 multipart 파서 결함 5개 → python-multipart 교체,
-  BlobStore.delete, 개발 전용 CORS·/docs 를 개발 모드로 한정해 amend. 토큰 강화는 M7 이관. 이후 검증은 구현 에이전트 자체 검증으로 전환.
-- T1.4 웹 콘솔 — TanStack Router·레이아웃·인적사항 화면·vitest. 브라우저 실기동 자체 검증. 웹 게이트 make check 편입은 T1.5 이관.
-- T1.3 이력서 초안 추출·v2 yaml 임포터 — 보강 라운드: 주민번호 LLM 전 가림, 초안 목록 API, 업로드 본문 주민번호 거부,
-  온보딩 전용 업로드 경로(문서 비저장). 동기 LLM 추출의 JobRunner 이전은 M3.
-- T1.5 웹 경험·답변·문서·온보딩 + make check 웹 게이트 — 자체 검증에서 경험 링크 `javascript:` XSS 발견·수정. **M1 완료.**
+- **M1 완료**(T1.1~T1.5): 프로필·경험·답변KB·문서 SQLite, ProfileService·REST·로컬 보안(설치 토큰·Host/Origin), 이력서 초안 추출·v2 임포터,
+  웹 콘솔(TanStack Router) 전 화면 + make check 웹 게이트. 주민번호 우회(전각·구분자)·multipart·XSS 결함은 자체 검증에서 수정.
 - T2.2 제출 클릭 분류기(허용 목록·애매하면 Risky)·완료 어휘. type=submit "다음" 다단계 문제는 T2.5 설계 과제로 이관.
 - T2.1 BrowserHost — 설치 Chrome 탐지·전용 프로필 잠금·기본 프로필 거부(D6)·지연 기동. Windows 잠금 분기 실측은 M7.
 - T2.3 테스트 짐 — 픽스처 12종·제출 기록 서버·매니페스트, 하네스 없이는 12종 모두 제출됨(양성 대조). GET 탐색 제출 빈틈은 T2.5 설계 과제.
@@ -36,6 +30,8 @@
   지적: 크래시 복구 SUBMITTING→FAILED 는 '제출됐을 수 있음'을 숨김 → T3.2 에서 INCIDENT 로. 16만 토큰·62회(교대 기준 근처).
 - T3.2 JobRunner(jobs 0004·run_after 백오프·브라우저 슬롯 1)·재시도 분류(모르는 예외 FATAL, submit 은 절대 재시도 안 함)·크래시 복구
   (SUBMITTING→INCIDENT 반영). SQLite BEGIN IMMEDIATE 로 동시 claim 수정. job/run DTO 가 ports/ 에 있음 — T3.3 에서 contracts/ 로.
+- T3.3 AgentRuntime port·Scripted·fill run(도구 결과만 상태에 영향, 한도 200회·1800초) — 한도로 중단 → 핸드오프 교대. 프롬프트 프로필 키가
+  FillSource 패턴과 어긋나던 버그를 자체 검증에서 발견·수정. job/run DTO contracts/ 이동·errors.py 분리 완료.
 
 ## 열린 질문 (다음 마일스톤 시작 전에 사용자에게)
 - (백로그) 부하 시 `tests/api/test_profile_api.py::test_experience_crud[memory]` 1회 실패(재현 안 됨) — 플레이키 여부 조사.

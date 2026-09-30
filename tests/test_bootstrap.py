@@ -3,7 +3,9 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from alembic import command
+from pydantic import ValidationError
 
 from auto_apply.adapters.browser.playwright_host import PlaywrightBrowserHost
 from auto_apply.adapters.facts.repository import RepositoryFactSource
@@ -165,3 +167,12 @@ async def test_fill_handler_is_registered_and_fails_closed_without_runtime():
     await fill(job)
     assert await c.applications.current_state(app.application_id) is ApplicationState.FAILED
     assert c.browser.running is False
+
+
+def test_human_wait_is_a_setting_and_reentry_is_wired():
+    """T2.6 이관 — 사람 대기 상한은 설정(HUMAN_WAIT_S), 늦은 답 → 재진입 run 통로가 조립된다."""
+    assert Settings().human_wait_s == 600
+    with pytest.raises(ValidationError):
+        Settings(human_wait_s=0)
+    c = build_container(Settings(storage="memory", repository="memory", human_wait_s=30))
+    assert c.reentry is not None

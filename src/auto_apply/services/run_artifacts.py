@@ -1,12 +1,14 @@
-"""run 이 남기는 기록 — FILL 종료 기록(ReviewRecord)과 입력 기록(FillLog) (§A3 runs, §A5).
+"""run 이 남기는 기록 — 종료 기록(ReviewRecord)·입력 기록(FillLog)·못 끝낸 사람 일 (§A3 runs, §A5).
 
 BlobStore 의 `runs/<run_id>/` 아래 JSON 으로 둔다. 승인 화면(M4)은 ReviewRecord 를,
-재진입 run(T3.4)은 직전 run 의 FillLog 부분 기록을 읽는다. 두 DTO 모두 고유식별정보가 있으면
-만들어지지 않는다(절대 규칙 5) — 저장 직전에 한 번 더 본다.
+재진입 run(T3.4)은 직전 run 의 FillLog 부분 기록과 답이 안 온 질문(HumanTask)을 읽는다.
+셋 다 고유식별정보가 있으면 만들어지지 않는다(절대 규칙 5) — 저장 직전에 한 번 더 본다.
+사람의 답은 여기 없다(HumanTask 는 질문만 싣는다).
 """
 
 from auto_apply.contracts._base import ensure_identifier_free
 from auto_apply.contracts.fill_log import FillLog
+from auto_apply.contracts.human_gate import HumanTask
 from auto_apply.contracts.submit_guard import ReviewRecord
 from auto_apply.domain.errors import BlobNotFound
 from auto_apply.ports.storage import BlobStore
@@ -41,6 +43,17 @@ class RunArtifacts:
     async def load_fill_log(self, run_id: str) -> FillLog | None:
         data = await self._get(_key(run_id, "fill_log"))
         return None if data is None else FillLog.model_validate_json(data)
+
+    async def save_human_task(self, run_id: str, task: HumanTask) -> None:
+        """run 이 사람을 기다리다 끝났다(NEEDS_INPUT·NEEDS_LOGIN) — 무엇을 기다렸나."""
+        ensure_identifier_free(task)
+        await self._store.put(
+            _key(run_id, "human_task"), task.model_dump_json().encode(), content_type=_JSON
+        )
+
+    async def load_human_task(self, run_id: str) -> HumanTask | None:
+        data = await self._get(_key(run_id, "human_task"))
+        return None if data is None else HumanTask.model_validate_json(data)
 
     async def _get(self, key: str) -> bytes | None:
         try:

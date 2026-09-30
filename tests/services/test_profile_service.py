@@ -158,6 +158,16 @@ async def test_answer_same_normalized_key_conflicts(svc):
         await svc.update_answer("u1", other.id, "입사 가능일", "서울")
 
 
+async def test_remember_answer_upserts_by_question_key(svc):
+    first = await svc.remember_answer("u1", "희망 연봉?", "4000", application_id="app_1")
+    again = await svc.remember_answer("u1", " 희망  연봉 *", "4500", application_id="app_2")
+    assert again.id == first.id and again.answer == "4500"
+    assert again.source_application_id == "app_1"  # 처음 받은 지원 건
+    assert [a.answer for a in await svc.list_answers("u1")] == ["4500"]
+    with pytest.raises(ValidationError):
+        await svc.remember_answer("u1", "번호", RRN, application_id=None)
+
+
 async def test_answer_rrn_rejected(svc):
     with pytest.raises(ValidationError):
         await svc.create_answer("u1", "주민등록번호", RRN)

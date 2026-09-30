@@ -12,6 +12,7 @@ from types import MappingProxyType
 
 from auto_apply.contracts.agent import AgentTool
 from auto_apply.contracts.browser_tools import (
+    AskUserInput,
     BackInput,
     CheckInput,
     ClickInput,
@@ -95,6 +96,18 @@ _SPECS = (
         " 기다리는 동안 다른 도구는 거부되고, 끝나면 snapshot 부터 다시 본다."
         " 사람이 제때 끝내지 못하면 needs_input 으로 run 이 끝난다. reason 은 사람에게 보인다.",
         RequestHumanInput,
+    ),
+    ToolSpec(
+        "ask_user",
+        "프로필·답변 KB 에 없는 값이 필요할 때 사람에게 묻는다. 사람이 웹 화면에서 답할 때까지"
+        " 기다리고, 그동안 다른 도구는 awaiting_human 으로 거부된다."
+        " 답은 answer 로 온다 — 넣을 때 answer.source 를 그대로 쓴다. answer.value 가 없으면"
+        ' 민감한 답이라 앱만 값을 쥔다: fill(value="")·select(option="") 에'
+        " 그 source 를 넣으면 앱이 채운다."
+        " sensitive=true 면 답을 저장하지 않는다(건강·가족처럼 민감한 문항)."
+        " 사람이 제때 답하지 않으면 needs_input 으로 run 이 끝나고, 답이 오면 다시 이어서 연다."
+        " 주민등록번호는 묻지 않는다.",
+        AskUserInput,
     ),
     ToolSpec(
         "ready_for_review",

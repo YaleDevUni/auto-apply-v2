@@ -236,7 +236,7 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
 | `fill(ref, value, source)` · `select(ref, option, source)` · `check(ref, on, source)` | `source` = 근거(profile 필드 / fact_id / answer_kb / generated / user). FillLog 에 자동 기록 |
 | `upload(ref, document_id)` | 앱이 관리하는 파일만 (임의 경로 금지) |
 | `generate_document(kind, …)` | 공고맞춤 이력서/포트폴리오 PDF, 자소서 문항 답변 — DocumentService 호출(§A7) |
-| `ask_user(question, field_hint, options?, sensitive?)` | 실행 일시정지 → UI 질문. `sensitive=true` 면 답변 KB 에 저장 안 함 |
+| `ask_user(question, field_hint, options?, sensitive?)` | 실행 일시정지 → UI 질문. `sensitive=true` 면 답변 KB 에 저장 안 함, 에이전트도 값을 못 봄 |
 | `request_login(site)` · `request_human(reason)` | 로그인 벽 · CAPTCHA·본인인증 → 사람 핸드오프(가드 꺼짐, 도구 거부) 후 재개 |
 | `ready_for_review(submit_ref, notes)` | FILL 종료. 제출 대상 요소 기술자(선택자 후보·텍스트·위치)와 FillLog 확정 |
 | `report_failure(reason)` | 진행 불가 |
@@ -267,8 +267,27 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   source, value|checked|document_id)` 로 쌓는다(fill 값은 정규화한 값, §A4). `source={kind, key}` — profile·fact·answer_kb 는 key 필수,
   generated·user 는 선택, upload 는 문서가 근거라 없다. 값에 주민등록번호 꼴이 있으면 사이트엔 넣되 기록하지 않고
   `withheld=true`(재입력 때 다시 묻는다, 절대 규칙 5). snapshot·`report_failure` 이유도 에이전트·기록에 넘기기 전에 같은 꼴을 가린다.
-- `ask_user`/`request_login` 은 도구 호출이 UI 응답(asyncio Future)을 **최대 N분**(설정) 기다린다. 넘기면 run 을 `NEEDS_INPUT` 으로
-  (`request_login` 은 `NEEDS_LOGIN`) 종료하고, 답이 오면 **재진입 run** 이 FillLog 부분 기록부터 이어간다 (D8 과 같은 메커니즘).
+- `ask_user`/`request_login` 은 도구 호출이 UI 응답(asyncio Future)을 **최대 `HUMAN_WAIT_S`초**(기본 600) 기다린다. 넘기면 run 을
+  `NEEDS_INPUT` 으로(`request_login` 은 `NEEDS_LOGIN`) 종료하고, 답이 오면 **재진입 run** 이 FillLog 부분 기록부터 이어간다 (D8 과 같은 메커니즘).
+- **ask_user (T3.4, D10)** — `services/browser_toolbox_ask.py`. 같은 HumanGate 통로(`HumanTaskKind.QUESTION`, 질문·field_hint·
+  options·sensitive 를 싣고 답은 `HumanReply.answer`). 사람은 브라우저가 아니라 웹 UI 에서 답하므로 **가드를 끄지 않는다**
+  (다른 도구 호출은 기다리는 동안 `AWAITING_HUMAN`). 끝난 모양: 답 → 결과 `answer{source, value}` 로 run 계속 · 거절·빈 답 →
+  `answer_declined`(run 계속 — 그 칸 없이 가거나 report_failure) · 타임아웃 → `NEEDS_INPUT` 으로 run 끝.
+  - 보통 답: 답변 KB 에 upsert(`ProfileService.remember_answer`, 같은 질문 키면 갱신, 출처 지원 건은 처음 것 유지) →
+    `source={answer_kb, 답변 id}` 와 값을 에이전트에게. KB 저장이 실패해도 답은 `source={user}` 로 이번 run 에 쓴다.
+  - **가린 답**(`sensitive=true` 또는 주민등록번호 꼴, 절대 규칙 5): KB·DB·job payload·run 기록·로그에 싣지 않고 **에이전트에게도
+    값을 주지 않는다**(transcript 가 곧 기록이라). 값은 toolbox 메모리(핸들 = 질문 id)에만 있고, 에이전트는
+    `fill(value="")`·`select(option="")` 에 받은 `source={user, key: 핸들}` 을 넣는다 — 앱이 값을 넣고 FillLog 는 `withheld`.
+    snapshot 은 그 값이 든 칸의 값을 `(가린 답)` 으로 바꿔 보낸다(짧은 답이면 다른 칸도 가릴 수 있다 — 닫힌 쪽). 가린 답은 L3
+    GET 대조(입력값이 URL 에 실리는가)에도 들어간다. 핸들이 없는데 빈 값으로 fill 하면 거부(빈 칸으로 덮지 않는다).
+  - **재진입 run**(`runner/fill_reentry.py`): 타임아웃이면 run 이 질문(HumanTask, 답 없음)을 `runs/<run_id>/human_task.json` 에
+    남긴다. 사람이 나중에 `FillReentry.answer(run_id, 답)`(Container.reentry, UI 는 M4) — 지원 건이 NEEDS_INPUT 이고 이미
+    대기·실행 중인 fill job 이 없을 때만 — 답을 위 규칙대로 갈무리(가린 답은 `HeldAnswers`, 프로세스 메모리)하고 fill job 을
+    넣는다(payload `{resume_from: run_id, answer: source}` — 값 없음). 새 run 은 같은 URL 을 처음부터 열고, 프롬프트
+    `[이어서 — 직전 run]` 절에 직전 FillLog(단계·칸·값·source, withheld 는 "값 기록 안 됨")와 받은 답을 받아 값을 다시 넣는다(새
+    FillLog 에 새로 쌓인다). 가린 답은 NEEDS_* 로 끝나면 다음 재진입 몫으로 남기고, 다른 끝(승인 대기·실패·INCIDENT)이면 버린다.
+    앱이 다시 시작돼 가린 답이 사라졌으면 프롬프트가 다시 묻게 한다.
+  - fill 프롬프트는 `[답변 KB]` 절에 사용자의 답변 전체(`id: 질문 키 → 답`)를 싣는다 — 에이전트는 프로필·KB 에 없을 때만 묻는다.
 - **사람 핸드오프(T2.6)**: 기다리는 통로는 `ports/human_gate.HumanGate`(`wait(task, timeout_s)`·`pending()`·`answer(id, reply)`)
   — 구현은 `adapters/human_gate/memory.py`(asyncio Future, 앱이 단일 프로세스라 이것이 실제) · `scripted.py`(사람 대신 미리 적은
   대로 답하는 대역). UI 연결(M3/M4)은 `pending()` 을 보여 주고 `answer()` 한다. 일(`HumanTask`)에는 에이전트의 말(site·reason)과
@@ -278,7 +297,7 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   있으면 `INCIDENT` 다(사람이 스스로 제출한 경우 포함). `TIMED_OUT`·`DECLINED` 면 `NEEDS_LOGIN`/`NEEDS_INPUT` 결과로 run 이
   끝나고(`BrowserToolbox.needs_human`), 사람이 계속 쓰도록 가드는 꺼 둔다(`close()` 와 같다). 도구 호출은 **직렬**(asyncio
   Lock) — 핸드오프가 다른 동작의 창 도중에 가드를 끄지 못하고, 기다리는 동안 온 호출은 잠금을 기다리지 않고 바로
-  `AWAITING_HUMAN` 이다. 대기 상한은 `BrowserToolbox(human_wait_s=…)`(기본 600초) — 설정 키는 M3 bootstrap 에서.
+  `AWAITING_HUMAN` 이다. 대기 상한은 `BrowserToolbox(human_wait_s=…)` — 설정 `HUMAN_WAIT_S`(기본 600초, T3.4).
 - 사람 몫 감지(`domain/human_handoff.py`, 순수): 보이는 비밀번호 칸(autocomplete 포함)·로그인 주소(경로 조각이 정확히
   login·signin·auth·sso·oauth… 이거나 호스트 첫 이름이 accounts·login·nid…) → 로그인 벽, one-time-code 칸 → 본인인증,
   CAPTCHA 제공자 프레임(reCAPTCHA·hCaptcha·Turnstile…) 안의 누를 수 있는 요소·"로봇이 아닙니다"·"자동입력 방지"·보안문자 칸 →
@@ -342,7 +361,8 @@ describe/click/read_text/submit_target`), 대역은 `adapters/browser/fake_guard
   생성 시점, 그리고 검증기를 건너뛴 값(`model_copy(update=)`·`model_construct`)을 위해 repository `save` 시점(sqlite·memory 공통).
   규칙은 `domain/unique_identifiers.py` 한 곳: NFKC 정규화(전각 숫자) + zero-width 제거 뒤, 생년월일 꼴 6자리 + 구분자(하이픈 계열·`.`·`_`·`/`·공백·없음)
   + 7자리. 에러 메시지·로그에 입력값을 싣지 않는다.
-- **AnswerKB**: (정규화 질문 키, 답, 출처 지원 건, 갱신일). 에이전트가 먼저 조회, 없으면 `ask_user`.
+- **AnswerKB**: (정규화 질문 키, 답, 출처 지원 건, 갱신일). fill 프롬프트에 전부 실리고(§A5), 없으면 `ask_user` 로 묻고 답을 upsert
+  (`sensitive`·주민번호 꼴 답은 저장 안 함).
   정규화(`domain/question_key.py`): NFKC → zero-width 제거 → casefold → 공백 하나로 접기 → 앞뒤 문장부호·기호
   (`*`·`?`·`:`) 제거. 공백은 지우지 않는다 — 질문 원문 필드가 없어 키가 곧 화면 표시다. 같은 키 생성은 409, 덮어쓰기는 PUT 으로.
 - **Document**: 사용자 업로드 고정 파일 / 생성 파일(PDF) — 버전·생성 근거(fact_ids) 보관.

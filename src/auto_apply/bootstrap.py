@@ -6,7 +6,7 @@
 
 import os
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,6 +46,7 @@ from auto_apply.ports.resume import ResumeGenerator, ResumeReviewer
 from auto_apply.ports.storage import BlobStore
 from auto_apply.ports.text_extract import DocumentTextExtractor
 from auto_apply.runner.fill import FillRunHandler
+from auto_apply.runner.fill_reentry import FillReentry, HeldAnswers
 from auto_apply.runner.job_runner import JobRunner
 from auto_apply.services.application import ApplicationService
 from auto_apply.services.browser_toolbox import BrowserToolbox
@@ -80,8 +81,10 @@ class Container:
     # 첫 사용 때 뜨고 앱 종료 때 닫힌다(api/main.py lifespan). 대역은 테스트 전용이라
     # 설정 선택지가 없다.
     browser: BrowserHost
-    # run 이 사람(로그인·CAPTCHA)을 기다리는 통로 — UI 가 pending()·answer() 한다 (§A5)
+    # run 이 사람(로그인·CAPTCHA·질문)을 기다리는 통로 — UI 가 pending()·answer() 한다 (§A5)
     human_gate: HumanGate
+    # 답이 늦게 온 ask_user 질문 → 재진입 fill run (D8·D10). UI 연결은 M4
+    reentry: FillReentry
     # 변경 API 가 요구하는 설치별 토큰 (§A10). 웹은 `GET /api/session` 으로 받는다.
     session_token: str
 
@@ -214,18 +217,27 @@ def build_container(cfg: Settings) -> Container:
     # 정해져 아직 여기 없다 — T3.5 가 서버 출처를 넘긴다.
     forbidden = (cfg.web_cors_origin,) if cfg.web_cors_origin else ()
 
-    def toolbox(record: ApplicationRecord, run_id: str) -> BrowserToolbox:
+    profiles = ProfileService(uow, clock, idgen)
+    held = HeldAnswers()  # 가린 답은 프로세스 메모리에만 (절대 규칙 5)
+
+    def toolbox(
+        record: ApplicationRecord, run_id: str, hidden: Mapping[str, str]
+    ) -> BrowserToolbox:
         return BrowserToolbox(
-            browser, pages, uploads, human_gate=human_gate, user_id=DEFAULT_USER_ID,
+            browser, pages, uploads, human_gate=human_gate, human_wait_s=cfg.human_wait_s,
+            answers=profiles, held_answers=hidden, user_id=DEFAULT_USER_ID,
             application_id=record.application_id, run_id=run_id, forbidden_origins=forbidden,
         )  # fmt: skip
 
     # 실제 런타임(ClaudeCli)은 T3.6. 그때까지 빈 스크립트라 fill run 은 도구를 하나도 부르지 않고
     # (브라우저도 띄우지 않고) FAILED 로 닫힌다.
+    artifacts = RunArtifacts(store)
     fill = FillRunHandler(
-        uow, applications, RunArtifacts(store), ScriptedAgentRuntime(), toolbox, profile,
-        clock, idgen,
+        uow, applications, artifacts, ScriptedAgentRuntime(), toolbox, profile, clock, idgen,
+        answers=profiles, held=held,
     )  # fmt: skip
+    # revise·submit·generate 는 이후 카드가 등록한다 — 없는 kind 는 FAILED.
+    runner = JobRunner(uow, applications, clock, idgen, handlers={JobKind.FILL: fill})
     return Container(
         settings=cfg,
         clock=clock,
@@ -240,13 +252,13 @@ def build_container(cfg: Settings) -> Container:
         profile=profile,
         guide=guide,
         documents=DocumentService(generator, reviewer, pdf),
-        profiles=ProfileService(uow, clock, idgen),
+        profiles=profiles,
         uploads=uploads,
         drafts=ProfileDraftService(uow, store, uploads, extractor, llm, clock, idgen),
         applications=applications,
-        # revise·submit·generate 는 이후 카드가 등록한다 — 없는 kind 는 FAILED.
-        runner=JobRunner(uow, applications, clock, idgen, handlers={JobKind.FILL: fill}),
+        runner=runner,
         browser=browser,
         human_gate=human_gate,
+        reentry=FillReentry(uow, applications, artifacts, profiles, held, runner.enqueue),
         session_token=ensure_session_token(cfg.session_token_path),
     )

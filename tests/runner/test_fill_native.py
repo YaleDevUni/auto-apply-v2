@@ -56,3 +56,43 @@ async def test_scripted_fill_run_on_gym_reaches_approval_without_submitting(rig,
     assert review is not None and review.step == 3
     entries = review.fill_log.entries
     assert [(e.step, e.value) for e in entries] == [(1, "홍길동"), (2, "백엔드 3년")]
+
+
+async def test_ask_user_timeout_then_reentry_run_reaches_approval(rig, gym):
+    """ask_user 타임아웃 → NEEDS_INPUT → 늦은 답 → 재진입 run → AWAITING_APPROVAL."""
+    rig.human_wait_s = 0.05  # 아무도 답하지 않는다
+    first = scripted(
+        [
+            ScriptedCall("navigate", {"url": gym.entry_url(SITE)}),
+            ScriptedCall("snapshot"),
+            step("fill", ref=ref("이름"), value="홍길동", source=PROFILE),
+            step("click", ref=ref("다음")),
+            ScriptedCall("ask_user", {"question": "경력 요약"}),
+        ]
+    )
+    app, job = await rig.queued()
+    await rig.handler(first)(job)
+    assert await rig.state(app) is S.NEEDS_INPUT
+    run1 = (await rig.run_record(app)).run_id
+
+    again = await rig.reentry(rig.runner({}).enqueue).answer(run1, "백엔드 3년")
+    kb = again.payload["answer"]
+    second = scripted(
+        [
+            ScriptedCall("navigate", {"url": gym.entry_url(SITE)}),
+            ScriptedCall("snapshot"),
+            step("fill", ref=ref("이름"), value="홍길동", source=PROFILE),
+            step("click", ref=ref("다음")),
+            ScriptedCall("snapshot"),
+            step("fill", ref=ref("경력 요약"), value="백엔드 3년", source=kb),
+            step("click", ref=ref("저장 후 계속")),
+            ScriptedCall("snapshot"),
+            step("ready_for_review", submit_ref=ref("제출하기")),
+        ]
+    )
+    await rig.handler(second)(again)
+
+    assert all(r.ok for r in second.replies), [r.content for r in second.replies if not r.ok]
+    assert "[이어서 — 직전 run]" in second.seen_prompt
+    assert await rig.state(app) is S.AWAITING_APPROVAL
+    assert gym.final_submissions(SITE) == []  # 제출 0건

@@ -80,14 +80,16 @@ def fill_entry(
     value: str | None = None,
     checked: bool | None = None,
     document_id: str | None = None,
+    withhold: bool = False,
 ) -> FillEntry:
     """`node`(snapshot 의 한 줄)에 한 동작의 기록.
 
-    값에 주민등록번호 꼴이 있으면 값 없이 `withheld` — 승인 뒤 재입력 때 다시 묻는다.
+    값에 주민등록번호 꼴이 있거나 가린 답(`withhold`, ask_user sensitive)이면 값 없이 `withheld`
+    — 승인 뒤 재입력 때 다시 묻는다.
     """
     assert node.ref is not None
     url = _frame_url(snapshot, node)
-    withheld = value is not None and contains_resident_registration_number(value)
+    withheld = value is not None and (withhold or contains_resident_registration_number(value))
     return FillEntry(
         seq=seq,
         step=step,

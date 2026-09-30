@@ -36,3 +36,19 @@ async def test_identifier_smuggled_past_validation_is_not_stored():
     with pytest.raises(UniqueIdentifierRejected):
         await RunArtifacts(store).save_fill_log("run_1", smuggled)
     assert await store.list_keys("runs/") == []
+
+
+async def test_human_task_round_trip_carries_the_question_not_the_answer():
+    from auto_apply.contracts.human_gate import HumanTask, HumanTaskKind
+
+    artifacts = RunArtifacts(InMemoryBlobStore())
+    task = HumanTask(
+        id="t1", kind=HumanTaskKind.QUESTION, application_id="app_1", run_id="run_1",
+        question="장애 여부", options=("예", "아니오"), sensitive=True,
+    )  # fmt: skip
+    await artifacts.save_human_task("run_1", task)
+    assert await artifacts.load_human_task("run_1") == task
+    assert await artifacts.load_human_task("run_2") is None
+    smuggled = task.model_copy(update={"question": RRN})
+    with pytest.raises(UniqueIdentifierRejected):
+        await artifacts.save_human_task("run_3", smuggled)

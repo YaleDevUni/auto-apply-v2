@@ -4,6 +4,8 @@ snapshot 은 LLM 에 가고 run transcript 로 남는다 — 페이지에 미리
 저장되지 않게. 탐지 규칙은 domain/unique_identifiers.py 한 곳이다.
 """
 
+from collections.abc import Iterable
+
 from auto_apply.contracts.click import ElementDescriptor
 from auto_apply.contracts.page import PageSnapshot, SnapshotNode
 from auto_apply.contracts.submit_guard import SubmitTarget
@@ -59,3 +61,23 @@ def redact_snapshot(snapshot: PageSnapshot) -> PageSnapshot:
             "nodes": tuple(_redact_node(n) for n in snapshot.nodes),
         }
     )
+
+
+HIDDEN_VALUE = "(가린 답)"
+
+
+def hide_values(snapshot: PageSnapshot, hidden: Iterable[str]) -> PageSnapshot:
+    """ask_user 의 가린 답이 든 칸 값을 가린다 — 에이전트·transcript 에 가지 않게.
+
+    짧은 답("예")이면 다른 칸까지 가릴 수 있지만 값이 새는 것보다 낫다.
+    """
+    secrets = tuple(v for v in (h.strip() for h in hidden) if v)
+    if not secrets:
+        return snapshot
+    nodes = tuple(
+        n.model_copy(update={"value": HIDDEN_VALUE})
+        if n.value is not None and any(s in n.value for s in secrets)
+        else n
+        for n in snapshot.nodes
+    )
+    return snapshot.model_copy(update={"nodes": nodes})
